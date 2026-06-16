@@ -77,3 +77,60 @@ if (nrow(dup_lots) == 0) {
 
 
 
+
+# 2 Winners
+# Function to check for extract multiple CVRs into one column
+extract_multiple_cvr <- function(data, row_id, cvr_cols = "winner_cvr") {
+  
+  # For semi-colon
+  data %>% 
+    select(all_of(cvr_cols)) %>% 
+    separate_wider_delim(col = cvr_cols, 
+                         names_sep = "_", 
+                         delim = regex("[.,;]"),
+                         cols_remove = FALSE)
+}
+
+## Number of winners using number of winner names
+## Winner names are separate by a comma or semicolon
+data <- data %>% 
+  mutate(n_winner_name = str_count(winner_name, ",|;") + 1,
+         n_winner_cvr = str_count(winner_cvr, ",|;|[.]") + 1,
+         n_winner_country = str_count(winner_country, ",|;"))
+
+## Missing column
+data <- data %>% 
+  mutate(missing_winner_cvr = as.integer(is.na(winner_cvr)))
+
+## Find reliably single CVRs
+# CVRs without any commas, semi-colons, periods, etc. 
+# and with exactly 8 characters are likely to be single CVRs; flag these
+data <- data %>% 
+  mutate(single_cvr = ifelse(nchar(winner_cvr) == 8 & 
+                               !str_detect(winner_cvr, regex("[.,; ]")), 
+                             1, NA))
+
+# Print result
+cat("Number of easily identifiable single CVRs:", 
+    sum(data$single_cvr, na.rm = TRUE), "\n")
+
+# CVRs with spaces but whose characters are all numbers and 
+# with exactly 8 characters are likely to be single CVRs; flag these
+data <- data %>% 
+  mutate(single_cvr = ifelse(nchar(gsub(" ", "", winner_cvr)) == 8 & # removes white space
+                               str_detect(winner_cvr, regex(" ")) & 
+                               !str_detect(winner_cvr, regex("[.,;]")), 
+                             1, single_cvr))
+
+# Print result
+cat("Number of identifiable single CVRs with separated spaces:", 
+    sum(data$single_cvr, na.rm = TRUE), "\n")
+
+# Keep object
+single_data <- data %>% 
+  filter(single_cvr == 1)
+multi_data <- data %>% 
+  filter(is.na(single_cvr))
+
+
+
