@@ -177,7 +177,7 @@ extract_multiple_cvr <- function(
 
 # Map function over rows and bind.
 cvr_cols_to_sep <- c("winner_cvr", "winner_name", "winner_country")
-multi_data_sep_new <- map(1:nrow(multi_data), extract_multiple_cvr, 
+multi_data_sep <- map(1:nrow(multi_data), extract_multiple_cvr, 
     data = multi_data,
     cvr_cols = cvr_cols_to_sep) %>% 
   bind_rows()
@@ -189,9 +189,43 @@ multi_data_sep <- multi_data_sep %>%
   select(tender_id, lot_id, matches(column_pattern))
 
 # Pivot longer
-long_data <- multi_data_sep %>%
+multi_long <- multi_data_sep %>%
+  
+  # Convert each variable type separately into long form
   pivot_longer(
-    cols = matches("^winner_(cvr|name|country)_\\d+$"),
-    names_to = c(".value", "winner_id"),
-    names_pattern = "winner_(cvr|name|country)_(\\d+)"
-  )
+    cols = matches("^winner_cvr_\\d+|^winner_name_\\d+|^winner_country_\\d+"),
+    names_to = c("variable", "firm_number"),
+    names_pattern = "(winner_cvr|winner_name|winner_country)_(\\d+)",
+    values_to = "value"
+  ) %>%
+  
+  # Spread variable types back into columns
+  pivot_wider(
+    names_from = variable,
+    values_from = value
+  ) %>%
+  
+  # Clean firm_number type
+  mutate(firm_number = as.integer(firm_number)) %>%
+  arrange(tender_id, lot_id, firm_number)
+
+# Only keep rows where at least one of the winner identifiers are filled.
+multi_long <- multi_long %>% 
+  filter(!is.na(winner_cvr) | !is.na(winner_name) | !is.na(winner_country))
+
+# Create flags for invalid CVR numbers
+multi_long <- multi_long %>% 
+  mutate(invalid_cvr = ifelse(nchar(winner_cvr) != 8, 1, 0))
+
+# Print diagnostics
+cat("Number of rows:", nrow(multi_long), "\n")
+cat("Number of unique CVR numbers in multi-winner data:", 
+    n_distinct(multi_long$winner_cvr), "\n")
+cat("Number of unique CVR names in multi-winner data:", 
+    n_distinct(multi_long$winner_name), "\n")
+cat("Number of rows with missing CVR numbers:", 
+    sum(is.na(multi_long$invalid_cvr)), "\n")
+cat("Number of rows with invalid CVR numbers (nonmissing, but not exactly 8 digits):", 
+    sum(multi_long$invalid_cvr, na.rm = TRUE), "\n")
+cat("Share of rows with invalid CVR numbers:", 
+    mean(multi_long$invalid_cvr, na.rm = TRUE), "\n")
