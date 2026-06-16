@@ -136,7 +136,7 @@ extract_multiple_cvr <- function(
   
   # Keep identifiers + originals only once
   out <- data_row %>%
-    dplyr::select(tender_id, lot_id, dplyr::all_of(cvr_cols))
+    select(tender_id, lot_id, dplyr::all_of(cvr_cols))
   
   # Container for expanded values (DO NOT include IDs here)
   out_list <- list()
