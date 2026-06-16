@@ -122,7 +122,6 @@ single_data <- data %>%
 multi_data <- data %>% 
   filter(is.na(single_cvr))
 
-
 # 3 Multiple winners
 ## Goal: create long dataframe with one row per winner (identified by tender_id/lot_id)
 extract_multiple_cvr <- function(
