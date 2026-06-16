@@ -129,10 +129,43 @@ multi_data <- data %>%
 # Function to check for extract multiple CVRs into one column
 extract_multiple_cvr <- function(data, row_id, cvr_cols = "winner_cvr") {
   
+  # Extract the data row
+  data_row <- data[row_id, ]
+
+  # Check for NAs
+  na_check <- rep(NA, length(cvr_cols))
+  names(na_check) <- cvr_cols
+  for (i in seq_along(cvr_cols)) {
+    na_check[i] <- is.na(data_row[[cvr_cols[i]]])
+  }
+  
+  
+  
+  # Overwrite provided cvr_cols with na_check, so we only separate columns with non-missing values
+  cvr_cols <- names(na_check)[!na_check]
+  
   # For semi-colon
-  data %>% 
-    separate_wider_delim(col = cvr_cols, 
-                         names_sep = "_", 
-                         delim = regex("[.,;]"),
-                         cols_remove = FALSE)
+  if (all(na_check)) {
+    out <- data_row %>% select(tender_id, lot_id, all_of(cvr_cols))
+  }
+  
+  else {
+    separated <- data_row %>% 
+      separate_wider_delim(col = cvr_cols, 
+                           names_sep = "_", 
+                           delim = regex("[.,;]"),
+                           cols_remove = FALSE)
+    out <- separated %>% 
+      select(tender_id, lot_id, contains(cvr_cols))
+    
+  }
+  
+  return(out)
+
 }
+
+# Map function over rows and bind.
+multi_data_sep <- map(1:nrow(multi_data), extract_multiple_cvr, 
+    data = multi_data,
+    cvr_cols = c("winner_cvr", "winner_name", "winner_country")) %>% 
+  bind_rows()
