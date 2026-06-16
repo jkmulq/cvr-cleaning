@@ -125,47 +125,55 @@ multi_data <- data %>%
 
 # 3 Multiple winners
 ## Goal: create long dataframe with one row per winner (identified by tender_id/lot_id)
-
-# Function to check for extract multiple CVRs into one column
-extract_multiple_cvr <- function(data, row_id, cvr_cols = "winner_cvr") {
+extract_multiple_cvr <- function(data, row_id, cvr_cols = c("winner_cvr")) {
   
-  # Extract the data row
+  # Extract row
   data_row <- data[row_id, ]
-
-  # Check for NAs
-  na_check <- rep(NA, length(cvr_cols))
-  names(na_check) <- cvr_cols
-  for (i in seq_along(cvr_cols)) {
-    na_check[i] <- is.na(data_row[[cvr_cols[i]]])
-  }
   
+  # Base output (keep originals)
+  out <- data_row %>%
+    select(tender_id, lot_id, all_of(cvr_cols))
   
-  
-  # Overwrite provided cvr_cols with na_check, so we only separate columns with non-missing values
-  cvr_cols <- names(na_check)[!na_check]
-  
-  # For semi-colon
-  if (all(na_check)) {
-    out <- data_row %>% select(tender_id, lot_id, all_of(cvr_cols))
-  }
-  
-  else {
-    separated <- data_row %>% 
-      separate_wider_delim(col = cvr_cols, 
-                           names_sep = "_", 
-                           delim = regex("[.,;]"),
-                           cols_remove = FALSE)
-    out <- separated %>% 
-      select(tender_id, lot_id, contains(cvr_cols))
+  # Prepare to split cvr_cols
+  out_list <- list()
+  for (col in cvr_cols) {
     
+    # Select column, and skip if empty
+    x <- data_row[[col]]
+    if (is.na(x)) next
+    
+    # Split by delimiters
+    parts <- strsplit(x, "[.,;]")[[1]]
+    for (i in seq_along(parts)) {
+      out_list[[paste0(col, "_", i)]] <- parts[i]
+    }
   }
   
-  return(out)
-
+  if (length(out_list) == 0) {
+    return(out)
+  } else {
+    bind_cols(out, as_tibble(out_list))
+  }
+  
 }
 
 # Map function over rows and bind.
-multi_data_sep <- map(1:nrow(multi_data), extract_multiple_cvr, 
+cvr_cols_to_sep <- c("winner_cvr", "winner_name", "winner_country")
+multi_data_sep_new <- map(1:nrow(multi_data), extract_multiple_cvr, 
     data = multi_data,
-    cvr_cols = c("winner_cvr", "winner_name", "winner_country")) %>% 
+    cvr_cols = cvr_cols_to_sep) %>% 
   bind_rows()
+
+# Order columns
+column_pattern <- paste0(cvr_cols_to_sep, collapse = "|")
+column_pattern <- paste0("(", column_pattern, ")_(\\d+)$")
+multi_data_sep <- multi_data_sep %>% 
+  select(tender_id, lot_id, matches(column_pattern))
+
+# Pivot longer
+long_data <- multi_data_sep %>%
+  pivot_longer(
+    cols = matches("^winner_(cvr|name|country)_\\d+$"),
+    names_to = c(".value", "winner_id"),
+    names_pattern = "winner_(cvr|name|country)_(\\d+)"
+  )
