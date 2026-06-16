@@ -20,3 +20,60 @@ raw_data_name      <- "udbudsdata_kfst.xlsx"
 
 # 1 Load data
 data <- read_excel(file.path(data_dir, "kfst", raw_data_name), sheet = "2.0 Udbudsdata")
+
+# Rename
+data <- data %>% 
+  rename(winner_cvr = `Vinders CVR`,
+         winner_name = `Vinders navn`,
+         winner_country = `Vinders land`,
+         buyer_name = `Navn på ordregiver`,
+         pub_date = `Publikationsdato for bekendtgørelse om indgået kontrakt`,
+         award_date = `Dato for tildeling af kontrakten`,
+         tender_id = `Løbenummer`,
+         lot_id = `Nummerplade`,
+         lot_number = `Delkontraktnr.`,
+         n_lots = `Antal delkontrakter kortlagt`,
+         n_lots_contracted = `Antal delkontrakter i udbudsbekendtgørelsen`,)
+
+# Order columns nicely
+data <- data %>% 
+  select(tender_id, lot_id, lot_number, n_lots, n_lots_contracted,
+         pub_date, award_date,
+         buyer_name,
+         winner_name, winner_cvr, winner_country,
+         everything())
+
+# Arrange
+data <- data %>% 
+  group_by(tender_id) %>% 
+  arrange(lot_number, .by_group = TRUE) %>% 
+  ungroup()
+
+# Check whether lot_id is unique
+data <- data %>% 
+  mutate(n_lot_id = n(), .by = lot_id)
+
+dup_lots <- data %>%
+  filter(n_lot_id > 1) %>%
+  distinct(lot_id, n_lot_id) %>%
+  arrange(desc(n_lot_id))
+
+# Print results of duplication check
+if (nrow(dup_lots) == 0) {
+  cat("All lot_id values are unique.\n")
+} else {
+  cat("Duplicate lot_id values:\n")
+  print(dup_lots)
+  
+  cat("Assuming unique and creating flag")
+  data <- data %>% 
+    mutate(dup_lot_id_flag = ifelse(n_lot_id > 1, 1, 0)) 
+  data <- data %>% 
+    mutate(lot_id = ifelse(n_lot_id > 1, 
+                           paste0(tender_id, "-", 1:n()), lot_id), 
+           .by = lot_id) 
+}
+
+
+
+
