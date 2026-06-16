@@ -78,18 +78,8 @@ if (nrow(dup_lots) == 0) {
 
 
 
-# 2 Winners
-# Function to check for extract multiple CVRs into one column
-extract_multiple_cvr <- function(data, row_id, cvr_cols = "winner_cvr") {
-  
-  # For semi-colon
-  data %>% 
-    select(all_of(cvr_cols)) %>% 
-    separate_wider_delim(col = cvr_cols, 
-                         names_sep = "_", 
-                         delim = regex("[.,;]"),
-                         cols_remove = FALSE)
-}
+# 2 Separate winners
+## Goal: Separate winners into single winners and multiple winners.
 
 ## Number of winners using number of winner names
 ## Winner names are separate by a comma or semicolon
@@ -133,4 +123,16 @@ multi_data <- data %>%
   filter(is.na(single_cvr))
 
 
+# 3 Multiple winners
+## Goal: create long dataframe with one row per winner (identified by tender_id/lot_id)
 
+# Function to check for extract multiple CVRs into one column
+extract_multiple_cvr <- function(data, row_id, cvr_cols = "winner_cvr") {
+  
+  # For semi-colon
+  data %>% 
+    separate_wider_delim(col = cvr_cols, 
+                         names_sep = "_", 
+                         delim = regex("[.,;]"),
+                         cols_remove = FALSE)
+}
