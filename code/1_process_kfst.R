@@ -125,36 +125,55 @@ multi_data <- data %>%
 
 # 3 Multiple winners
 ## Goal: create long dataframe with one row per winner (identified by tender_id/lot_id)
-extract_multiple_cvr <- function(data, row_id, cvr_cols = c("winner_cvr")) {
+extract_multiple_cvr <- function(
+    data,
+    row_id,
+    cvr_cols = c("winner_cvr", "winner_name", "winner_country")
+) {
   
   # Extract row
   data_row <- data[row_id, ]
   
-  # Base output (keep originals)
+  # Keep identifiers + originals only once
   out <- data_row %>%
-    select(tender_id, lot_id, all_of(cvr_cols))
+    dplyr::select(tender_id, lot_id, dplyr::all_of(cvr_cols))
   
-  # Prepare to split cvr_cols
+  # Container for expanded values (DO NOT include IDs here)
   out_list <- list()
+  
+  # Loop over each column separately
   for (col in cvr_cols) {
     
-    # Select column, and skip if empty
     x <- data_row[[col]]
-    if (is.na(x)) next
     
-    # Split by delimiters
-    parts <- strsplit(x, "[.,;]")[[1]]
+    if (is.na(x) || x == "") next
+    
+    # Standardise separators
+    x <- gsub("\\s*,\\s*", ";", x)
+    x <- gsub("\\s*;\\s*", ";", x)
+    
+    # CVR-specific dot handling
+    if (col == "winner_cvr") {
+      x <- gsub("\\.\\s*(?=[A-Z0-9])", ";", x, perl = TRUE)
+    }
+    
+    # Split
+    parts <- strsplit(x, ";", fixed = TRUE)[[1]]
+    parts <- trimws(parts)
+    parts <- parts[parts != ""]
+    
+    # Store
     for (i in seq_along(parts)) {
       out_list[[paste0(col, "_", i)]] <- parts[i]
     }
   }
   
+  # Return base row if nothing expanded
   if (length(out_list) == 0) {
     return(out)
-  } else {
-    bind_cols(out, as_tibble(out_list))
   }
   
+  bind_cols(out, tibble::as_tibble(out_list))
 }
 
 # Map function over rows and bind.
