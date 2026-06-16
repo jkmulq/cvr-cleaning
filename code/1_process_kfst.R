@@ -227,5 +227,5 @@ cat("Number of rows with missing CVR numbers:",
     sum(is.na(multi_long$invalid_cvr)), "\n")
 cat("Number of rows with invalid CVR numbers (nonmissing, but not exactly 8 digits):", 
     sum(multi_long$invalid_cvr, na.rm = TRUE), "\n")
-cat("Share of rows with invalid CVR numbers:", 
+cat("Share of rows with invalid CVR numbers (excluding missing):", 
     mean(multi_long$invalid_cvr, na.rm = TRUE), "\n")
