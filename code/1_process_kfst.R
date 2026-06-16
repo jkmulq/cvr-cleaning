@@ -146,7 +146,7 @@ extract_multiple_cvr <- function(
     
     x <- data_row[[col]]
     
-    if (is.na(x) || x == "") next
+    if (is.na(x)) next
     
     # Standardise separators
     x <- gsub("\\s*,\\s*", ";", x)
