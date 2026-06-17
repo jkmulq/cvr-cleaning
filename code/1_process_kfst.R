@@ -354,13 +354,20 @@ if (!n_buyer_extracted_check) {
   cat("Number of buyers extracted matches original estimate from wide data.frame.\n")
 }
 
+## Create flags for whether buyer data came from tender with multiple LISTED buyers or not
+multiple_buyer_long <- multiple_buyer_long %>% 
+  mutate(source = "multiple listed buyers")
+single_buyer <- single_buyer %>% 
+  mutate(source = "single buyer or joint tender with unlisted buyers")
+
 ## Bind single buyers with multiple buyers
 single_buyer <- single_buyer %>% 
-  select(tender_id, lot_id, buyer_name) %>% 
+  select(tender_id, lot_id, buyer_name, source) %>% 
   mutate(buyer_number = 1)
 
-buyer_data_clean <- bind_rows(single_buyer, multiple_buyer_long) %>% 
+buyer_data_clean <- bind_rows(multiple_buyer_long, single_buyer) %>% 
   arrange(tender_id, lot_id, buyer_number)
+
 
 # 6 Cleaning flags
 
