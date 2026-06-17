@@ -252,5 +252,13 @@ multi_long <- multi_long %>%
 multi_long <- multi_long %>% 
   mutate(n_extracted_winners = n(), .by = lot_id)
 multi_long <- multi_long %>%
-  mutate(winner_count_mismatch = ifelse(n_extracted_winners != n_lot_winners, 
+  mutate(flag_winner_count_mismatch = ifelse(n_extracted_winners != n_lot_winners, 
                                         1, 0))
+
+# Print diagnostics
+cat("Share of obs. with winner count mismatch:", 
+    mean(multi_long$flag_winner_count_mismatch, na.rm = TRUE), "\n")
+cat("Share of lots with winner count mismatch:", 
+    mean(multi_long %>% 
+           distinct(lot_id, flag_winner_count_mismatch) %>% 
+           .$flag_winner_count_mismatch, na.rm = TRUE), "\n")
