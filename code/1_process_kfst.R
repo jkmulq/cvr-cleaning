@@ -29,12 +29,20 @@ data <- data %>%
          buyer_name = `Navn på ordregiver`,
          pub_date = `Publikationsdato for bekendtgørelse om indgået kontrakt`,
          award_date = `Dato for tildeling af kontrakten`,
+         submit_date = `Frist for aflevering af tilbud`,
          tender_id = `Løbenummer`,
          lot_id = `Nummerplade`,
+         divided_tender = `Opdelt udbud`,
+         joint_tender = `Fælles-/enkeltudbud`,
+         consortium_winner = `Konsortium/Sammenslutning`,
+         cpv_code = `CPV-koder`,
+         tender_cancelled = `Annulleret udbud`,
+         tender_status = `Helt/delvist gennemført/annulleret`,
          lot_number = `Delkontraktnr.`,
          n_lots = `Antal delkontrakter kortlagt`,
          n_lots_contracted = `Antal delkontrakter i udbudsbekendtgørelsen`,
-         n_lot_winners = `Antal vindere på delkontrakten`)
+         n_lot_winners = `Antal vindere på delkontrakten`,
+         n_bids_received = `Antal modtagne bud`)
 
 # Order columns nicely
 data <- data %>% 
