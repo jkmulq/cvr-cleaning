@@ -305,7 +305,12 @@ multi_long <- multi_long %>%
 
 # Flag when number of winners from extraction process doesn't match
 # the n_lot_winners provided in the original data.
-multi_long <- multi_long %>% 
+multi_long <- multi_long %>%
+  left_join(
+    tender_lot_data %>%
+      select(tender_id, lot_id, n_lot_winners),
+    by = c("tender_id", "lot_id")
+  ) %>%
   mutate(n_extracted_winners = n(), .by = lot_id)
 multi_long <- multi_long %>%
   mutate(flag_winner_count_mismatch = ifelse(n_extracted_winners != n_lot_winners, 
