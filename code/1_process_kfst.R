@@ -117,6 +117,17 @@ if (nrow(remaining_dup_lots) > 0) {
   stop("Duplicate lot_id values remain after filtering cancelled duplicate rows.")
 }
 
+# Tender/lot-level data to join onto cleaned entity tables at the end.
+tender_lot_data <- data %>%
+  select(any_of(c(
+    "tender_id", "lot_id", "lot_number",
+    "n_lots", "n_lots_contracted", "n_lot_winners", "n_bids_received",
+    "pub_date", "award_date", "submit_date",
+    "divided_tender", "joint_tender", "consortium_winner",
+    "cpv_code", "tender_cancelled", "tender_status",
+    "n_lot_id"
+  ))) %>%
+  arrange(tender_id, lot_id, lot_number)
 
 
 # 2 Separate winners
