@@ -281,3 +281,37 @@ clean_data <- bind_rows(
 ) %>% 
   arrange(tender_id)
 
+## 4.1 Data munging
+clean_data <- clean_data %>% 
+  mutate(n_winners_extracted = n(), .by = lot_id)
+
+
+# 5 Buyers
+## Buyers do not have CVR numbers, but they have names.
+buyer_data <- data %>% 
+  select(tender_id, lot_id, buyer_name, joint_tender)
+
+## Clean joint_tender variable
+buyer_data <- buyer_data %>% 
+  mutate(joint_tender = case_when(
+    joint_tender == "Enkelt" ~ "single",
+    joint_tender == "Fælles" ~ "joint",
+    TRUE ~ NA_character_
+  ))
+
+## According to the documentation (page 27, variable 19: 'Navn på ordregiver')
+## Multiple contracting authorities are separated by a semicolon. Flag these.
+buyer_data <- buyer_data %>% 
+  mutate(flag_multiple_buyers_listed = str_detect(buyer_name, ";"))
+
+## joint_tender might be "joint" and flag_multiple_buyers_listed might be FALSE 
+## if the listed buyer is an authority performing the tender on behalf of several authorities.
+## Flag these.
+buyer_data <- buyer_data %>% 
+  mutate(flag_joint_unlisted_buyers = (joint_tender == "joint" & !flag_multiple_buyers_listed))
+
+## Single versus multiple buyers
+single_buyer <- buyer_data %>% 
+  filter(!flag_multiple_buyers_listed)
+multiple_buyer <- buyer_data %>% 
+  filter(flag_multiple_buyers_listed)
