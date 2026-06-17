@@ -292,16 +292,16 @@ clean_winner_data <- clean_winner_data %>%
 
 # 5 Buyers
 ## Buyers do not have CVR numbers, but they have names.
-buyer_data <- data %>% 
-  select(tender_id, lot_id, buyer_name, joint_tender)
-
-## Clean joint_tender variable
-buyer_data <- buyer_data %>% 
-  mutate(joint_tender = case_when(
-    joint_tender == "Enkelt" ~ "single",
-    joint_tender == "Fælles" ~ "joint",
-    TRUE ~ NA_character_
-  ))
+buyer_data <- data %>%
+  select(tender_id, lot_id, buyer_name, joint_tender) %>%
+  mutate(
+    buyer_name_original = buyer_name,
+    joint_tender = case_when(
+      joint_tender == "Enkelt" ~ "single",
+      joint_tender == "Fælles" ~ "joint",
+      TRUE ~ NA_character_
+    )
+  )
 
 ## According to the documentation (page 27, variable 19: 'Navn på ordregiver')
 ## Multiple contracting authorities are separated by a semicolon. Flag these.
