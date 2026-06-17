@@ -50,7 +50,7 @@ The script currently:
 5. Separates likely single-winner records from records requiring multi-winner parsing.
 6. Splits multi-winner CVR, name, and country fields into long format.
 7. Compares extracted winner counts against the original `n_lot_winners` field.
-8. Builds `clean_data` with one row per winner-lot combination.
+8. Builds `clean_winner_data` with one row per winner-lot combination.
 9. Creates buyer helper tables and data-quality flags.
 
 ## Main Output Objects
@@ -61,15 +61,15 @@ The script creates objects in the R session rather than writing final files to d
 - `single_data` - Lots with a likely single valid CVR.
 - `multi_data` - Lots needing multi-winner parsing.
 - `multi_long` - Parsed multi-winner records in long format.
-- `clean_data` - Combined winner-lot data with derived flags.
+- `clean_winner_data` - Combined winner-lot data with derived flags.
 - `buyer_data`, `single_buyer`, `multiple_buyer`, `multiple_buyer_sep` - Buyer-focused helper tables. `multiple_buyer_sep` keeps buyer names in wide columns after splitting semicolon-separated buyers.
 
 ## Development Notes
 
 This README reflects the current project state. Recent updates fixed the direct name mismatches for the raw data directory, bid-count field, and cancelled-tender field. Before treating the script as a fully reproducible end-to-end pipeline, check the following remaining items:
 
-- `clean_data` is built from a narrow set of winner columns. Any later flags that use original tender-level fields, such as `n_bids_received` and `tender_cancelled`, need those fields joined or selected into `clean_data` before the flags are created.
-- `clean_data` is built in memory only; add an explicit write step if a committed or shared cleaned dataset is needed.
+- `clean_winner_data` is built from a narrow set of winner columns. Any later flags that use original tender-level fields, such as `n_bids_received` and `tender_cancelled`, need those fields joined or selected into `clean_winner_data` before the flags are created.
+- `clean_winner_data` is built in memory only; add an explicit write step if a committed or shared cleaned dataset is needed.
 
 See `TODO.md` for the active development roadmap and progress tracker.
 
@@ -79,5 +79,5 @@ See `TODO.md` for the active development roadmap and progress tracker.
 2. Confirm raw data files are present under `data/raw/`.
 3. Review and update `config.R` for the local machine.
 4. Run `code/1_process_kfst.R`.
-5. Inspect printed diagnostics and the final `clean_data` object.
+5. Inspect printed diagnostics and the final `clean_winner_data` object.
 6. Add an export step once the cleaned output format is finalized.

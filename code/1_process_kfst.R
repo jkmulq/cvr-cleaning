@@ -273,16 +273,18 @@ cat("Share of lots with winner count mismatch:",
 
 
 # 4 Bind
-clean_data <- bind_rows(
+clean_winner_data <- bind_rows(
   single_data %>% 
-    select(tender_id, lot_id, n_lot_winners, winner_cvr, winner_name, winner_country),
+    select(tender_id, lot_id, n_lot_winners, n_bids_received, tender_cancelled,
+           winner_cvr, winner_name, winner_country),
   multi_long %>%
-    select(tender_id, lot_id , n_lot_winners, winner_cvr, winner_name, winner_country)
+    select(tender_id, lot_id, n_lot_winners, n_bids_received, tender_cancelled,
+           winner_cvr, winner_name, winner_country)
 ) %>% 
   arrange(tender_id)
 
 ## 4.1 Data munging
-clean_data <- clean_data %>% 
+clean_winner_data <- clean_winner_data %>% 
   mutate(n_winners_extracted = n(), .by = lot_id)
 
 
@@ -349,3 +351,79 @@ if (!n_buyer_extracted_check) {
 } else {
   cat("Number of buyers extracted matches original estimate from wide data.frame.\n")
 }
+
+## Bind single buyers with multiple buyers
+single_buyer <- single_buyer %>% 
+  select(tender_id, lot_id, buyer_name) %>% 
+  mutate(buyer_number = 1)
+
+buyer_data_clean <- bind_rows(single_buyer, multiple_buyer_long) %>% 
+  arrange(tender_id, lot_id, buyer_number)
+
+# 6 Cleaning flags
+
+# Missing winner information
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_missing_winner_name = is.na(winner_name) | winner_name == ""
+  )
+
+# Missing CVR number
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_missing_winner_cvr =
+      is.na(winner_cvr) | winner_cvr == ""
+  )
+
+# Invalid CVR number
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_invalid_cvr =
+      !is.na(winner_cvr) &
+      !grepl("^\\d{8}$", winner_cvr)
+  )
+
+# Multiple winners (only flag when raw data and extracted data agree)
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_multiple_winners = case_when(
+      n_winners_extracted == n_lot_winners & n_winners_extracted > 1 ~ TRUE,
+      n_winners_extracted == n_lot_winners & n_winners_extracted == 1 ~ FALSE,
+      n_winners_extracted != n_lot_winners ~ NA
+    )
+  )
+
+# Extracted N winners and raw N winners disagreement
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_winner_count_agree = n_winners_extracted == n_lot_winners)
+
+# Foreign winner
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_foreign_winner =
+      winner_country != "DK"
+  )
+
+# Single bidder
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_single_bidder =
+      n_bids_received == 1
+  )
+
+# Multi-lot tender
+clean_winner_data <- clean_winner_data %>% 
+  mutate(n_lots = n(), .by = tender_id)
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_multilot =
+      n_lots > 1
+  )
+
+# Cancelled procurement
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_cancelled =
+      tender_cancelled == 1
+  )
