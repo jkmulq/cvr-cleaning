@@ -65,8 +65,11 @@ data <- data %>%
 
 dup_lots <- data %>%
   filter(n_lot_id > 1) %>%
-  distinct(lot_id, n_lot_id) %>%
-  arrange(desc(n_lot_id))
+  distinct(lot_id, n_lot_id, tender_cancelled, tender_status) %>%
+  arrange(lot_id, tender_cancelled)
+
+cancelled_duplicate_lots <- data %>%
+  slice(0)
 
 # Print results of duplication check
 if (nrow(dup_lots) == 0) {
