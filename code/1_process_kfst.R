@@ -230,3 +230,27 @@ cat("Number of rows with invalid CVR numbers (nonmissing, but not exactly 8 digi
     sum(multi_long$invalid_cvr, na.rm = TRUE), "\n")
 cat("Share of rows with invalid CVR numbers (excluding missing):", 
     mean(multi_long$invalid_cvr, na.rm = TRUE), "\n")
+
+
+# Join original CVR and winner names
+original_multi_data <- multi_data %>% 
+  select(tender_id, lot_id, n_lot_winners, winner_cvr, winner_name, winner_country)
+multi_long <- multi_long %>% 
+  left_join(original_multi_data, 
+            by = c("tender_id", "lot_id"),
+            suffix = c("", "_original"))
+
+# Reorder nicely
+multi_long <- multi_long %>% 
+  select(tender_id, lot_id, winner_number, n_lot_winners,
+         winner_cvr, winner_cvr_original,
+         winner_name, winner_name_original,
+         winner_country, winner_country_original)
+
+# Flag when number of winners from extraction process doesn't match
+# the n_lot_winners provided in the original data.
+multi_long <- multi_long %>% 
+  mutate(n_extracted_winners = n(), .by = lot_id)
+multi_long <- multi_long %>%
+  mutate(winner_count_mismatch = ifelse(n_extracted_winners != n_lot_winners, 
+                                        1, 0))
