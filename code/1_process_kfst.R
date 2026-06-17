@@ -314,4 +314,38 @@ buyer_data <- buyer_data %>%
 single_buyer <- buyer_data %>% 
   filter(!flag_multiple_buyers_listed)
 multiple_buyer <- buyer_data %>% 
-  filter(flag_multiple_buyers_listed)
+  filter(flag_multiple_buyers_listed, !flag_joint_unlisted_buyers)
+
+## For multiple buyers, record the number of buyers
+multiple_buyer <- multiple_buyer %>% 
+  mutate(n_buyers_extracted = str_count(buyer_name, ";") + 1)
+
+## Split multiple buyers and pivot longer
+multiple_buyer_sep <- multiple_buyer %>% 
+  separate_wider_delim(buyer_name, delim = ";", cols_remove = FALSE, 
+                       names_sep = "_", too_few = "align_start") %>% 
+  select(tender_id, lot_id, starts_with("buyer_name_"), -buyer_name_buyer_name)
+
+multiple_buyer_long <- multiple_buyer_sep %>% 
+  pivot_longer(., cols = -c("tender_id", "lot_id"), names_to = "buyer_number", values_to = "buyer_name")
+
+multiple_buyer_long <- multiple_buyer_long %>%
+  mutate(buyer_number = as.integer(str_remove(buyer_number, "buyer_name_"))) %>% 
+  arrange(tender_id, lot_id, buyer_number) %>% 
+  filter(!is.na(buyer_name))
+
+## Check number of buyers extracted equals estimate from original wide data
+n_buyer_extracted_check <- left_join(multiple_buyer %>% 
+            distinct(lot_id, n_buyers_extracted), 
+          multiple_buyer_long %>% 
+            summarise(buyer_number = max(buyer_number), .by = lot_id), 
+          by = c("lot_id")) %>% 
+  mutate(check = n_buyers_extracted == buyer_number) %>% 
+  .$check %>% 
+  all
+
+if (!n_buyer_extracted_check) {
+  stop("Number of buyers extracted didn't match original estimate from wide data.frame.")
+} else {
+  cat("Number of buyers extracted matches original estimate from wide data.frame.\n")
+}
