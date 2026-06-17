@@ -157,9 +157,11 @@ extract_multiple_cvr <- function(
     }
     
     # Split
+    # Note, I treat an empty space as a firm, not a mistake. 
+    # Usually these are firms that don't have a CVR number. 
     parts <- strsplit(x, ";", fixed = TRUE)[[1]]
     parts <- trimws(parts)
-    parts <- parts[parts != ""]
+    parts[parts == ""] <- NA_character_ # Treat empty strings as NA (better missing label for firms without CVR)
     
     # Store
     for (i in seq_along(parts)) {
