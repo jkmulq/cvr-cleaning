@@ -328,29 +328,27 @@ multiple_buyer_long <- buyer_data %>%
     .by = lot_id
   )
 
-## Single versus multiple buyers
-single_buyer <- buyer_data %>% 
-  filter(!flag_multiple_buyers_listed)
-multiple_buyer <- buyer_data %>% 
-  filter(flag_multiple_buyers_listed, !flag_joint_unlisted_buyers)
+## If only one buyer is listed, keep one row. Joint tenders with unlisted buyers
+## remain one row because the unlisted buyers cannot be separated from this field.
+single_buyer <- buyer_data %>%
+  filter(!flag_multiple_buyers_listed | flag_joint_unlisted_buyers) %>%
+  mutate(
+    buyer_name = str_squish(buyer_name),
+    buyer_number = 1L,
+    source = "single buyer or joint tender with unlisted buyers"
+  )
 
-## For multiple buyers, record the number of buyers
-multiple_buyer <- multiple_buyer %>% 
-  mutate(n_buyers_extracted = str_count(buyer_name, ";") + 1)
-
-## Split multiple buyers and pivot longer
-multiple_buyer_sep <- multiple_buyer %>% 
-  separate_wider_delim(buyer_name, delim = ";", cols_remove = FALSE, 
-                       names_sep = "_", too_few = "align_start") %>% 
-  select(tender_id, lot_id, starts_with("buyer_name_"), -buyer_name_buyer_name)
-
-multiple_buyer_long <- multiple_buyer_sep %>% 
-  pivot_longer(., cols = -c("tender_id", "lot_id"), names_to = "buyer_number", values_to = "buyer_name")
-
-multiple_buyer_long <- multiple_buyer_long %>%
-  mutate(buyer_number = as.integer(str_remove(buyer_number, "buyer_name_"))) %>% 
-  arrange(tender_id, lot_id, buyer_number) %>% 
-  filter(!is.na(buyer_name))
+## Bind single and multiple listed buyers, then add row-level quality checks.
+buyer_data_clean <- bind_rows(single_buyer, multiple_buyer_long) %>%
+  arrange(tender_id, lot_id, buyer_number) %>%
+  mutate(
+    n_buyers_extracted = n(),
+    flag_buyer_name_missing = is.na(buyer_name) | buyer_name == "",
+    flag_buyer_name_changed = buyer_name != buyer_name_original,
+    flag_buyer_count_agree =
+      n_buyers_extracted == n_buyers_listed_original,
+    .by = lot_id
+  )
 
 ## Check number of buyers extracted equals estimate from original wide data
 n_buyer_extracted_check <- left_join(multiple_buyer %>% 
