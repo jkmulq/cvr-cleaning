@@ -242,8 +242,7 @@ cat("Share of rows with invalid CVR numbers (excluding missing):",
 
 # Join original CVR and winner names
 original_multi_data <- multi_data %>% 
-  select(tender_id, lot_id, n_lot_winners, n_bids_received, tender_cancelled,
-         winner_cvr, winner_name, winner_country)
+  select(tender_id, lot_id, winner_cvr, winner_name, winner_country)
 multi_long <- multi_long %>% 
   left_join(original_multi_data, 
             by = c("tender_id", "lot_id"),
@@ -251,8 +250,7 @@ multi_long <- multi_long %>%
 
 # Reorder nicely
 multi_long <- multi_long %>% 
-  select(tender_id, lot_id, winner_number, n_lot_winners,
-         n_bids_received, tender_cancelled,
+  select(tender_id, lot_id, winner_number,
          winner_cvr, winner_cvr_original,
          winner_name, winner_name_original,
          winner_country, winner_country_original)
