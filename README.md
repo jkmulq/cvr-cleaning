@@ -71,6 +71,8 @@ This README reflects the current project state. Recent updates fixed the direct 
 - `clean_data` is built from a narrow set of winner columns. Any later flags that use original tender-level fields, such as `n_bids_received` and `tender_cancelled`, need those fields joined or selected into `clean_data` before the flags are created.
 - `clean_data` is built in memory only; add an explicit write step if a committed or shared cleaned dataset is needed.
 
+See `TODO.md` for the active development roadmap and progress tracker.
+
 ## Suggested Project Workflow
 
 1. Restore the R environment with `renv::restore()`.
