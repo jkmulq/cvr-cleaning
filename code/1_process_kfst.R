@@ -74,15 +74,49 @@ if (nrow(dup_lots) == 0) {
 } else {
   cat("Duplicate lot_id values:\n")
   print(dup_lots)
+
+  # Check whether duplicates have one cancelled and one not cancelled row per lot_id
+  dup_lot_cancelled_pattern <- data %>%
+    filter(n_lot_id > 1) %>%
+    summarise(
+      n_rows = n(),
+      n_cancelled = sum(tender_cancelled == "Ja", na.rm = TRUE),
+      n_not_cancelled = sum(tender_cancelled == "Nej", na.rm = TRUE),
+      .by = lot_id
+    )
+
+  # If any duplicate lot_id values do not follow the expected pattern of one 
+  # cancelled and one not cancelled row, print these and stop the script to review before cleaning.
+  unexpected_dup_lots <- dup_lot_cancelled_pattern %>%
+    filter(!(n_rows == 2 & n_cancelled == 1 & n_not_cancelled == 1))
+  if (nrow(unexpected_dup_lots) > 0) {
+    print(unexpected_dup_lots)
+    stop("Unexpected duplicate lot_id pattern. Review unexpected_dup_lots before cleaning.")
+  }
   
-  cat("Assuming unique and creating flag")
-  data <- data %>% 
-    mutate(dup_lot_id_flag = ifelse(n_lot_id > 1, 1, 0)) 
-  data <- data %>% 
-    mutate(lot_id = ifelse(n_lot_id > 1, 
-                           paste0(tender_id, "-", 1:n()), lot_id), 
-           .by = lot_id) 
+  # Save object of what rows are cancelled
+  cancelled_duplicate_lots <- data %>%
+    filter(n_lot_id > 1, tender_cancelled == "Ja")
+
+  # Filter out cancelled duplicate rows, keeping the non-cancelled row for each duplicated lot_id
+  data <- data %>%
+    filter(!(n_lot_id > 1 & tender_cancelled == "Ja"))
 }
+
+# Check whether duplicates remain after dropping duplicate cancelled/non-cancelled pairs
+data <- data %>%
+  select(-n_lot_id) %>%
+  mutate(n_lot_id = n(), .by = lot_id)
+
+remaining_dup_lots <- data %>%
+  filter(n_lot_id > 1) %>%
+  distinct(lot_id, n_lot_id)
+
+if (nrow(remaining_dup_lots) > 0) {
+  print(remaining_dup_lots)
+  stop("Duplicate lot_id values remain after filtering cancelled duplicate rows.")
+}
+
 
 
 # 2 Separate winners
