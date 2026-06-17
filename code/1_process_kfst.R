@@ -77,9 +77,6 @@ if (nrow(dup_lots) == 0) {
 }
 
 
-
-
-
 # 2 Separate winners
 ## Goal: Separate winners into single winners and multiple winners.
 
