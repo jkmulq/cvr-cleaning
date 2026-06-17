@@ -15,7 +15,7 @@ library(tidyverse)
 library(readxl)
 
 # Paths
-data_dir           <- dirs$raw
+data_dir           <- dirs$raw_data
 raw_data_name      <- "udbudsdata_kfst.xlsx"
 
 # 1 Load data
