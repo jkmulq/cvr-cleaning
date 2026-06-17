@@ -66,9 +66,8 @@ The script creates objects in the R session rather than writing final files to d
 
 ## Development Notes
 
-This README reflects the current project state. Recent updates fixed the direct name mismatches for the raw data directory, bid-count field, and cancelled-tender field. Before treating the script as a fully reproducible end-to-end pipeline, check the following remaining items:
+This README reflects the current project state. Recent updates fixed the direct name mismatches for the raw data directory, bid-count field, and cancelled-tender field, and carry the tender-level fields needed by the current winner-level flags into `clean_winner_data`. Before treating the script as a fully reproducible end-to-end pipeline, check the following remaining item:
 
-- `clean_winner_data` is built from a narrow set of winner columns. Any later flags that use original tender-level fields, such as `n_bids_received` and `tender_cancelled`, need those fields joined or selected into `clean_winner_data` before the flags are created.
 - `clean_winner_data` is built in memory only; add an explicit write step if a committed or shared cleaned dataset is needed.
 
 See `TODO.md` for the active development roadmap and progress tracker.
