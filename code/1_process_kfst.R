@@ -33,11 +33,13 @@ data <- data %>%
          lot_id = `Nummerplade`,
          lot_number = `Delkontraktnr.`,
          n_lots = `Antal delkontrakter kortlagt`,
-         n_lots_contracted = `Antal delkontrakter i udbudsbekendtgørelsen`,)
+         n_lots_contracted = `Antal delkontrakter i udbudsbekendtgørelsen`,
+         n_lot_winners = `Antal vindere på delkontrakten`)
 
 # Order columns nicely
 data <- data %>% 
-  select(tender_id, lot_id, lot_number, n_lots, n_lots_contracted,
+  select(tender_id, lot_id, lot_number, 
+         n_lots, n_lots_contracted, n_lot_winners,
          pub_date, award_date,
          buyer_name,
          winner_name, winner_cvr, winner_country,
