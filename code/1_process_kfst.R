@@ -195,7 +195,7 @@ multi_long <- multi_data_sep %>%
   # Convert each variable type separately into long form
   pivot_longer(
     cols = matches("^winner_cvr_\\d+|^winner_name_\\d+|^winner_country_\\d+"),
-    names_to = c("variable", "firm_number"),
+    names_to = c("variable", "winner_number"),
     names_pattern = "(winner_cvr|winner_name|winner_country)_(\\d+)",
     values_to = "value"
   ) %>%
@@ -206,9 +206,9 @@ multi_long <- multi_data_sep %>%
     values_from = value
   ) %>%
   
-  # Clean firm_number type
-  mutate(firm_number = as.integer(firm_number)) %>%
-  arrange(tender_id, lot_id, firm_number)
+  # Clean winner_number type
+  mutate(winner_number = as.integer(winner_number)) %>%
+  arrange(tender_id, lot_id, winner_number)
 
 # Only keep rows where at least one of the winner identifiers are filled.
 multi_long <- multi_long %>% 
