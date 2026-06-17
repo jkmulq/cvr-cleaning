@@ -262,3 +262,13 @@ cat("Share of lots with winner count mismatch:",
     mean(multi_long %>% 
            distinct(lot_id, flag_winner_count_mismatch) %>% 
            .$flag_winner_count_mismatch, na.rm = TRUE), "\n")
+
+# 4 Bind and save
+clean_data <- bind_rows(
+  single_data %>% 
+    select(tender_id, lot_id, n_lot_winners, winner_cvr, winner_name, winner_country),
+  multi_long %>%
+    select(tender_id, lot_id , n_lot_winners, winner_cvr, winner_name, winner_country)
+) %>% 
+  arrange(tender_id)
+
