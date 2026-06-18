@@ -136,19 +136,24 @@ tender_lot_data <- data %>%
   arrange(tender_id, lot_id, lot_number)
 
 
-# 2 Separate winners
+# 2 Winners
+winner_data <- data %>% 
+  select(tender_id, lot_id, winner_cvr, winner_name, winner_country, n_lot_winners)
+original_winner_data <- winner_data # Store original for later joining
+
+## 2.1 Separate winners
 ## Goal: Separate winners into single winners and multiple winners.
 
 ## Number of winners using number of winner names
 ## Winner names are separate by a comma or semicolon
-data <- data %>% 
+winner_data <- winner_data %>% 
   mutate(n_winner_name = str_count(winner_name, ",|;") + 1,
          n_winner_cvr = str_count(winner_cvr, ",|;|[.]") + 1,
          n_winner_country = str_count(winner_country, ",|;"))
 
-## Missing column
-data <- data %>% 
-  mutate(missing_winner_cvr = as.integer(is.na(winner_cvr)))
+## Missing winner CVR column
+winner_data <- winner_data %>% 
+  mutate(missing_winner_cvr = is.na(winner_cvr))
 
 ## Find reliably single CVRs
 # CVRs without any commas, semi-colons, periods, etc. 
