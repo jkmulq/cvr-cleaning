@@ -289,7 +289,7 @@ clean_winner_data <- clean_winner_data %>%
 # CVRs listed in the original data, which we have now separated into multiple rows).
 clean_winner_data <- clean_winner_data %>% 
   mutate(flag_winner_cvr_changed = 
-           (winner_cvr != winner_cvr_original) & 
+           coalesce(winner_cvr != winner_cvr_original, FALSE) & 
            (source == "single winners")
          )
 
