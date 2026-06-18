@@ -169,15 +169,15 @@ cat("Share of easily identifiable single CVRs:",
 
 # CVRs with spaces but whose characters are all numbers and 
 # with exactly 8 characters are likely to be single CVRs; flag these
-data <- data %>% 
-  mutate(single_cvr = ifelse(nchar(gsub(" ", "", winner_cvr)) == 8 & # removes white space
+winner_data <- winner_data %>% 
+  mutate(single_cvr = ifelse(grepl("^\\d{8}$", gsub(" ", "", winner_cvr)) & # removes white space first before checking digits
                                str_detect(winner_cvr, regex(" ")) & 
                                !str_detect(winner_cvr, regex("[.,;]")), 
-                             1, single_cvr))
+                             TRUE, single_cvr))
 
 # Print result
-cat("Number of identifiable single CVRs with separated spaces:", 
-    sum(data$single_cvr, na.rm = TRUE), "\n")
+cat("Share of identifiable single CVRs (including separated spaces):", 
+    sum(winner_data$single_cvr, na.rm = TRUE) / nrow(winner_data), "\n")
 
 # Keep object
 single_data <- data %>% 
