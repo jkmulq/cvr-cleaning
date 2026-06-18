@@ -439,5 +439,5 @@ clean_buyer_data <- clean_buyer_data %>%
 clean_buyer_data <- clean_buyer_data %>% 
   mutate(
     n_buyers_listed_original = str_count(buyer_name_original, ";") + 1,
-    flag_buyer_count_agree = n_buyers_extracted == n_buyers_listed_original
+    flag_buyer_count_agree = coalesce(n_buyers_extracted == n_buyers_listed_original, FALSE)
   )
