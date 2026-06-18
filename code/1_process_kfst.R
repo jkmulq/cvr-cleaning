@@ -379,8 +379,8 @@ clean_buyer_data <- left_join(clean_buyer_data, original_buyer_data,
 ## listed in the buyer_name field)
 clean_buyer_data <- clean_buyer_data %>% 
   mutate(
-  flag_joint_unlisted_buyers =
-    (joint_tender == "joint" & 
-       source == "multiple listed buyers")
+    flag_joint_unlisted_buyers =
+      joint_tender == "joint" &
+      source == "single buyer or joint tender with unlisted buyers"
   )
 
