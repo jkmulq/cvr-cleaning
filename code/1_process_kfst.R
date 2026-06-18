@@ -473,3 +473,9 @@ clean_buyer_data <- clean_buyer_data %>%
     n_buyers_listed_original = str_count(buyer_name_original, ";") + 1,
     flag_buyer_count_agree = coalesce(n_buyers_extracted == n_buyers_listed_original, FALSE)
   )
+
+# 4 Save 
+saveRDS(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_kfst.rds"))
+saveRDS(clean_buyer_data, file.path(dirs$clean_data, "clean_buyer_data_kfst.rds"))
+haven::write_dta(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_kfst.dta"))
+haven::write_dta(clean_buyer_data, file.path(dirs$clean_data, "clean_buyer_data_kfst.dta"))
