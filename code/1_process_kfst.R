@@ -328,17 +328,11 @@ original_buyer_data <- buyer_data # Store original for later joining
 
 ## According to the documentation (page 27, variable 19: 'Navn på ordregiver')
 ## multiple contracting authorities are separated by a semicolon.
-buyer_data <- buyer_data %>%
-  mutate(
-    flag_multiple_buyers_listed = str_detect(buyer_name_original, ";"),
-    flag_joint_unlisted_buyers =
-      joint_tender == "joint" & !flag_multiple_buyers_listed,
-    n_buyers_listed_original = if_else(
-      flag_multiple_buyers_listed,
-      str_count(buyer_name_original, ";") + 1L,
-      1L
-    )
-  )
+single_buyer_data <- buyer_data %>% 
+  filter(!str_detect(buyer_name_original, ";"))
+multi_buyer_data <- buyer_data %>%
+  filter(str_detect(buyer_name_original, ";"))
+
 
 ## If multiple buyers are explicitly listed, split them into one row per buyer.
 multiple_buyer_long <- buyer_data %>%
