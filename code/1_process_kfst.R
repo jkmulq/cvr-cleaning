@@ -226,35 +226,25 @@ multi_winner_long <- multi_winner_data_sep %>%
          source = "multiple winners") %>%
   arrange(tender_id, lot_id, winner_number)
 
-# Only keep rows where at least one of the winner identifiers are filled.
-multi_long <- multi_long %>% 
-  filter(!is.na(winner_cvr) | !is.na(winner_name) | !is.na(winner_country))
+# Filter out 'fake' winners (bind_rows() takes global max, not within lot_id max)
+multi_winner_long <- multi_winner_long %>% 
+  filter(winner_number <= max_detected)
 
-# Create flags for invalid CVR numbers
-multi_long <- multi_long %>% 
-  mutate(invalid_cvr = ifelse(nchar(winner_cvr) != 8, 1, 0))
+## 2.3 Bind single and multi winner together
+clean_winner_data <- bind_rows(
+  single_winner_data %>% 
+    select(tender_id, lot_id, winner_number, winner_cvr, winner_name, winner_country, source),
+  multi_winner_long %>%
+    select(tender_id, lot_id, winner_number, winner_cvr, winner_name, winner_country, source)
+) %>% 
+  arrange(tender_id)
 
-# Print diagnostics
-cat("Number of rows:", nrow(multi_long), "\n")
-cat("Number of unique CVR numbers in multi-winner data:", 
-    n_distinct(multi_long$winner_cvr), "\n")
-cat("Number of unique CVR names in multi-winner data:", 
-    n_distinct(multi_long$winner_name), "\n")
-cat("Number of rows with missing CVR numbers:", 
-    sum(is.na(multi_long$invalid_cvr)), "\n")
-cat("Number of rows with invalid CVR numbers (nonmissing, but not exactly 8 digits):", 
-    sum(multi_long$invalid_cvr, na.rm = TRUE), "\n")
-cat("Share of rows with invalid CVR numbers (excluding missing):", 
-    mean(multi_long$invalid_cvr, na.rm = TRUE), "\n")
-
-
-# Join original CVR and winner names
-original_multi_data <- multi_data %>% 
-  select(tender_id, lot_id, winner_cvr, winner_name, winner_country)
-multi_long <- multi_long %>% 
-  left_join(original_multi_data, 
-            by = c("tender_id", "lot_id"),
-            suffix = c("", "_original"))
+## 2.4 Join original tender data and original winner data
+clean_winner_data <- left_join(clean_winner_data, tender_lot_data, 
+                               by = c("tender_id", "lot_id"))
+clean_winner_data <- left_join(clean_winner_data, original_winner_data, 
+                               by = c("tender_id", "lot_id"),
+                               suffix = c("", "_original"))
 
 # Reorder nicely
 multi_long <- multi_long %>% 
