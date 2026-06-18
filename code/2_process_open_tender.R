@@ -76,3 +76,23 @@ if (nrow(column_discordance) > 0) {
 ## Note, data is semi colon separated.
 data_ls <- map(raw_data_paths, read.csv, sep = ";") %>% 
   setNames(raw_data_names)
+
+data <- rbindlist(
+  data_ls,
+  use.names = TRUE,
+  fill = FALSE,
+  idcol = "file_name",
+  ignore.attr = TRUE
+)
+
+data <- as_tibble(data)
+
+# 2 Split into buyers/winners/tender
+buyer_data <- data %>% 
+  select(tender_id, buyer_bodyIds)
+winner_data <- data %>% 
+  select(tender_id, bidder_bodyIds, bidder_name)
+tender_data <- data %>% 
+  select(-bidder_bodyIds, -bidder_name, -buyer_bodyIds, contains("tender"), contains("[Dd]ate"))
+
+
