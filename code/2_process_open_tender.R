@@ -72,7 +72,7 @@ if (nrow(column_discordance) > 0) {
   stop("some yearly datasets contain different columns, inspect and try again.")
 }
 
-# 2 Load data
+## 1.2 Load data
 ## Note, data is semi colon separated.
 data_ls <- map(raw_data_paths, read.csv, sep = ";") %>% 
   setNames(raw_data_names)
