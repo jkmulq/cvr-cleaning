@@ -246,25 +246,71 @@ clean_winner_data <- left_join(clean_winner_data, original_winner_data,
                                by = c("tender_id", "lot_id"),
                                suffix = c("", "_original"))
 
-# Reorder nicely
-multi_long <- multi_long %>% 
-  select(tender_id, lot_id, winner_number,
-         winner_cvr, winner_cvr_original,
-         winner_name, winner_name_original,
-         winner_country, winner_country_original)
+### Only keep lots that had winners (defined by original data)
+clean_winner_data <- clean_winner_data %>% 
+  filter(n_lot_winners_original > 0)
 
-# Flag when number of winners from extraction process doesn't match
-# the n_lot_winners provided in the original data.
-multi_long <- multi_long %>%
-  left_join(
-    tender_lot_data %>%
-      select(tender_id, lot_id, n_lot_winners),
-    by = c("tender_id", "lot_id")
-  ) %>%
-  mutate(n_extracted_winners = n(), .by = lot_id)
-multi_long <- multi_long %>%
-  mutate(flag_winner_count_mismatch = ifelse(n_extracted_winners != n_lot_winners, 
-                                        1, 0))
+## 2.5 Winners
+# Flag valid CVR numbers (exactly 8 digits, no letters or special characters)
+# missing = NA, valid = FALSE, invalid = TRUE
+clean_winner_data <- clean_winner_data %>% 
+  mutate(valid_cvr = grepl("^\\d{8}$", winner_cvr))
+
+# Flag transformed winner CVR number (not equal to original winner CVR number)
+# Don't do this for multiple winners because the original winner CVR number 
+# is not necessarily wrong in this case (it may just be the first of multiple 
+# CVRs listed in the original data, which we have now separated into multiple rows).
+clean_winner_data <- clean_winner_data %>% 
+  mutate(flag_winner_cvr_changed = 
+           (winner_cvr != winner_cvr_original) & 
+           (source == "single winners")
+         )
+
+# Flag missing CVR number
+clean_winner_data <- clean_winner_data %>%
+  mutate(flag_missing_winner_cvr =
+      is.na(winner_cvr) | 
+        winner_cvr == ""
+  )
+
+# Flag missing winner name
+clean_winner_data <- clean_winner_data %>%
+  mutate(flag_missing_winner_name = 
+           is.na(winner_name) | 
+           winner_name == ""
+  )
+
+
+# Foreign winner
+clean_winner_data <- clean_winner_data %>%
+  mutate(flag_foreign_winner = winner_country != "DK")
+
+
+# Flag when n winners extracted agrees with original data
+clean_winner_data <- clean_winner_data %>% 
+  mutate(n_winners_extracted = n(), .by = c("tender_id", "lot_id"))
+clean_winner_data <- clean_winner_data %>%
+  mutate(flag_winner_count_agree = 
+           n_winners_extracted == n_lot_winners_original)
+
+# Single bidder
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_single_bidder = n_bids_received == 1
+  )
+
+# Multi-lot tender
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_multilot = n_lots > 1
+  )
+
+# Cancelled procurement
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_cancelled = tender_cancelled == 1
+  )
+
 
 # Print diagnostics
 cat("Share of obs. with winner count mismatch:", 
