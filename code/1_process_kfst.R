@@ -316,7 +316,7 @@ clean_winner_data <- clean_winner_data %>%
   mutate(n_winners_extracted = n(), .by = c("tender_id", "lot_id"))
 clean_winner_data <- clean_winner_data %>%
   mutate(flag_winner_count_agree = 
-           n_winners_extracted == n_lot_winners_original)
+           coalesce(n_winners_extracted == n_lot_winners_original, FALSE))
 
 # Single bidder
 clean_winner_data <- clean_winner_data %>%
