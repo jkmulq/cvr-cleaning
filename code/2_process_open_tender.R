@@ -13,6 +13,7 @@ source(here::here("config.R"))
 library(haven)
 library(tidyverse)
 library(readxl)
+library(data.table)
 
 # Paths
 raw_data_dir <- dirs$raw_data
