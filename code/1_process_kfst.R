@@ -333,6 +333,11 @@ single_buyer_data <- buyer_data %>%
 multi_buyer_data <- buyer_data %>%
   filter(str_detect(buyer_name, ";"))
 
+## 3.2 Split multiple buyers into one row per buyer.
+## Note, I don't need the extract_multiple_cvr() function because 
+## the documentation is clear about how multiple buyers are separated
+multiple_buyer_long <- multi_buyer_data %>%
+  separate_rows(buyer_name, sep = ";")
 
 ## If multiple buyers are explicitly listed, split them into one row per buyer.
 multiple_buyer_long <- buyer_data %>%
