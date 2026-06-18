@@ -279,9 +279,9 @@ clean_winner_data <- clean_winner_data %>%
 
 ## 2.6 Other winner quality flags
 # Flag valid CVR numbers (exactly 8 digits, no letters or special characters)
-# missing = NA, valid = FALSE, invalid = TRUE
+# missing/invalid = FALSE, valid = TRUE
 clean_winner_data <- clean_winner_data %>% 
-  mutate(valid_cvr = grepl("^\\d{8}$", winner_cvr))
+  mutate(valid_cvr = coalesce(str_detect(winner_cvr, "^\\d{8}$"), FALSE))
 
 # Flag transformed winner CVR number (not equal to original winner CVR number)
 # Don't do this for multiple winners because the original winner CVR number 
