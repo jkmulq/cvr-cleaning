@@ -401,7 +401,7 @@ clean_buyer_data <- bind_rows(single_buyer_data, multiple_buyer_long) %>%
   select(tender_id, lot_id, buyer_number, buyer_name, source)
 
 ## 3.6 Join original tender data and original buyer data
-clean_buyer_data <- left_join(clean_buyer_data, tender_lot_data, 
+clean_buyer_data <- left_join(clean_buyer_data, tender_lot_data %>% select(-buyer_name), # Don't need to add buyer_name here. 
                                by = c("tender_id", "lot_id"))
 clean_buyer_data <- left_join(clean_buyer_data, original_buyer_data, 
                                by = c("tender_id", "lot_id"),
