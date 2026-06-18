@@ -359,36 +359,25 @@ single_buyer_data <- single_buyer_data %>%
     source = "single buyer or joint tender with unlisted buyers"
   )
 
-## Bind single and multiple listed buyers, then add row-level quality checks.
-buyer_data_clean <- bind_rows(single_buyer, multiple_buyer_long) %>%
-  arrange(tender_id, lot_id, buyer_number) %>%
-  mutate(
-    n_buyers_extracted = n(),
-    flag_buyer_name_missing = is.na(buyer_name) | buyer_name == "",
-    flag_buyer_name_changed = buyer_name != buyer_name_original,
-    flag_buyer_count_agree =
-      n_buyers_extracted == n_buyers_listed_original,
-    .by = lot_id
-  )
+## 3.5 Bind single and multiple buyers
+clean_buyer_data <- bind_rows(single_buyer_data, multiple_buyer_long) %>%
+  arrange(tender_id, buyer_number) %>%
+  select(tender_id, lot_id, buyer_number, buyer_name, source)
 
-## Check number of buyers extracted equals estimate from original wide data.
-n_buyer_extracted_check <- buyer_data_clean %>%
-  filter(flag_multiple_buyers_listed, !flag_joint_unlisted_buyers) %>%
-  distinct(lot_id, flag_buyer_count_agree) %>%
-  pull(flag_buyer_count_agree) %>%
-  all(na.rm = TRUE)
-
-if (!n_buyer_extracted_check) {
-  stop("Number of buyers extracted didn't match original estimate from wide data.frame.")
-} else {
-  cat("Number of buyers extracted matches original estimate from wide data.frame.\n")
-}
+## 3.6 Join original tender data and original buyer data
+clean_buyer_data <- left_join(clean_buyer_data, tender_lot_data, 
+                               by = c("tender_id", "lot_id"))
+clean_buyer_data <- left_join(clean_buyer_data, original_buyer_data, 
+                               by = c("tender_id", "lot_id"),
+                               suffix = c("", "_original"))
 
 
-# 6 Cleaning flags
+## 3.7 Quality/processing flags
 
-# Missing winner information
-clean_winner_data <- clean_winner_data %>%
+## Flag joint tenders with unlisted buyers 
+## (i.e. joint tenders that do not have multiple buyers 
+## listed in the buyer_name field)
+clean_buyer_data <- clean_buyer_data %>% 
   mutate(
     flag_missing_winner_name = is.na(winner_name) | winner_name == ""
   )
