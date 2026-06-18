@@ -14,13 +14,13 @@ This file tracks development work against the current codebase and the project b
   - The brief expects prefixes, spaces, hyphens, punctuation, and other non-numeric characters to be cleaned where unambiguous.
   - Current gap: the script identifies some single CVRs and splits some multi-CVR fields, but it does not yet apply a general CVR standardization function.
   - **Conclusion**: Most of the punctuation actually relates to winners without CVR numbers or names. I think the current process works better, and I don't think standardisation is needed in most cases.
-- [ ] Add explicit manual-review flags.
+- [x] Add explicit manual-review flags.
   - Values that cannot be cleaned or separated unambiguously should be retained and flagged.
-  - Current gap: flags cover missing and invalid CVRs, but do not yet distinguish successful standardization, multiple-CVR extraction, ambiguous values, and manual-review cases.
-- [ ] Add a stable original-observation identifier before expanding records.
+  - **Conclusion**: flags cover missing and invalid CVRs, and also have standardisation and cleaning/processing flags.
+- [x] Add a stable original-observation identifier before expanding records.
   - The brief asks for expanded winner or bidder rows to link back to the original procurement record.
-  - Current gap: the workflow uses `tender_id` and `lot_id`, but an explicit original row or record id would make expansion safer and easier to audit.
-- [ ] Add reproducible KFST outputs.
+  - **Conclusion**: the workflow uses `tender_id` and `lot_id` as the explicit flag. These two variables uniquely index the tender information in the original data. 
+- [x] Add reproducible KFST outputs.
   - Target: write final cleaned data and diagnostics to `data/clean/`, including a compact summary of cleaning outcomes.
   - **Conclusion**: Will put separate tables for `clean_winnner_data` and `clean_buyer_data`. `clean_winner_data` will contain buyer-winner matches, but it won't have multiple buyers separated out row-by-row.
 
