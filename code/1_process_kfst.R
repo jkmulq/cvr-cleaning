@@ -180,9 +180,12 @@ cat("Share of identifiable single CVRs (including separated spaces):",
     sum(winner_data$single_cvr, na.rm = TRUE) / nrow(winner_data), "\n")
 
 # Keep object
-single_data <- data %>% 
-  filter(single_cvr == 1)
-multi_data <- data %>% 
+single_winner_data <- winner_data %>% 
+  filter(single_cvr) %>% 
+  mutate(winner_number = 1, 
+         source = "single winners")
+
+multi_winner_data <- winner_data %>% 
   filter(is.na(single_cvr))
 
 # 3 Multiple winners
