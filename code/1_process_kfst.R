@@ -250,7 +250,34 @@ clean_winner_data <- left_join(clean_winner_data, original_winner_data,
 clean_winner_data <- clean_winner_data %>% 
   filter(n_lot_winners_original > 0)
 
-## 2.5 Winners
+## 2.5 Clean up/standardise CVR numbers
+## Treats NAs as FALSE. Contains flags everytime an operation executes
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    # Remove white space
+    flag_cvr_ws = coalesce(str_detect(winner_cvr, "\\s"), FALSE),
+    winner_cvr = str_remove_all(winner_cvr, "\\s+"),
+    
+    # Remove hyphens
+    flag_cvr_hyphen = coalesce(str_detect(winner_cvr, "-"), FALSE),
+    winner_cvr = str_remove_all(winner_cvr, "-"),
+    
+    # Remove alphabetical letters
+    flag_cvr_alphabet = coalesce(str_detect(winner_cvr, "[[:alpha:]]"), FALSE),
+    winner_cvr = str_remove_all(winner_cvr, "[[:alpha:]]"),
+    
+    # Remove all punctuation
+    flag_cvr_punct = coalesce(str_detect(winner_cvr, "[[:punct:]]"), FALSE),
+    winner_cvr = str_remove_all(winner_cvr, "[[:punct:]]+"),
+    
+    # Flag if any standardisation performed
+    flag_cvr_standardised = flag_cvr_ws | 
+      flag_cvr_hyphen | 
+      flag_cvr_alphabet | 
+      flag_cvr_punct
+    )
+
+## 2.6 Other winner quality flags
 # Flag valid CVR numbers (exactly 8 digits, no letters or special characters)
 # missing = NA, valid = FALSE, invalid = TRUE
 clean_winner_data <- clean_winner_data %>% 
