@@ -339,15 +339,14 @@ multi_buyer_data <- buyer_data %>%
 multiple_buyer_long <- multi_buyer_data %>%
   separate_rows(buyer_name, sep = ";")
 
-## If multiple buyers are explicitly listed, split them into one row per buyer.
-multiple_buyer_long <- buyer_data %>%
-  filter(flag_multiple_buyers_listed, !flag_joint_unlisted_buyers) %>%
+## 3.3 Clean up/add buyer_numbers
+multiple_buyer_long <- multi_buyer_data %>%
   separate_rows(buyer_name, sep = ";") %>%
   mutate(
-    buyer_name = str_squish(buyer_name), # Clean up white space
+    buyer_name = str_squish(buyer_name),
     buyer_number = row_number(),
     source = "multiple listed buyers",
-    .by = lot_id
+    .by = c(tender_id, lot_id)
   )
 
 ## If only one buyer is listed, keep one row. Joint tenders with unlisted buyers
