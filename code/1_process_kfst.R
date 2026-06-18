@@ -353,7 +353,6 @@ multiple_buyer_long <- multiple_buyer_long %>%
 ## remain one row because the unlisted buyers cannot be separated from this field.
 single_buyer_data <- single_buyer_data %>%
   mutate(
-    buyer_name = str_squish(buyer_name),
     buyer_number = 1,
     source = "single buyer or joint tender with unlisted buyers"
   )
