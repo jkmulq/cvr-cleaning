@@ -416,7 +416,7 @@ clean_buyer_data <- left_join(clean_buyer_data, original_buyer_data,
 clean_buyer_data <- clean_buyer_data %>% 
   mutate(
     flag_joint_unlisted_buyers =
-      joint_tender == "joint" &
+      coalesce(joint_tender == "joint", FALSE) &
       source == "single buyer or joint tender with unlisted buyers"
   )
 
@@ -424,7 +424,7 @@ clean_buyer_data <- clean_buyer_data %>%
 clean_buyer_data <- clean_buyer_data %>%
   mutate(
     flag_single_buyer_name_changed = 
-      (buyer_name != buyer_name_original) &
+      coalesce(buyer_name != buyer_name_original, FALSE) &
       (source == "single buyer or joint tender with unlisted buyers")
   ) 
 
