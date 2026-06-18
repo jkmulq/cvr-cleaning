@@ -324,12 +324,14 @@ buyer_data <- data %>%
   )
 original_buyer_data <- buyer_data # Store original for later joining
 
+## 3.1 Separate into single and multiple buyer tenders
 ## According to the documentation (page 27, variable 19: 'Navn på ordregiver')
 ## multiple contracting authorities are separated by a semicolon.
+## Buyer name is always populated (no NAs); so this split completely covers the data
 single_buyer_data <- buyer_data %>% 
-  filter(!str_detect(buyer_name_original, ";"))
+  filter(!str_detect(buyer_name, ";"))
 multi_buyer_data <- buyer_data %>%
-  filter(str_detect(buyer_name_original, ";"))
+  filter(str_detect(buyer_name, ";"))
 
 
 ## If multiple buyers are explicitly listed, split them into one row per buyer.
