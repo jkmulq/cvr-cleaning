@@ -382,3 +382,24 @@ clean_buyer_data <- clean_buyer_data %>%
       source == "single buyer or joint tender with unlisted buyers"
   )
 
+# Flag single buyer name changes and missingness
+clean_buyer_data <- clean_buyer_data %>%
+  mutate(
+    flag_single_buyer_name_changed = 
+      (buyer_name != buyer_name_original) &
+      (source == "single buyer or joint tender with unlisted buyers")
+  ) 
+
+# Flag missing buyer names
+clean_buyer_data <- clean_buyer_data %>% 
+  mutate(flag_missing_buyer_name = is.na(buyer_name) | buyer_name == "")
+
+# Flag extracted n_buyers with implied number from original buyer name
+clean_buyer_data <- clean_buyer_data %>% 
+  mutate(n_buyers_extracted = n(), .by = c(tender_id, lot_id))
+
+clean_buyer_data <- clean_buyer_data %>% 
+  mutate(
+    n_buyers_listed_original = str_count(buyer_name_original, ";") + 1,
+    flag_buyer_count_agree = n_buyers_extracted == n_buyers_listed_original
+  )
