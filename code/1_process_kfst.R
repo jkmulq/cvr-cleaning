@@ -280,11 +280,9 @@ clean_winner_data <- clean_winner_data %>%
            winner_name == ""
   )
 
-
 # Foreign winner
 clean_winner_data <- clean_winner_data %>%
   mutate(flag_foreign_winner = winner_country != "DK")
-
 
 # Flag when n winners extracted agrees with original data
 clean_winner_data <- clean_winner_data %>% 
