@@ -251,7 +251,8 @@ clean_winner_data <- clean_winner_data %>%
   filter(n_lot_winners_original > 0)
 
 ## 2.5 Clean up/standardise CVR numbers
-## Treats NAs as FALSE. Contains flags everytime an operation executes
+## Cleaning flags treat NAs as FALSE: a missing source value is not counted as
+## evidence that a cleaning operation was performed.
 clean_winner_data <- clean_winner_data %>%
   mutate(
     # Remove white space
@@ -271,13 +272,18 @@ clean_winner_data <- clean_winner_data %>%
     winner_cvr = str_remove_all(winner_cvr, "[[:punct:]]+"),
     
     # Flag if any standardisation performed
-    flag_cvr_standardised = flag_cvr_ws | 
-      flag_cvr_hyphen | 
-      flag_cvr_alphabet | 
-      flag_cvr_punct
+    flag_cvr_standardised = coalesce(
+      flag_cvr_ws | 
+        flag_cvr_hyphen | 
+        flag_cvr_alphabet | 
+        flag_cvr_punct,
+      FALSE
+    )
     )
 
 ## 2.6 Other winner quality flags
+## Quality flags treat NAs as FALSE: missing values are captured by explicit
+## missingness flags, not by propagating NA through boolean indicators.
 # Flag valid CVR numbers (exactly 8 digits, no letters or special characters)
 # missing/invalid = FALSE, valid = TRUE
 clean_winner_data <- clean_winner_data %>% 
@@ -289,64 +295,86 @@ clean_winner_data <- clean_winner_data %>%
 # CVRs listed in the original data, which we have now separated into multiple rows).
 clean_winner_data <- clean_winner_data %>% 
   mutate(flag_winner_cvr_changed = 
-           coalesce(winner_cvr != winner_cvr_original, FALSE) & 
-           (source == "single winners")
+           coalesce(
+             winner_cvr != winner_cvr_original & source == "single winners",
+             FALSE
+           )
          )
 
 # Flag missing CVR number
 clean_winner_data <- clean_winner_data %>%
   mutate(flag_missing_winner_cvr =
-      is.na(winner_cvr) | 
-        winner_cvr == ""
+      coalesce(
+        is.na(winner_cvr) | winner_cvr == "",
+        FALSE
+      )
   )
 
 # Flag missing winner name
 clean_winner_data <- clean_winner_data %>%
   mutate(flag_missing_winner_name = 
-           is.na(winner_name) | 
-           winner_name == ""
+           coalesce(
+             is.na(winner_name) | winner_name == "",
+             FALSE
+           )
   )
 
 # Foreign winner
 clean_winner_data <- clean_winner_data %>%
-  mutate(flag_foreign_winner = winner_country != "DK")
+  mutate(flag_foreign_winner = coalesce(winner_country != "DK", FALSE))
+
+# Missing country
+clean_winner_data <- clean_winner_data %>%
+  mutate(flag_missing_winner_country = coalesce(is.na(winner_country), FALSE))
 
 # Flag when n winners extracted agrees with original data
 clean_winner_data <- clean_winner_data %>% 
   mutate(n_winners_extracted = n(), .by = c("tender_id", "lot_id"))
 clean_winner_data <- clean_winner_data %>%
-  mutate(flag_winner_count_agree = 
-           coalesce(n_winners_extracted == n_lot_winners_original, FALSE))
+  mutate(flag_mismatch_winner_count = 
+           coalesce(n_winners_extracted != n_lot_winners_original, FALSE))
 
 # Single bidder
 clean_winner_data <- clean_winner_data %>%
   mutate(
-    flag_single_bidder = n_bids_received == 1
+    flag_single_bidder = coalesce(n_bids_received == 1, FALSE)
   )
 
 # Multi-lot tender
 clean_winner_data <- clean_winner_data %>%
   mutate(
-    flag_multilot = n_lots > 1
+    flag_multilot = coalesce(n_lots > 1, FALSE)
   )
 
 # Cancelled procurement
 clean_winner_data <- clean_winner_data %>%
-  mutate(
-    flag_cancelled = tender_cancelled == 1
-  )
+  mutate(flag_cancelled = coalesce(tender_cancelled != "Nej", FALSE))
 
 # Observation review
 clean_winner_data <- clean_winner_data %>%
   mutate(
-    flag_invalid_winner_cvr =
-      !flag_missing_winner_cvr & !valid_cvr,
-    flag_missing_cvr_with_name =
+    flag_missing_cvr_with_name = coalesce(
       flag_missing_winner_cvr & !flag_missing_winner_name,
-    flag_manual_review_winner =
-      flag_invalid_winner_cvr |
-      !flag_winner_count_agree |
-      flag_missing_cvr_with_name
+      FALSE
+    ),
+    flag_review_cvr = coalesce(!flag_missing_winner_cvr & !valid_cvr, FALSE),
+    flag_review_n_winners = coalesce(flag_mismatch_winner_count, FALSE), 
+    flag_no_winner_info = coalesce(
+      flag_missing_winner_cvr & 
+        flag_missing_winner_name & 
+        flag_missing_winner_country,
+      FALSE
+    ),
+    flag_verify_cvr_external = coalesce(
+      case_when(
+        flag_missing_cvr_with_name ~ TRUE, 
+        flag_review_cvr ~ TRUE, 
+        flag_no_winner_info ~ FALSE, # Cannot verify without information.
+        valid_cvr ~ FALSE,
+        TRUE ~ FALSE
+      ),
+      FALSE
+    )
   )
 
 # 3 Buyers
