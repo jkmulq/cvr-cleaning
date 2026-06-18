@@ -309,7 +309,18 @@ clean_winner_data <- clean_winner_data %>%
     flag_cancelled = tender_cancelled == 1
   )
 
-
+# Observation review
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_invalid_winner_cvr =
+      !flag_missing_winner_cvr & !valid_cvr,
+    flag_missing_cvr_with_name =
+      flag_missing_winner_cvr & !flag_missing_winner_name,
+    flag_manual_review_winner =
+      flag_invalid_winner_cvr |
+      !flag_winner_count_agree |
+      flag_missing_cvr_with_name
+  )
 
 # 3 Buyers
 ## Buyers do not have CVR numbers, but they have names.
