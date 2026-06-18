@@ -349,13 +349,13 @@ multiple_buyer_long <- multi_buyer_data %>%
     .by = c(tender_id, lot_id)
   )
 
+## 3.4 Clean single buyer data
 ## If only one buyer is listed, keep one row. Joint tenders with unlisted buyers
 ## remain one row because the unlisted buyers cannot be separated from this field.
-single_buyer <- buyer_data %>%
-  filter(!flag_multiple_buyers_listed | flag_joint_unlisted_buyers) %>%
+single_buyer_data <- single_buyer_data %>%
   mutate(
     buyer_name = str_squish(buyer_name),
-    buyer_number = 1L,
+    buyer_number = 1,
     source = "single buyer or joint tender with unlisted buyers"
   )
 
