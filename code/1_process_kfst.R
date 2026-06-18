@@ -15,14 +15,14 @@ library(tidyverse)
 library(readxl)
 
 # Paths
-data_dir           <- dirs$raw_data
+raw_data_dir           <- dirs$raw_data
 raw_data_name      <- "udbudsdata_kfst.xlsx"
 
 # Source functions
 source(file.path(PROJECT_DIR, "code", "functions.R"))
 
 # 1 Load data
-data <- read_excel(file.path(data_dir, "kfst", raw_data_name), sheet = "2.0 Udbudsdata")
+data <- read_excel(file.path(raw_data_dir, "kfst", raw_data_name), sheet = "2.0 Udbudsdata")
 
 # Rename
 data <- data %>% 
