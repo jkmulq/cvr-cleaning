@@ -326,6 +326,8 @@ buyer_data <- data %>%
     )
   )
 
+original_buyer_data <- buyer_data # Store original for later joining
+
 ## According to the documentation (page 27, variable 19: 'Navn på ordregiver')
 ## multiple contracting authorities are separated by a semicolon.
 buyer_data <- buyer_data %>%
