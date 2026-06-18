@@ -157,15 +157,15 @@ winner_data <- winner_data %>%
 
 ## Find reliably single CVRs
 # CVRs without any commas, semi-colons, periods, etc. 
-# and with exactly 8 characters are likely to be single CVRs; flag these
-data <- data %>% 
-  mutate(single_cvr = ifelse(nchar(winner_cvr) == 8 & 
+# and with exactly 8 digits are likely to be single CVRs; flag these
+winner_data <- winner_data %>% 
+  mutate(single_cvr = ifelse(grepl("^\\d{8}$", winner_cvr) & 
                                !str_detect(winner_cvr, regex("[.,; ]")), 
-                             1, NA))
+                             TRUE, NA))
 
 # Print result
-cat("Number of easily identifiable single CVRs:", 
-    sum(data$single_cvr, na.rm = TRUE), "\n")
+cat("Share of easily identifiable single CVRs:", 
+    sum(winner_data$single_cvr, na.rm = TRUE) / nrow(winner_data), "\n")
 
 # CVRs with spaces but whose characters are all numbers and 
 # with exactly 8 characters are likely to be single CVRs; flag these
