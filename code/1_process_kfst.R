@@ -318,14 +318,12 @@ clean_winner_data <- clean_winner_data %>%
 buyer_data <- data %>%
   select(tender_id, lot_id, buyer_name, joint_tender) %>%
   mutate(
-    buyer_name_original = buyer_name,
     joint_tender = case_when(
       joint_tender == "Enkelt" ~ "single",
       joint_tender == "Fælles" ~ "joint",
       TRUE ~ NA_character_
     )
   )
-
 original_buyer_data <- buyer_data # Store original for later joining
 
 ## According to the documentation (page 27, variable 19: 'Navn på ordregiver')
