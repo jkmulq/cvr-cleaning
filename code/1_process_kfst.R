@@ -443,22 +443,26 @@ clean_buyer_data <- left_join(clean_buyer_data, original_buyer_data,
 ## listed in the buyer_name field)
 clean_buyer_data <- clean_buyer_data %>% 
   mutate(
-    flag_joint_unlisted_buyers =
-      coalesce(joint_tender == "joint", FALSE) &
-      source == "single buyer or joint tender with unlisted buyers"
+    flag_joint_unlisted_buyers = coalesce(
+      joint_tender == "joint" &
+        source == "single buyer or joint tender with unlisted buyers",
+      FALSE
+    )
   )
 
 # Flag single buyer name changes and missingness
 clean_buyer_data <- clean_buyer_data %>%
   mutate(
-    flag_single_buyer_name_changed = 
-      coalesce(buyer_name != buyer_name_original, FALSE) &
-      (source == "single buyer or joint tender with unlisted buyers")
-  ) 
+    flag_single_buyer_name_changed = coalesce(
+      buyer_name != buyer_name_original &
+        source == "single buyer or joint tender with unlisted buyers",
+      FALSE
+    )
+  )
 
 # Flag missing buyer names
 clean_buyer_data <- clean_buyer_data %>% 
-  mutate(flag_missing_buyer_name = is.na(buyer_name) | buyer_name == "")
+  mutate(flag_missing_buyer_name = coalesce(is.na(buyer_name) | buyer_name == "", FALSE))
 
 # Flag extracted n_buyers with implied number from original buyer name
 clean_buyer_data <- clean_buyer_data %>% 
