@@ -340,8 +340,7 @@ multiple_buyer_long <- multi_buyer_data %>%
   separate_rows(buyer_name, sep = ";")
 
 ## 3.3 Clean up/add buyer_numbers
-multiple_buyer_long <- multi_buyer_data %>%
-  separate_rows(buyer_name, sep = ";") %>%
+multiple_buyer_long <- multiple_buyer_long %>%
   mutate(
     buyer_name = str_squish(buyer_name),
     buyer_number = row_number(),
