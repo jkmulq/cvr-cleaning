@@ -312,32 +312,8 @@ clean_winner_data <- clean_winner_data %>%
   )
 
 
-# Print diagnostics
-cat("Share of obs. with winner count mismatch:", 
-    mean(multi_long$flag_winner_count_mismatch, na.rm = TRUE), "\n")
-cat("Share of lots with winner count mismatch:", 
-    mean(multi_long %>% 
-           distinct(lot_id, flag_winner_count_mismatch) %>% 
-           .$flag_winner_count_mismatch, na.rm = TRUE), "\n")
 
-
-# 4 Bind
-clean_winner_data <- bind_rows(
-  single_data %>% 
-    select(tender_id, lot_id, n_lot_winners, n_bids_received, tender_cancelled,
-           winner_cvr, winner_name, winner_country),
-  multi_long %>%
-    select(tender_id, lot_id, n_lot_winners, n_bids_received, tender_cancelled,
-           winner_cvr, winner_name, winner_country)
-) %>% 
-  arrange(tender_id)
-
-## 4.1 Data munging
-clean_winner_data <- clean_winner_data %>% 
-  mutate(n_winners_extracted = n(), .by = lot_id)
-
-
-# 5 Buyers
+# 3 Buyers
 ## Buyers do not have CVR numbers, but they have names.
 buyer_data <- data %>%
   select(tender_id, lot_id, buyer_name, joint_tender) %>%
