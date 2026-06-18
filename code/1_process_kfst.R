@@ -49,7 +49,7 @@ data <- data %>%
 
 # Order columns nicely
 data <- data %>% 
-  select(tender_id, lot_id, lot_number, 
+  select(tender_id, lot_id, lot_number,
          n_lots, n_lots_contracted, n_lot_winners,
          pub_date, award_date,
          buyer_name,
