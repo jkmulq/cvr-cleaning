@@ -71,7 +71,7 @@ if (all(col_name_diffs)) {
 
 ## 1.2 Load data
 # Note, data is semi colon separated.
-data_ls <- map(raw_data_paths, data.table::fread, sep = ";") %>% 
+data_ls <- map(raw_data_paths, data.table::fread, sep = ";", colClasses = "character") %>% 
   setNames(raw_data_names)
 
 # Bind into one dataframe
