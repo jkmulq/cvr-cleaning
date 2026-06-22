@@ -161,3 +161,47 @@ valid_colon_rows <- c(139043)
 winner_data <- winner_data %>% 
   mutate(delim_flag_valid_colon = row_id %in% valid_colon_rows,
          flag_review_colon = coalesce(delim_flag_colon, FALSE) & !delim_flag_valid_colon)
+
+# Check manually accepted row_id's still present in the data
+missing_valid_delim_rows <- setdiff(
+  c(valid_slash_rows, valid_ampersand_rows, valid_colon_rows),
+  winner_data$row_id
+)
+
+if (length(missing_valid_delim_rows) > 0) {
+  print(missing_valid_delim_rows)
+  stop("Some manually reviewed delimiter row IDs are not present in winner_data.")
+}
+
+# Check accepted row_id's have expected delimiter
+invalid_valid_delim_rows <- winner_data %>%
+  filter(
+    delim_flag_valid_slash & !delim_flag_slash |
+      delim_flag_valid_ampersand & !delim_flag_ampersand |
+      delim_flag_valid_colon & !delim_flag_colon
+  ) %>%
+  select(row_id, bidder_bodyIds)
+
+if (nrow(invalid_valid_delim_rows) > 0) {
+  print(invalid_valid_delim_rows)
+  stop("Some manually reviewed delimiter row IDs no longer have the expected delimiter.")
+}
+
+# Flag all failures for manual review 
+winner_data <- winner_data %>% 
+  mutate(flag_manual_review = flag_review_slash | flag_review_ampersand | flag_review_colon,
+         manual_review_reason = ifelse(flag_review_slash | flag_review_ampersand | flag_review_colon, 
+                                       "check whether bidder ID contains multiple winning firms",
+                                       NA))
+
+# Convert valid delims to semi-colon
+winner_data <- winner_data %>%
+  mutate(
+    bidder_bodyIds = if_else(delim_flag_valid_comma, str_replace_all(bidder_bodyIds, fixed(","), ";"), bidder_bodyIds),
+    bidder_bodyIds = if_else(delim_flag_valid_pipe, str_replace_all(bidder_bodyIds, fixed("|"), ";"), bidder_bodyIds),
+    bidder_bodyIds = if_else(delim_flag_valid_slash, str_replace_all(bidder_bodyIds, fixed("/"), ";"), bidder_bodyIds),
+    bidder_bodyIds = if_else(delim_flag_valid_ampersand, str_replace_all(bidder_bodyIds, fixed("&"), ";"), bidder_bodyIds),
+    bidder_bodyIds = if_else(delim_flag_valid_colon, str_replace_all(bidder_bodyIds, fixed(":"), ";"), bidder_bodyIds)
+  )
+
+## 2.2
