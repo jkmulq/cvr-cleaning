@@ -67,4 +67,25 @@ if (all(col_name_diffs == 0)) {
   print("some column names do not concord across datasets")
 }
 
+## 1.2 Load data
+# Note, data is semi colon separated.
+data_ls <- map(raw_data_paths, read.csv, sep = ";") %>% 
+  setNames(raw_data_names)
+
+# Bind into one dataframe
+# Ignoring attributes because read.csv() is bad at guessing column types
+data <- rbindlist(
+  data_ls,
+  use.names = TRUE,
+  fill = FALSE,
+  idcol = "dataset",
+  ignore.attr = TRUE
+)
+
+data <- as_tibble(data)
+
+# Keep a stable reference to the original OpenTender row.
+# This lets expanded winner rows point back to the raw bid row.
+data <- data %>%
+  mutate(row_id = row_number())
 
