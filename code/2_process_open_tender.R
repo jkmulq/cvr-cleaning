@@ -50,13 +50,12 @@ col_name_diffs <- apply(data_name_combos, MARGIN = 2, FUN = function(col) {
   df1 <- data_col_names %>% 
     filter(dataset == col[1])
   
-  # Data names corresponding to col element 1
+  # Data names corresponding to col element 2
   df2 <- data_col_names %>% 
     filter(dataset == col[2])
   
-  # Find length of set difference
+  # Check whether the two datasets have exactly the same column names
   out <- setequal(df1$value, df2$value)
-  out <- length(out)
   return(out)
 
 })
