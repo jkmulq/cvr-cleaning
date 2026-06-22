@@ -33,75 +33,38 @@ raw_data_paths <- file.path(raw_data_dir, "OpenTender", raw_data_names)
 
 # 1 Data
 ## 1.1 Check column-name concordance across yearly files
-opentender_schema <- tibble(
-  dataset = raw_data_names,
-  path = raw_data_paths,
-  year = str_extract(raw_data_names, "\\d{4}")
-) %>%
-  mutate(
-    column_names = map(path, ~ names(read.csv(.x, sep = ";", nrows = 0, check.names = FALSE))),
-    n_columns = map_int(column_names, length)
-  )
-
-column_presence <- opentender_schema %>%
-  select(dataset, year, column_names) %>%
-  unnest_longer(column_names, values_to = "column_name") %>%
-  distinct(dataset, year, column_name) %>%
-  mutate(present = TRUE)
-
-column_concordance <- crossing(
-  column_name = sort(unique(column_presence$column_name)),
-  dataset = raw_data_names
-) %>%
-  left_join(column_presence, by = c("column_name", "dataset")) %>%
-  mutate(present = replace_na(present, FALSE)) %>%
-  select(column_name, dataset, present) %>%
-  pivot_wider(names_from = dataset, values_from = present) %>%
-  rowwise() %>%
-  mutate(
-    n_datasets = sum(c_across(all_of(raw_data_names))),
-    present_in_all = n_datasets == length(raw_data_names),
-    missing_from = paste(raw_data_names[!c_across(all_of(raw_data_names))], collapse = "; ")
-  ) %>%
-  ungroup() %>%
-  arrange(present_in_all, desc(n_datasets), column_name)
-
-column_concordance_summary <- column_concordance %>%
-  summarise(
-    n_datasets = length(raw_data_names),
-    n_unique_columns = n(),
-    n_columns_in_all_datasets = sum(present_in_all),
-    n_columns_not_in_all_datasets = sum(!present_in_all)
-  )
-
-column_discordance <- column_concordance %>%
-  filter(!present_in_all)
-
-if (nrow(column_discordance) > 0) {
-  stop("some yearly datasets contain different columns, inspect and try again.")
-}
-
-## 1.2 Load data
-## Note, data is semi colon separated.
-data_ls <- map(raw_data_paths, read.csv, sep = ";") %>% 
+### 1.1.1 Extract columns names into a list and append to schema
+data_col_names <- map(raw_data_paths, read.csv,
+                      sep = ";", nrows = 0, check.names = FALSE) %>% 
   setNames(raw_data_names)
+data_col_names <- map(data_col_names, ~as_tibble(names(.x))) # Extract the column names
+data_col_names <- bind_rows(data_col_names, .id = "dataset")
 
-data <- rbindlist(
-  data_ls,
-  use.names = TRUE,
-  fill = FALSE,
-  idcol = "file_name",
-  ignore.attr = TRUE
-)
+### 1.1.2 Check intersection of all combinations
+data_name_combos <- combn(raw_data_names, m = 2)
 
-data <- as_tibble(data)
+# Apply over columns of combinations the difference in column names
+col_name_diffs <- apply(data_name_combos, MARGIN = 2, FUN = function(col) {
+  
+  # Data names corresponding to col element 1
+  df1 <- data_col_names %>% 
+    filter(dataset == col[1])
+  
+  # Data names corresponding to col element 1
+  df2 <- data_col_names %>% 
+    filter(dataset == col[2])
+  
+  # Find length of set difference
+  out <- setdiff(df1$value, df2$value)
+  out <- length(out)
+  return(out)
 
-# 2 Split into buyers/winners/tender
-buyer_data <- data %>% 
-  select(tender_id, buyer_bodyIds)
-winner_data <- data %>% 
-  select(tender_id, bidder_bodyIds, bidder_name)
-tender_data <- data %>% 
-  select(-bidder_bodyIds, -bidder_name, -buyer_bodyIds, contains("tender"), contains("[Dd]ate"))
+})
+
+if (all(col_name_diffs == 0)) {
+  print("all column names concord across datasets")
+} else {
+  print("some column names do not concord across datasets")
+}
 
 
