@@ -30,7 +30,6 @@ raw_data_names <- raw_data_names %>%
 raw_data_paths <- file.path(raw_data_dir, "OpenTender", raw_data_names)
 
 
-
 # 1 Data
 ## 1.1 Check column-name concordance across yearly files
 ### 1.1.1 Extract columns names into a list and append to schema
