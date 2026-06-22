@@ -97,3 +97,8 @@ winner_data_original <- data %>%
   select(row_id, tender_id, bidder_bodyIds, bidder_name, bidder_country)
 buyer_data_original <- data %>% 
   select(row_id, tender_id, buyer_bodyIds, buyer_name, buyer_country)
+
+
+# 2 Winner data
+# Duplicate data so I can bind back later
+winner_data <- winner_data_original
