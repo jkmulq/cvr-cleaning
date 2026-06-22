@@ -214,12 +214,41 @@ winner_data_long <- winner_data_long %>%
 ## 2.3 Clean up CVRs
 # Remove spaces
 winner_data_long <- winner_data_long %>% 
-  mutate(bidder_bodyIds = gsub(" ", "", bidder_bodyIds))
+  mutate(winner_cvr = gsub(" ", "", winner_cvr))
 
 # Remove bidder_country prefix if present
 # e.g. bidder_country = "DK" and bidder_bodyIds = "DK12345678"
 # or bidder_country = "SE" and bidder_bodyIds = "SE123456789"
 winner_data_long <- winner_data_long %>% 
-  mutate(bidder_bodyIds = if_else(str_sub(bidder_bodyIds, start = 1, end = 2) == bidder_country,
-                                  substring(bidder_bodyIds, first = 3),
-                                  bidder_bodyIds))
+  mutate(winner_cvr = if_else(str_sub(winner_cvr, start = 1, end = 2) == bidder_country,
+                              substring(winner_cvr, first = 3),
+                              winner_cvr))
+
+# Remove starting string:
+# 'CVR-nr:', 'CVR-nr::', 'CVR-nr.:', 'CVR-nummer', 'CVR-nr.'
+# 'CVRnr.', 	'CVR.nr.', 'CVR.:', 'CVR'
+winner_data_long <- winner_data_long %>% 
+  mutate(winner_cvr = gsub("CVR-nr:", "", winner_cvr),
+         winner_cvr = gsub("CVR-nr::", "", winner_cvr),
+         winner_cvr = gsub("CVR-nr.:", "", winner_cvr),
+         winner_cvr = gsub("CVR-nummer", "", winner_cvr),
+         winner_cvr = gsub("CVR-nr.", "", winner_cvr),
+         winner_cvr = gsub("CVRnr.", "", winner_cvr),
+         winner_cvr = gsub("CVR.nr.", "", winner_cvr),
+         winner_cvr = gsub("CVR.:", "", winner_cvr),
+         winner_cvr = gsub("CVR", "", winner_cvr),
+         winner_cvr = gsub("CVR(VATno.)", "", winner_cvr),
+         winner_cvr = gsub("Cvr.nr.", "", winner_cvr),
+         winner_cvr = gsub("Cvr-nr.", "", winner_cvr),
+         winner_cvr = gsub("Cvr:", "", winner_cvr)) 
+
+# Check all 'CVR' or any variation on the capitalisation strings no longer present
+cvr_string_check <- winner_data_long %>% 
+  filter(str_detect(winner_cvr, regex("cvr", ignore_case = TRUE))) %>% 
+  nrow()
+
+if (cvr_string_check > 0) {
+  stop("some cvr numbers still contain some variation of the letters 'cvr' in the string.")
+}
+
+
