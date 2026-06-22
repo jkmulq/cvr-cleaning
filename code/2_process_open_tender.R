@@ -127,3 +127,37 @@ winner_data %>%
             n = n()) %>% 
   mutate(row_sum = rowSums(.) - n) %>% 
   t() 
+
+# Most of these potential delimiters don't separate CVR numbers
+# 'period' is not valid
+# Hyphens aren't (most come from Swedish bidder numbers)
+# Space is not (usually separates a single CVR by 2 digits)
+
+# The 1 '|' row represents a genuine delimiter, as well as all the commas.
+# Flag these. 
+winner_data <- winner_data %>% 
+  mutate(delim_flag_valid_comma = coalesce(delim_flag_comma, FALSE),
+         delim_flag_valid_pipe = coalesce(delim_flag_pipe, FALSE))
+
+
+# Sometimes '/' is for a name inside the bidder ID column, 
+# other times it separates multiple bidders. 
+# Flag likely valid ones for conversion to semi-colon
+valid_slash_rows <- c(67781, 135042, 136301, 140436, 151591)
+winner_data <- winner_data %>% 
+  mutate(delim_flag_valid_slash = row_id %in% valid_slash_rows,
+         flag_review_slash = coalesce(delim_flag_slash, FALSE) & !delim_flag_valid_slash) 
+
+# Ampersand also represents valid delimiter sometimes too.
+# Flag likely valid ones for conversion to semi-colon
+valid_ampersand_rows <- c(56622, 59901, 142469)
+winner_data <- winner_data %>% 
+  mutate(delim_flag_valid_ampersand = row_id %in% valid_ampersand_rows,
+         flag_review_ampersand = coalesce(delim_flag_ampersand, FALSE) & !delim_flag_valid_ampersand)
+
+# Colons sometime have multiple CVR numbers too
+# Flag likely valid ones for conversion to semi-colon
+valid_colon_rows <- c(139043)
+winner_data <- winner_data %>% 
+  mutate(delim_flag_valid_colon = row_id %in% valid_colon_rows,
+         flag_review_colon = coalesce(delim_flag_colon, FALSE) & !delim_flag_valid_colon)
