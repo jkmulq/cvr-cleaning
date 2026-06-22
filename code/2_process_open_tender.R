@@ -89,5 +89,5 @@ data <- as_tibble(data)
 # Keep a stable reference to the original OpenTender row.
 # This lets expanded winner rows point back to the raw bid row.
 data <- data %>%
-  mutate(row_id = row_number())
-
+  mutate(row_id = row_number()) %>% 
+  select(row_id, everything())
