@@ -91,3 +91,9 @@ data <- as_tibble(data)
 data <- data %>%
   mutate(row_id = row_number()) %>% 
   select(row_id, everything())
+
+## 1.3 Separate winners/buyers/original data
+winner_data_original <- data %>% 
+  select(row_id, tender_id, bidder_bodyIds, bidder_name, bidder_country)
+buyer_data_original <- data %>% 
+  select(row_id, tender_id, buyer_bodyIds, buyer_name, buyer_country)
