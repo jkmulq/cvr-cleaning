@@ -61,7 +61,7 @@ col_name_diffs <- apply(data_name_combos, MARGIN = 2, FUN = function(col) {
 
 })
 
-if (all(col_name_diffs == 0)) {
+if (all(col_name_diffs == 1)) {
   print("all column names concord across datasets")
 } else {
   print("some column names do not concord across datasets")
