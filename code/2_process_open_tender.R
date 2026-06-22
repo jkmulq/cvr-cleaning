@@ -15,6 +15,9 @@ library(tidyverse)
 library(readxl)
 library(data.table)
 
+# Source functions
+source(file.path(PROJECT_DIR, "code", "functions.R"))
+
 # Paths
 raw_data_dir <- dirs$raw_data
 raw_data_names <- list.files(file.path(raw_data_dir, "OpenTender"))
