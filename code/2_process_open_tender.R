@@ -207,6 +207,10 @@ winner_data <- winner_data %>%
 ## 2.2 Separate rows
 winner_data_long <- separate_longer_delim(winner_data, cols = "bidder_bodyIds", delim = ";")
 
+# Rename
+winner_data_long <- winner_data_long %>% 
+  rename(winner_cvr = bidder_bodyIds)
+
 ## 2.3 Clean up CVRs
 # Remove spaces
 winner_data_long <- winner_data_long %>% 
