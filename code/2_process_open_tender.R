@@ -204,4 +204,16 @@ winner_data <- winner_data %>%
     bidder_bodyIds = if_else(delim_flag_valid_colon, str_replace_all(bidder_bodyIds, fixed(":"), ";"), bidder_bodyIds)
   )
 
-## 2.2
+## 2.2 Separate rows
+winner_data_long <- separate_longer_delim(winner_data, cols = "bidder_bodyIds", delim = ";")
+
+## 2.3 Clean up CVRs
+# Remove spaces
+winner_data_long <- winner_data_long %>% 
+  mutate(bidder_bodyIds = gsub(" ", "", bidder_bodyIds))
+
+# Remove bidder_country prefix if present
+# e.g. bidder_country = "DK" and bidder_bodyIds = "DK12345678"
+# or bidder_country = "SE" and bidder_bodyIds = "SE123456789"
+winner_data_long <- winner_data_long %>% 
+  mutate(bidder_bodyIds = gsub(bidder_country, "", bidder_bodyIds))
