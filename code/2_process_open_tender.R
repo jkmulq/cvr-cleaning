@@ -55,7 +55,7 @@ col_name_diffs <- apply(data_name_combos, MARGIN = 2, FUN = function(col) {
     filter(dataset == col[2])
   
   # Find length of set difference
-  out <- setdiff(df1$value, df2$value)
+  out <- setequal(df1$value, df2$value)
   out <- length(out)
   return(out)
 
