@@ -103,7 +103,7 @@ buyer_data_original <- data %>%
 # Duplicate data so I can bind back later
 winner_data <- winner_data_original
 
-## 2.1 Separate bidder ID by delimiters
+## 2.1 Investigate bidder ID delimiter for multiple CVR numbers/winning firms
 ### 2.1.1 Find delimiter types
 winner_data <- winner_data %>% 
   mutate(
