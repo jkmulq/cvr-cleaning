@@ -102,3 +102,28 @@ buyer_data_original <- data %>%
 # 2 Winner data
 # Duplicate data so I can bind back later
 winner_data <- winner_data_original
+
+## 2.1 Separate bidder ID by delimiters
+### 2.1.1 Find delimiter types
+winner_data <- winner_data %>% 
+  mutate(
+    delim_flag_missing = is.na(bidder_bodyIds) | bidder_bodyIds == "",
+    delim_flag_comma = coalesce(str_detect(bidder_bodyIds, ","), FALSE),
+    delim_flag_semicolon = coalesce(str_detect(bidder_bodyIds, ";"), FALSE), 
+    delim_flag_period = coalesce(str_detect(bidder_bodyIds, fixed(".")), FALSE), 
+    delim_flag_pipe = coalesce(str_detect(bidder_bodyIds, fixed("|")), FALSE), 
+    delim_flag_slash = coalesce(str_detect(bidder_bodyIds, "/"), FALSE), 
+    delim_flag_space = coalesce(str_detect(bidder_bodyIds, "\\s"), FALSE),
+    delim_flag_hyphen = coalesce(str_detect(bidder_bodyIds, "-"), FALSE),
+    delim_flag_no_punct = !str_detect(bidder_bodyIds, "[[:punct:]]") & !delim_flag_missing,
+    delim_flag_no_punct = coalesce(delim_flag_no_punct, FALSE),
+    delim_flag_ampersand = coalesce(str_detect(bidder_bodyIds, "&"), FALSE),
+    delim_flag_colon = coalesce(str_detect(bidder_bodyIds, ":"), FALSE)
+  )
+
+# Print summaries
+winner_data %>% 
+  summarise(across(.cols = starts_with("delim_flag_"), ~sum(.x, na.rm = TRUE)), 
+            n = n()) %>% 
+  mutate(row_sum = rowSums(.) - n) %>% 
+  t() 
