@@ -118,7 +118,8 @@ winner_data <- winner_data %>%
     delim_flag_no_punct = !str_detect(bidder_bodyIds, "[[:punct:]]") & !delim_flag_missing,
     delim_flag_no_punct = coalesce(delim_flag_no_punct, FALSE),
     delim_flag_ampersand = coalesce(str_detect(bidder_bodyIds, "&"), FALSE),
-    delim_flag_colon = coalesce(str_detect(bidder_bodyIds, ":"), FALSE)
+    delim_flag_colon = coalesce(str_detect(bidder_bodyIds, ":"), FALSE),
+    delim_flag_og = coalesce(str_detect(bidder_bodyIds, "og"), FALSE)
   )
 
 # Print summaries
@@ -162,6 +163,13 @@ winner_data <- winner_data %>%
   mutate(delim_flag_valid_colon = row_id %in% valid_colon_rows,
          flag_review_colon = coalesce(delim_flag_colon, FALSE) & !delim_flag_valid_colon)
 
+# 'og' (meaning 'and') sometime have multiple CVR numbers too
+# Flag likely valid ones for conversion to semi-colon
+valid_og_rows <- c(53995, 72912, 99523, 139043, 140919, 150541)
+winner_data <- winner_data %>% 
+  mutate(delim_flag_valid_og = row_id %in% valid_og_rows,
+         flag_review_og = coalesce(delim_flag_og, FALSE) & !delim_flag_valid_og)
+
 # Check manually accepted row_id's still present in the data
 missing_valid_delim_rows <- setdiff(
   c(valid_slash_rows, valid_ampersand_rows, valid_colon_rows),
@@ -176,9 +184,10 @@ if (length(missing_valid_delim_rows) > 0) {
 # Check accepted row_id's have expected delimiter
 invalid_valid_delim_rows <- winner_data %>%
   filter(
-    delim_flag_valid_slash & !delim_flag_slash |
-      delim_flag_valid_ampersand & !delim_flag_ampersand |
-      delim_flag_valid_colon & !delim_flag_colon
+    (delim_flag_valid_slash & !delim_flag_slash) |
+      (delim_flag_valid_ampersand & !delim_flag_ampersand) |
+      (delim_flag_valid_colon & !delim_flag_colon) |
+      (delim_flag_valid_og & !delim_flag_og)
   ) %>%
   select(row_id, bidder_bodyIds)
 
@@ -189,7 +198,7 @@ if (nrow(invalid_valid_delim_rows) > 0) {
 
 # Flag all failures for manual review 
 winner_data <- winner_data %>% 
-  mutate(flag_manual_review = flag_review_slash | flag_review_ampersand | flag_review_colon,
+  mutate(flag_manual_review = flag_review_slash | flag_review_ampersand | flag_review_colon | flag_review_og,
          manual_review_reason = ifelse(flag_review_slash | flag_review_ampersand | flag_review_colon, 
                                        "check whether bidder ID contains multiple winning firms",
                                        NA))
@@ -201,7 +210,8 @@ winner_data <- winner_data %>%
     bidder_bodyIds = if_else(delim_flag_valid_pipe, str_replace_all(bidder_bodyIds, fixed("|"), ";"), bidder_bodyIds),
     bidder_bodyIds = if_else(delim_flag_valid_slash, str_replace_all(bidder_bodyIds, fixed("/"), ";"), bidder_bodyIds),
     bidder_bodyIds = if_else(delim_flag_valid_ampersand, str_replace_all(bidder_bodyIds, fixed("&"), ";"), bidder_bodyIds),
-    bidder_bodyIds = if_else(delim_flag_valid_colon, str_replace_all(bidder_bodyIds, fixed(":"), ";"), bidder_bodyIds)
+    bidder_bodyIds = if_else(delim_flag_valid_colon, str_replace_all(bidder_bodyIds, fixed(":"), ";"), bidder_bodyIds),
+    bidder_bodyIds = if_else(delim_flag_valid_og, str_replace_all(bidder_bodyIds, "og", ";"), bidder_bodyIds)
   )
 
 ## 2.2 Separate rows
