@@ -21,10 +21,15 @@ source(file.path(PROJECT_DIR, "code", "functions.R"))
 # Paths
 raw_data_dir <- dirs$raw_data
 raw_data_names <- list.files(file.path(raw_data_dir, "OpenTender"))
+
+# The brief defines the OpenTender cleaning period as 2009-2026. 
+# The raw data folder contains an undated dataset, so filter the file list before loading.
+raw_data_names <- raw_data_names %>%
+  keep(~ str_detect(.x, "\\d{4}"))
+
 raw_data_paths <- file.path(raw_data_dir, "OpenTender", raw_data_names)
 
-# Source functions
-source(file.path(PROJECT_DIR, "code", "functions.R"))
+
 
 # 1 Data
 ## 1.1 Check column-name concordance across yearly files
