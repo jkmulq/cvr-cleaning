@@ -188,6 +188,18 @@ winner_data <- winner_data %>%
                                        "check whether bidder ID contains multiple winning firms",
                                        NA))
 
+# Flag likely multi-value winner ID strings.
+# At this stage, `flag_multi_winner` means the source string has an accepted
+# multi-value delimiter. It does not yet mean the row has multiple distinct
+# cleaned CVRs, because some delimited values repeat the same identifier.
+# Likewise, `single_cvr` means non-empty and not accepted-multi at this stage,
+# not yet a valid eight-digit Danish CVR.
+winner_data <- winner_data %>% 
+  mutate(flag_multi_winner = coalesce(delim_flag_valid_comma | delim_flag_valid_pipe | 
+                                        delim_flag_valid_slash | delim_flag_valid_ampersand |
+                                        delim_flag_valid_og, FALSE),
+         single_cvr = coalesce(!is.na(winner_cvr) & winner_cvr != "" & !flag_multi_winner, FALSE))
+
 # Convert valid delims to semi-colon
 winner_data <- winner_data %>%
   mutate(
@@ -198,7 +210,9 @@ winner_data <- winner_data %>%
     winner_cvr = if_else(delim_flag_valid_og, str_replace_all(winner_cvr, "og", ";"), winner_cvr)
   )
 
-## 2.2 Separate rows
+## 2.2 Separate into single and multiple CVRs
+multi_winner_data <- winner_data %>% filter(flag_multi_winner)
+single_winner_data <- winner_data %>% filter(!flag_multi_winner) # Keeps missings for completeness.
 winner_data_long <- separate_longer_delim(winner_data, cols = "winner_cvr", delim = ";")
 
 ## 2.3 Clean up CVRs
