@@ -200,17 +200,84 @@ winner_data <- winner_data %>%
                                         delim_flag_valid_og, FALSE),
          single_cvr = coalesce(!is.na(winner_cvr) & winner_cvr != "" & !flag_multi_winner, FALSE))
 
-# Convert valid delims to semi-colon
-winner_data <- winner_data %>%
+
+## 2.2 Investigate bidder name delimiter for multiple CVR numbers/winning firms
+### 2.2.1 Find delimiter types
+# Winner names need a separate delimiter review because punctuation often belongs
+# to firm names. For example, "/" is usually part of "A/S", periods appear in
+# abbreviations, and ampersands often appear inside a single firm name.
+# I focus on a slightly narrower set of potential delimiters.
+winner_data <- winner_data %>% 
   mutate(
-    winner_cvr = if_else(delim_flag_valid_comma, str_replace_all(winner_cvr, fixed(","), ";"), winner_cvr),
-    winner_cvr = if_else(delim_flag_valid_pipe, str_replace_all(winner_cvr, fixed("|"), ";"), winner_cvr),
-    winner_cvr = if_else(delim_flag_valid_slash, str_replace_all(winner_cvr, fixed("/"), ";"), winner_cvr),
-    winner_cvr = if_else(delim_flag_valid_ampersand, str_replace_all(winner_cvr, fixed("&"), ";"), winner_cvr),
-    winner_cvr = if_else(delim_flag_valid_og, str_replace_all(winner_cvr, "og", ";"), winner_cvr)
+    name_delim_flag_missing = is.na(winner_name) | winner_name == "",
+    name_delim_flag_comma = coalesce(str_detect(winner_name, fixed(",")), FALSE),
+    name_delim_flag_semicolon = coalesce(str_detect(winner_name, fixed(";")), FALSE), 
+    name_delim_flag_pipe = coalesce(str_detect(winner_name, fixed("|")), FALSE), 
+    name_delim_flag_ampersand = coalesce(str_detect(winner_name, fixed("&")), FALSE),
+    name_delim_flag_colon = coalesce(str_detect(winner_name, fixed(":")), FALSE),
+    name_delim_flag_og = coalesce(str_detect(winner_name, regex("\\bog\\b", ignore_case = TRUE)), FALSE),
+    name_delim_flag_consortium = coalesce(
+      str_detect(
+        winner_name,
+        regex("konsorti|konsortium|bestående|fællesskab|joint venture|samarbejde", ignore_case = TRUE)
+      ),
+      FALSE
+    )
   )
 
-## 2.2 Separate into single and multiple CVRs
+# Print summaries among rows already flagged as multi-value winner ID strings.
+# This keeps the name review focused on rows where name/CVR alignment may matter.
+winner_data %>% 
+  filter(flag_multi_winner) %>% 
+  summarise(across(.cols = starts_with("name_delim_flag_"), ~sum(.x, na.rm = TRUE)), 
+            n = n()) %>% 
+  mutate(row_sum = rowSums(.) - n) %>% 
+  t()
+
+# In the current data, slashes, spaces, periods, hyphens, ampersands, and "og"
+# often appear inside firm names rather than separating multiple names. Some
+# "og" rows are true consortium-style names, so treat these flags as review
+# diagnostics for now, not as accepted name-splitting rules.
+
+# Manually reviewed winner-name rows that genuinely identify multiple firms.
+# These can be used later to split winner_name alongside winner_cvr.
+valid_multi_name_rows <- c(
+  59588, 62215, 65494, 73374, 105116,
+  138833, 140635, 144636, 146512, 156134, 157184
+)
+
+winner_data <- winner_data %>% 
+  mutate(name_delim_flag_valid_multi = row_id %in% valid_multi_name_rows)
+
+# Check manually accepted name row_id's still present in the data
+missing_valid_name_rows <- setdiff(valid_multi_name_rows, winner_data$row_id)
+
+if (length(missing_valid_name_rows) > 0) {
+  print(missing_valid_name_rows)
+  stop("Some manually reviewed winner-name row IDs are not present in winner_data.")
+}
+
+# Check accepted row_id's still have a plausible name delimiter cue
+invalid_valid_name_rows <- winner_data %>%
+  filter(
+    name_delim_flag_valid_multi &
+      !(
+        name_delim_flag_comma |
+          name_delim_flag_pipe |
+          name_delim_flag_slash |
+          name_delim_flag_ampersand |
+          name_delim_flag_og |
+          name_delim_flag_consortium
+      )
+  ) %>%
+  select(row_id, winner_name)
+
+if (nrow(invalid_valid_name_rows) > 0) {
+  print(invalid_valid_name_rows)
+  stop("Some manually reviewed winner-name row IDs no longer have the expected delimiter cue.")
+}
+
+## 2.3 Separate into single and multiple CVRs
 multi_winner_data <- winner_data %>% filter(flag_multi_winner)
 single_winner_data <- winner_data %>% filter(!flag_multi_winner) # Keeps missings for completeness.
 winner_data_long <- separate_longer_delim(winner_data, cols = "winner_cvr", delim = ";")
