@@ -257,4 +257,6 @@ single_valid_cvr_key <- winner_data_long %>%
   mutate(n_valid_cvr = sum(valid_cvr), 
             n_total_cvr = n(), 
             .by = bidder_name) %>% 
-  filter(n_valid_cvr == 1, n_total_cvr > 1, valid_cvr)
+  filter(n_valid_cvr == 1, n_total_cvr > 1, valid_cvr) %>% 
+  rename(winner_cvr_real = winner_cvr) %>% 
+  select(-valid_cvr, -n_valid_cvr, n_total_cvr)
