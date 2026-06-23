@@ -326,7 +326,7 @@ if (cvr_string_check > 0) {
 winner_data_long <- winner_data_long %>% 
   mutate(valid_cvr = coalesce(str_detect(winner_cvr, "^\\d{8}$"), FALSE))
 
-### 2.3.2 Fix erroneous CVR cites across firm
+### 2.4.2 Fix erroneous CVR cites across firm
 # Many bidder names have multiple CVR numbers, some are not valid
 # Make a key and join each instance of a firm with the valid CVR
 # I only focus on firms with ONE valid CVR but more than one entry in the CVR
