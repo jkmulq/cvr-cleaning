@@ -147,13 +147,6 @@ winner_data <- winner_data %>%
   mutate(delim_flag_valid_ampersand = row_id %in% valid_ampersand_rows,
          flag_review_ampersand = coalesce(delim_flag_ampersand, FALSE) & !delim_flag_valid_ampersand)
 
-# Colons sometime have multiple CVR numbers too
-# Flag likely valid ones for conversion to semi-colon
-valid_colon_rows <- c(139043)
-winner_data <- winner_data %>% 
-  mutate(delim_flag_valid_colon = row_id %in% valid_colon_rows,
-         flag_review_colon = coalesce(delim_flag_colon, FALSE) & !delim_flag_valid_colon)
-
 # 'og' (meaning 'and') sometime have multiple CVR numbers too
 # Flag likely valid ones for conversion to semi-colon
 valid_og_rows <- c(59588, 78505, 105116, 144636, 146512, 156134)
@@ -163,7 +156,7 @@ winner_data <- winner_data %>%
 
 # Check manually accepted row_id's still present in the data
 missing_valid_delim_rows <- setdiff(
-  c(valid_slash_rows, valid_ampersand_rows, valid_colon_rows),
+  c(valid_slash_rows, valid_ampersand_rows, valid_og_rows),
   winner_data$row_id
 )
 
@@ -177,7 +170,6 @@ invalid_valid_delim_rows <- winner_data %>%
   filter(
     (delim_flag_valid_slash & !delim_flag_slash) |
       (delim_flag_valid_ampersand & !delim_flag_ampersand) |
-      (delim_flag_valid_colon & !delim_flag_colon) |
       (delim_flag_valid_og & !delim_flag_og)
   ) %>%
   select(row_id, bidder_bodyIds)
@@ -189,8 +181,8 @@ if (nrow(invalid_valid_delim_rows) > 0) {
 
 # Flag all failures for manual review 
 winner_data <- winner_data %>% 
-  mutate(flag_manual_review = flag_review_slash | flag_review_ampersand | flag_review_colon | flag_review_og,
-         manual_review_reason = ifelse(flag_review_slash | flag_review_ampersand | flag_review_colon, 
+  mutate(flag_manual_review = flag_review_slash | flag_review_ampersand  | flag_review_og,
+         manual_review_reason = ifelse(flag_review_slash | flag_review_ampersand | flag_review_og, 
                                        "check whether bidder ID contains multiple winning firms",
                                        NA))
 
