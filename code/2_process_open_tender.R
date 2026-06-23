@@ -280,10 +280,9 @@ if (nrow(invalid_valid_name_rows) > 0) {
 ## 2.3 Separate into single and multiple CVRs
 multi_winner_data <- winner_data %>% filter(flag_multi_winner)
 single_winner_data <- winner_data %>% filter(!flag_multi_winner) # Keeps missings for completeness.
-winner_data_long <- separate_longer_delim(winner_data, cols = "winner_cvr", delim = ";")
 
-## 2.3 Clean up CVRs
-### 2.3.1 Basic cleaning
+## 2.4 Clean up CVRs
+### 2.4.1 Basic cleaning
 # Remove spaces
 winner_data_long <- winner_data_long %>% 
   mutate(winner_cvr = gsub(" ", "", winner_cvr))
