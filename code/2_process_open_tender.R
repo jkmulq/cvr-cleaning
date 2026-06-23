@@ -269,5 +269,7 @@ winner_data_long <- left_join(winner_data_long,
 # Overwrite erroneous CVRs
 winner_data_long <- winner_data_long %>% 
   mutate(winner_cvr_original = winner_cvr) %>% 
-  mutate(winner_cvr = ifelse(!is.na(winner_cvr_real) & winner_cvr_real != winner_cvr,
+  mutate(flag_cvr_overwrite = coalesce(!is.na(winner_cvr_real) & winner_cvr_real != winner_cvr, FALSE),
+         winner_cvr = ifelse(!is.na(winner_cvr_real) & winner_cvr_real != winner_cvr,
                              winner_cvr_real, winner_cvr)) 
+
