@@ -204,6 +204,7 @@ winner_data_long <- winner_data_long %>%
   rename(winner_cvr = bidder_bodyIds)
 
 ## 2.3 Clean up CVRs
+### 2.3.1 Basic cleaning
 # Remove spaces
 winner_data_long <- winner_data_long %>% 
   mutate(winner_cvr = gsub(" ", "", winner_cvr))
