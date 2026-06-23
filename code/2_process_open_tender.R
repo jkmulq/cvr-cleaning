@@ -244,4 +244,17 @@ if (cvr_string_check > 0) {
   stop("some cvr numbers still contain some variation of the letters 'cvr' in the string.")
 }
 
+# Flag valid CVR string post cleaning (8 numerical digits)
+winner_data_long <- winner_data_long %>% 
+  mutate(valid_cvr = coalesce(str_detect(winner_cvr, "^\\d{8}$"), FALSE))
 
+### 2.3.2 Fix erroneous CVR cites across firm
+# Many bidder names have multiple CVR numbers, some are not valid
+# Make a key and join each instance of a firm with the valid CVR
+# I only focus on firms with ONE valid CVR but more than one entry in the CVR
+single_valid_cvr_key <- winner_data_long %>% 
+  distinct(bidder_name, winner_cvr, valid_cvr) %>% 
+  mutate(n_valid_cvr = sum(valid_cvr), 
+            n_total_cvr = n(), 
+            .by = bidder_name) %>% 
+  filter(n_valid_cvr == 1, n_total_cvr > 1, valid_cvr)
