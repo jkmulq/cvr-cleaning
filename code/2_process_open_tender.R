@@ -135,14 +135,14 @@ winner_data <- winner_data %>%
 # Sometimes '/' is for a name inside the bidder ID column, 
 # other times it separates multiple bidders. 
 # Flag likely valid ones for conversion to semi-colon
-valid_slash_rows <- c(67781, 135042, 136301, 140436, 151591)
+valid_slash_rows <- c(73374, 140635, 141894, 146029, 157184)
 winner_data <- winner_data %>% 
   mutate(delim_flag_valid_slash = row_id %in% valid_slash_rows,
          flag_review_slash = coalesce(delim_flag_slash, FALSE) & !delim_flag_valid_slash) 
 
 # Ampersand also represents valid delimiter sometimes too.
 # Flag likely valid ones for conversion to semi-colon
-valid_ampersand_rows <- c(56622, 59901, 142469)
+valid_ampersand_rows <- c(62215, 65494, 148062)
 winner_data <- winner_data %>% 
   mutate(delim_flag_valid_ampersand = row_id %in% valid_ampersand_rows,
          flag_review_ampersand = coalesce(delim_flag_ampersand, FALSE) & !delim_flag_valid_ampersand)
@@ -156,7 +156,7 @@ winner_data <- winner_data %>%
 
 # 'og' (meaning 'and') sometime have multiple CVR numbers too
 # Flag likely valid ones for conversion to semi-colon
-valid_og_rows <- c(53995, 72912, 99523, 139043, 140919, 150541)
+valid_og_rows <- c(59588, 78505, 105116, 144636, 146512, 156134)
 winner_data <- winner_data %>% 
   mutate(delim_flag_valid_og = row_id %in% valid_og_rows,
          flag_review_og = coalesce(delim_flag_og, FALSE) & !delim_flag_valid_og)
