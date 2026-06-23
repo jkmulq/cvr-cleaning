@@ -43,7 +43,7 @@ data_col_names <- map(raw_data_paths, read.csv,
 data_col_names <- map(data_col_names, ~as_tibble(names(.x))) # Extract the column names
 data_col_names <- bind_rows(data_col_names, .id = "dataset")
 
-### 1.1.2 Check intersection of all combinations
+### 1.1.2 Check column name equality of all combinations
 data_name_combos <- combn(raw_data_names, m = 2)
 
 # Apply over columns of combinations the difference in column names
