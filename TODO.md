@@ -35,6 +35,7 @@ This file tracks development work against the current codebase and the project b
   - Current gap: this is not yet implemented for winners, bidders, or buyers.
 - [ ] Add ambiguity flags for name matching.
   - Target: flag cases where a name could map to several CVR numbers or where the match confidence is too low.
+- [ ] Make sure winner/buyer names are expanded alongside the relevant CVR numbers.
 
 ## OpenTender Cleaning
 
