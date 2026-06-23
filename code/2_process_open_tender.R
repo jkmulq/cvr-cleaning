@@ -242,8 +242,17 @@ winner_data %>%
 # Manually reviewed winner-name rows that genuinely identify multiple firms.
 # These can be used later to split winner_name alongside winner_cvr.
 valid_multi_name_rows <- c(
-  59588, 62215, 65494, 73374, 105116,
-  138833, 140635, 144636, 146512, 156134, 157184
+  # From consortium / explicit grouping language
+  59588, 73374, 105116, 146512, 156134, 157184,
+  
+  # From "og" joining two firm-like names
+  62215, 65494, 140635,
+  
+  # From pipe delimiter
+  138833,
+  
+  # From ampersand joining two firm-like names
+  144636
 )
 
 winner_data <- winner_data %>% 
