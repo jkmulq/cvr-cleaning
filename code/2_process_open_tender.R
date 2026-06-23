@@ -193,7 +193,6 @@ winner_data <- winner_data %>%
     bidder_bodyIds = if_else(delim_flag_valid_pipe, str_replace_all(bidder_bodyIds, fixed("|"), ";"), bidder_bodyIds),
     bidder_bodyIds = if_else(delim_flag_valid_slash, str_replace_all(bidder_bodyIds, fixed("/"), ";"), bidder_bodyIds),
     bidder_bodyIds = if_else(delim_flag_valid_ampersand, str_replace_all(bidder_bodyIds, fixed("&"), ";"), bidder_bodyIds),
-    bidder_bodyIds = if_else(delim_flag_valid_colon, str_replace_all(bidder_bodyIds, fixed(":"), ";"), bidder_bodyIds),
     bidder_bodyIds = if_else(delim_flag_valid_og, str_replace_all(bidder_bodyIds, "og", ";"), bidder_bodyIds)
   )
 
