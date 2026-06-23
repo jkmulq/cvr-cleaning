@@ -271,10 +271,10 @@ invalid_valid_name_rows <- winner_data %>%
   filter(
     name_delim_flag_valid_multi &
       !(
-        name_delim_flag_comma |
+        name_delim_flag_semicolon |
           name_delim_flag_pipe |
-          name_delim_flag_slash |
           name_delim_flag_ampersand |
+          name_delim_flag_colon |
           name_delim_flag_og |
           name_delim_flag_consortium
       )
