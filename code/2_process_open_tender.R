@@ -250,11 +250,13 @@ winner_data_long <- winner_data_long %>%
 # Many bidder names have multiple CVR numbers, some are not valid
 # Make a key and join each instance of a firm with the valid CVR
 # I only focus on firms with ONE valid CVR but more than one entry in the CVR
-single_valid_cvr_key <- winner_data_long %>% 
+valid_invalid_cvr_winner_key <- winner_data_long %>% 
   distinct(winner_name, winner_cvr, valid_cvr) %>% 
   mutate(n_valid_cvr = sum(valid_cvr), 
          n_total_cvr = n(),
-         .by = winner_name) %>% 
+         .by = winner_name) 
+
+single_valid_cvr_key <- valid_invalid_cvr_winner_key %>% 
   filter(n_valid_cvr == 1, n_total_cvr > 1, valid_cvr) %>% 
   rename(winner_cvr_real = winner_cvr) %>% 
   select(-valid_cvr, -n_valid_cvr, n_total_cvr)
