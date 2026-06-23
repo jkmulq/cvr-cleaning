@@ -85,9 +85,11 @@ data <- data %>%
 
 ## 1.3 Separate winners/buyers/original data
 winner_data_original <- data %>% 
-  select(row_id, tender_id, bidder_bodyIds, bidder_name, bidder_country)
+  select(row_id, tender_id, bidder_bodyIds, bidder_name, bidder_country) %>% 
+  rename(winner_cvr = bidder_bodyIds, winner_name = bidder_name, winner_country = bidder_country)
 buyer_data_original <- data %>% 
-  select(row_id, tender_id, buyer_bodyIds, buyer_name, buyer_country)
+  select(row_id, tender_id, buyer_bodyIds, buyer_name, buyer_country) %>% 
+  rename(buyer_cvr = buyer_bodyIds)
 
 
 # 2 Winner data
@@ -98,19 +100,19 @@ winner_data <- winner_data_original
 ### 2.1.1 Find delimiter types
 winner_data <- winner_data %>% 
   mutate(
-    delim_flag_missing = is.na(bidder_bodyIds) | bidder_bodyIds == "",
-    delim_flag_comma = coalesce(str_detect(bidder_bodyIds, ","), FALSE),
-    delim_flag_semicolon = coalesce(str_detect(bidder_bodyIds, ";"), FALSE), 
-    delim_flag_period = coalesce(str_detect(bidder_bodyIds, fixed(".")), FALSE), 
-    delim_flag_pipe = coalesce(str_detect(bidder_bodyIds, fixed("|")), FALSE), 
-    delim_flag_slash = coalesce(str_detect(bidder_bodyIds, "/"), FALSE), 
-    delim_flag_space = coalesce(str_detect(bidder_bodyIds, "\\s"), FALSE),
-    delim_flag_hyphen = coalesce(str_detect(bidder_bodyIds, "-"), FALSE),
-    delim_flag_no_punct = !str_detect(bidder_bodyIds, "[[:punct:]]") & !delim_flag_missing,
+    delim_flag_missing = is.na(winner_cvr) | winner_cvr == "",
+    delim_flag_comma = coalesce(str_detect(winner_cvr, ","), FALSE),
+    delim_flag_semicolon = coalesce(str_detect(winner_cvr, ";"), FALSE), 
+    delim_flag_period = coalesce(str_detect(winner_cvr, fixed(".")), FALSE), 
+    delim_flag_pipe = coalesce(str_detect(winner_cvr, fixed("|")), FALSE), 
+    delim_flag_slash = coalesce(str_detect(winner_cvr, "/"), FALSE), 
+    delim_flag_space = coalesce(str_detect(winner_cvr, "\\s"), FALSE),
+    delim_flag_hyphen = coalesce(str_detect(winner_cvr, "-"), FALSE),
+    delim_flag_no_punct = !str_detect(winner_cvr, "[[:punct:]]") & !delim_flag_missing,
     delim_flag_no_punct = coalesce(delim_flag_no_punct, FALSE),
-    delim_flag_ampersand = coalesce(str_detect(bidder_bodyIds, "&"), FALSE),
-    delim_flag_colon = coalesce(str_detect(bidder_bodyIds, ":"), FALSE),
-    delim_flag_og = coalesce(str_detect(bidder_bodyIds, "og"), FALSE)
+    delim_flag_ampersand = coalesce(str_detect(winner_cvr, "&"), FALSE),
+    delim_flag_colon = coalesce(str_detect(winner_cvr, ":"), FALSE),
+    delim_flag_og = coalesce(str_detect(winner_cvr, "og"), FALSE)
   )
 
 # Print summaries
@@ -172,7 +174,7 @@ invalid_valid_delim_rows <- winner_data %>%
       (delim_flag_valid_ampersand & !delim_flag_ampersand) |
       (delim_flag_valid_og & !delim_flag_og)
   ) %>%
-  select(row_id, bidder_bodyIds)
+  select(row_id, winner_cvr)
 
 if (nrow(invalid_valid_delim_rows) > 0) {
   print(invalid_valid_delim_rows)
@@ -189,11 +191,11 @@ winner_data <- winner_data %>%
 # Convert valid delims to semi-colon
 winner_data <- winner_data %>%
   mutate(
-    bidder_bodyIds = if_else(delim_flag_valid_comma, str_replace_all(bidder_bodyIds, fixed(","), ";"), bidder_bodyIds),
-    bidder_bodyIds = if_else(delim_flag_valid_pipe, str_replace_all(bidder_bodyIds, fixed("|"), ";"), bidder_bodyIds),
-    bidder_bodyIds = if_else(delim_flag_valid_slash, str_replace_all(bidder_bodyIds, fixed("/"), ";"), bidder_bodyIds),
-    bidder_bodyIds = if_else(delim_flag_valid_ampersand, str_replace_all(bidder_bodyIds, fixed("&"), ";"), bidder_bodyIds),
-    bidder_bodyIds = if_else(delim_flag_valid_og, str_replace_all(bidder_bodyIds, "og", ";"), bidder_bodyIds)
+    winner_cvr = if_else(delim_flag_valid_comma, str_replace_all(winner_cvr, fixed(","), ";"), winner_cvr),
+    winner_cvr = if_else(delim_flag_valid_pipe, str_replace_all(winner_cvr, fixed("|"), ";"), winner_cvr),
+    winner_cvr = if_else(delim_flag_valid_slash, str_replace_all(winner_cvr, fixed("/"), ";"), winner_cvr),
+    winner_cvr = if_else(delim_flag_valid_ampersand, str_replace_all(winner_cvr, fixed("&"), ";"), winner_cvr),
+    winner_cvr = if_else(delim_flag_valid_og, str_replace_all(winner_cvr, "og", ";"), winner_cvr)
   )
 
 ## 2.2 Separate rows
@@ -213,7 +215,7 @@ winner_data_long <- winner_data_long %>%
 # e.g. bidder_country = "DK" and bidder_bodyIds = "DK12345678"
 # or bidder_country = "SE" and bidder_bodyIds = "SE123456789"
 winner_data_long <- winner_data_long %>% 
-  mutate(winner_cvr = if_else(str_sub(winner_cvr, start = 1, end = 2) == bidder_country,
+  mutate(winner_cvr = if_else(str_sub(winner_cvr, start = 1, end = 2) == winner_country,
                               substring(winner_cvr, first = 3),
                               winner_cvr))
 
@@ -253,10 +255,10 @@ winner_data_long <- winner_data_long %>%
 # Make a key and join each instance of a firm with the valid CVR
 # I only focus on firms with ONE valid CVR but more than one entry in the CVR
 single_valid_cvr_key <- winner_data_long %>% 
-  distinct(bidder_name, winner_cvr, valid_cvr) %>% 
+  distinct(winner_name, winner_cvr, valid_cvr) %>% 
   mutate(n_valid_cvr = sum(valid_cvr), 
-            n_total_cvr = n(), 
-            .by = bidder_name) %>% 
+         n_total_cvr = n(),
+         .by = winner_name) %>% 
   filter(n_valid_cvr == 1, n_total_cvr > 1, valid_cvr) %>% 
   rename(winner_cvr_real = winner_cvr) %>% 
   select(-valid_cvr, -n_valid_cvr, n_total_cvr)
@@ -264,7 +266,7 @@ single_valid_cvr_key <- winner_data_long %>%
 # Join key
 winner_data_long <- left_join(winner_data_long, 
                               single_valid_cvr_key, 
-                              by = c("bidder_name"))
+                              by = c("winner_name"))
 
 # Overwrite erroneous CVRs
 winner_data_long <- winner_data_long %>% 
