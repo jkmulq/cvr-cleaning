@@ -21,15 +21,6 @@ source(file.path(PROJECT_DIR, "code", "functions.R"))
 # Paths
 raw_data_dir <- dirs$raw_data
 raw_data_names <- list.files(file.path(raw_data_dir, "OpenTender"))
-
-# The brief defines the OpenTender cleaning period as 2009-2026. 
-# The raw data folder contains older and undated datasets, so filter the file list before loading.
-raw_data_years <- str_extract(raw_data_names, "\\d{4}") %>%
-  as.integer()
-raw_data_names <- raw_data_names[!is.na(raw_data_years) &
-                                   raw_data_years >= 2009 &
-                                   raw_data_years <= 2026]
-
 raw_data_paths <- file.path(raw_data_dir, "OpenTender", raw_data_names)
 
 
