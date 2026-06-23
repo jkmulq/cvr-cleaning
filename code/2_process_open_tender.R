@@ -260,3 +260,14 @@ single_valid_cvr_key <- winner_data_long %>%
   filter(n_valid_cvr == 1, n_total_cvr > 1, valid_cvr) %>% 
   rename(winner_cvr_real = winner_cvr) %>% 
   select(-valid_cvr, -n_valid_cvr, n_total_cvr)
+
+# Join key
+winner_data_long <- left_join(winner_data_long, 
+                              single_valid_cvr_key, 
+                              by = c("bidder_name"))
+
+# Overwrite erroneous CVRs
+winner_data_long <- winner_data_long %>% 
+  mutate(winner_cvr_original = winner_cvr) %>% 
+  mutate(winner_cvr = ifelse(!is.na(winner_cvr_real) & winner_cvr_real != winner_cvr,
+                             winner_cvr_real, winner_cvr)) 
