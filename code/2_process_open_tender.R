@@ -382,7 +382,7 @@ multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %
 # Many bidder names have multiple CVR numbers, some are not valid
 # Make a key and join each instance of a firm with the valid CVR
 # I only focus on firms with ONE valid CVR but more than one entry in the CVR
-valid_invalid_cvr_winner_key <- multi_distinct_cvr_data_long %>% 
+valid_invalid_cvr_winner_key <- multi_cvr_nondistinct_names_data_long %>% 
   distinct(winner_name, winner_cvr, valid_cvr) %>% 
   mutate(n_valid_cvr = sum(valid_cvr), 
          n_total_cvr = n(),
@@ -394,12 +394,12 @@ single_valid_cvr_key <- valid_invalid_cvr_winner_key %>%
   select(-valid_cvr, -n_valid_cvr, n_total_cvr)
 
 # Join key
-multi_winner_data_long <- left_join(multi_winner_data_long, 
+multi_cvr_nondistinct_names_data_long <- left_join(multi_cvr_nondistinct_names_data_long, 
                               single_valid_cvr_key, 
                               by = c("winner_name"))
 
 # Overwrite erroneous CVRs
-multi_winner_data_long <- multi_winner_data_long %>% 
+multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
   mutate(winner_cvr_original = winner_cvr) %>% 
   mutate(flag_cvr_overwrite = coalesce(!is.na(winner_cvr_real) & winner_cvr_real != winner_cvr, FALSE),
          winner_cvr = ifelse(!is.na(winner_cvr_real) & winner_cvr_real != winner_cvr,
