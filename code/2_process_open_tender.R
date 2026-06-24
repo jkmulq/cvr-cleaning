@@ -199,7 +199,7 @@ winner_data <- winner_data %>%
   )
 
 # Flag likely multi-value winner ID strings.
-# At this stage, `flag_multi_winner` means the source string has an accepted
+# `flag_multi_winner` means the source string has an accepted
 # multi-value delimiter. It does not yet mean the row has multiple distinct
 # cleaned CVRs, because some delimited values repeat the same identifier.
 # Likewise, `single_cvr` means non-empty and not accepted-multi at this stage,
@@ -210,65 +210,60 @@ winner_data <- winner_data %>%
                                         delim_flag_valid_og, FALSE),
          single_cvr = coalesce(!is.na(winner_cvr) & winner_cvr != "" & !flag_multi_winner, FALSE))
 
-
-## 2.2 Investigate bidder name delimiter for multiple CVR numbers/winning firms
-### 2.2.1 Find delimiter types
-# Winner names need a separate delimiter review because punctuation often belongs
-# to firm names. For example, "/" is usually part of "A/S", periods appear in
-# abbreviations, and ampersands often appear inside a single firm name.
-# I focus on a slightly narrower set of potential delimiters.
-winner_data <- winner_data %>% 
+# Flag rows with several distinct valid CVRs (can use ; as delimiter since we converted them above)
+winner_data <- winner_data %>%
   mutate(
-    name_delim_flag_missing = is.na(winner_name) | winner_name == "",
-    name_delim_flag_semicolon = coalesce(str_detect(winner_name, fixed(";")), FALSE), 
-    name_delim_flag_pipe = coalesce(str_detect(winner_name, fixed("|")), FALSE), 
-    name_delim_flag_ampersand = coalesce(str_detect(winner_name, fixed("&")), FALSE),
-    name_delim_flag_colon = coalesce(str_detect(winner_name, fixed(":")), FALSE),
-    name_delim_flag_og = coalesce(str_detect(winner_name, regex("\\bog\\b", ignore_case = TRUE)), FALSE),
-    name_delim_flag_consortium = coalesce(
-      str_detect(
-        winner_name,
-        regex("konsorti|konsortium|bestående|fællesskab|joint venture|samarbejde", ignore_case = TRUE)
-      ),
-      FALSE
-    )
+    flag_multiple_distinct_valid_cvrs = has_multiple_distinct_valid_cvrs(winner_cvr, delim = ";")
   )
 
-# Print summaries among rows already flagged as multi-value winner ID strings.
-# This keeps the name review focused on rows where name/CVR alignment may matter.
-winner_data %>% 
-  filter(flag_multi_winner) %>% 
-  summarise(across(.cols = starts_with("name_delim_flag_"), ~sum(.x, na.rm = TRUE)), 
-            n = n()) %>% 
-  mutate(row_sum = rowSums(.) - n) %>% 
-  t()
+# Print number of true multi CVR numbers.
+n_true_multi_cvrs <- sum(winner_data$flag_multiple_distinct_valid_cvrs, na.rm = TRUE)
+cat("Number of true multi CVR numbers detected: ", n_true_multi_cvrs, "\n")
 
-# In the current data, slashes, spaces, periods, hyphens, ampersands, and "og"
-# often appear inside firm names rather than separating multiple names. Some
-# "og" rows are true consortium-style names, so treat these flags as review
-# diagnostics for now, not as accepted name-splitting rules.
-
-# Manually reviewed winner-name rows that genuinely identify multiple firms.
-# These can be used later to split winner_name alongside winner_cvr.
-valid_multi_name_rows <- c(
-  # From consortium / explicit grouping language
-  59588, 73374, 105116, 146512, 156134, 157184,
-  
-  # From "og" joining two firm-like names
-  62215, 65494, 140635,
-  
-  # From pipe delimiter
-  138833,
-  
-  # From ampersand joining two firm-like names
-  144636
+# Since the number is small, manually reviewed row IDs confirm cases where the
+# multiple distinct valid CVR flag corresponds to multiple firms in winner_name.
+multiple_distinct_winner_names_row_ids <- c(
+  157184, 156134, 148062, 146512, 146029, 144636, 141894, 140635,
+  138833, 105116, 78505, 73374, 65494, 62215, 59588
 )
 
-winner_data <- winner_data %>% 
-  mutate(name_delim_flag_valid_multi = row_id %in% valid_multi_name_rows)
+winner_data <- mutate(
+  winner_data,
+  flag_multiple_distinct_winner_names = coalesce(row_id %in% multiple_distinct_winner_names_row_ids, FALSE)
+)
 
-# Check manually accepted name row_id's still present in the data
-missing_valid_name_rows <- setdiff(valid_multi_name_rows, winner_data$row_id)
+# Check manually reviewed row IDs still exist and still have multiple distinct
+# valid CVRs. If either check fails, the manual coding needs to be revisited.
+missing_multiple_distinct_name_rows <- setdiff(
+  multiple_distinct_winner_names_row_ids,
+  winner_data$row_id
+)
+
+if (length(missing_multiple_distinct_name_rows) > 0) {
+  print(missing_multiple_distinct_name_rows)
+  stop("Some manually reviewed multiple-winner row IDs are not present in winner_data.")
+}
+
+invalid_multiple_distinct_name_rows <- winner_data %>%
+  filter(flag_multiple_distinct_winner_names & !flag_multiple_distinct_valid_cvrs) %>%
+  select(row_id, winner_cvr, winner_name)
+
+if (nrow(invalid_multiple_distinct_name_rows) > 0) {
+  print(invalid_multiple_distinct_name_rows)
+  stop("Some manually reviewed multiple-winner rows are no longer flagged as multiple distinct valid CVRs.")
+}
+
+## 2.2 Check reviewed multiple-winner names
+# The automatic CVR flag can find multiple distinct valid CVRs even when the
+# winner name is a single firm. Keep the final multiple-winner-name flag tied to
+# the manually reviewed row IDs above, then audit the inputs needed for that
+# decision.
+reviewed_multiple_winner_names <- winner_data %>%
+  filter(flag_multiple_distinct_winner_names) %>%
+  select(row_id, winner_cvr, winner_name, winner_country)
+
+missing_reviewed_winner_names <- reviewed_multiple_winner_names %>%
+  filter(is.na(winner_name) | winner_name == "")
 
 if (length(missing_valid_name_rows) > 0) {
   print(missing_valid_name_rows)
