@@ -406,3 +406,17 @@ multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %
          winner_cvr = ifelse(!is.na(winner_cvr_real) & winner_cvr_real != winner_cvr,
                              winner_cvr_real, winner_cvr)) 
 
+# Update valid CVR flag
+multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
+  mutate(valid_cvr = coalesce(str_detect(winner_cvr, "^\\d{8}$"), FALSE))
+
+# Other firms have many valid CVRs and many invalid CVRs. 
+# Flag them.
+multi_valid_cvr_firms <- valid_invalid_cvr_winner_key %>% 
+  filter(n_valid_cvr > 1) %>% 
+  distinct(winner_name, n_valid_cvr, n_total_cvr) %>% 
+  .$winner_name
+
+multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
+  mutate(flag_multi_valid_cvr = coalesce(if_else(winner_name %in% multi_valid_cvr_firms, 
+                                                 TRUE, FALSE), FALSE))
