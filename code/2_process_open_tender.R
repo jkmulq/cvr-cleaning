@@ -98,7 +98,7 @@ winner_data <- winner_data_original
 
 ## 2.1 Investigate bidder ID delimiter for multiple CVR numbers/winning firms
 ### 2.1.1 Find delimiter types
-winner_data <- winner_data %>% 
+winner_data <- winner_data %>%
   mutate(
     delim_flag_missing = is.na(winner_cvr) | winner_cvr == "",
     delim_flag_comma = coalesce(str_detect(winner_cvr, ","), FALSE),
@@ -129,7 +129,7 @@ winner_data %>%
 
 # The 1 '|' row represents a genuine delimiter, as well as all the commas.
 # Flag these. 
-winner_data <- winner_data %>% 
+winner_data <- winner_data %>%
   mutate(delim_flag_valid_comma = coalesce(delim_flag_comma, FALSE),
          delim_flag_valid_pipe = coalesce(delim_flag_pipe, FALSE))
 
