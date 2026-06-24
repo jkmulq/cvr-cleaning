@@ -280,8 +280,20 @@ cat("Number of multiple-distinct-CVR rows not confirmed as multiple winners: ",
     nrow(unconfirmed_multiple_cvr_rows), "\n")
 
 ## 2.3 Separate into single and multiple CVRs
-multi_winner_data <- winner_data %>% filter(flag_multi_winner)
-single_winner_data <- winner_data %>% filter(!flag_multi_winner) # Keeps missings for completeness.
+multi_winner_names_data <- winner_data %>% 
+  filter(flag_multiple_distinct_valid_cvrs, flag_multiple_distinct_winner_names)
+multi_distinct_cvr_data <- winner_data %>% 
+  filter(flag_multiple_distinct_valid_cvrs, !flag_multiple_distinct_winner_names)
+single_winner_data <- winner_data %>% 
+  filter(!flag_multi_winner | !flag_multiple_distinct_valid_cvrs)
+
+# Check these datasets cover complete data dataset
+if (nrow(multi_winner_names_data) + 
+    nrow(multi_distinct_cvr_data) + 
+    nrow(single_winner_data) - 
+    nrow(winner_data) != 0) {
+  stop("subsetted datasets do not have the same number of rows as the full winner dataset")
+}
 
 ## 2.4 Pivot multi CVR to long
 multi_winner_data_long <- multi_winner_data %>% 
