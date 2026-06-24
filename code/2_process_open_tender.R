@@ -299,16 +299,19 @@ if (nrow(invalid_valid_name_rows) > 0) {
 multi_winner_data <- winner_data %>% filter(flag_multi_winner)
 single_winner_data <- winner_data %>% filter(!flag_multi_winner) # Keeps missings for completeness.
 
-## 2.4 Clean up CVRs
+## 2.4 Pivot multi CVR to long
+multi_winner_data_long <- multi_winner_data %>% 
+  separate_longer_delim(cols = "winner_cvr", delim = ";")
+
 ### 2.4.1 Basic cleaning
 # Remove spaces
-winner_data_long <- winner_data_long %>% 
+multi_winner_data_long <- multi_winner_data_long %>% 
   mutate(winner_cvr = gsub(" ", "", winner_cvr))
 
 # Remove bidder_country prefix if present
 # e.g. bidder_country = "DK" and bidder_bodyIds = "DK12345678"
 # or bidder_country = "SE" and bidder_bodyIds = "SE123456789"
-winner_data_long <- winner_data_long %>% 
+multi_winner_data_long <- multi_winner_data_long %>% 
   mutate(winner_cvr = if_else(str_sub(winner_cvr, start = 1, end = 2) == winner_country,
                               substring(winner_cvr, first = 3),
                               winner_cvr))
@@ -316,7 +319,7 @@ winner_data_long <- winner_data_long %>%
 # Remove starting string:
 # 'CVR-nr:', 'CVR-nr::', 'CVR-nr.:', 'CVR-nummer', 'CVR-nr.'
 # 'CVRnr.', 	'CVR.nr.', 'CVR.:', 'CVR'
-winner_data_long <- winner_data_long %>% 
+multi_winner_data_long <- multi_winner_data_long %>% 
   mutate(winner_cvr = gsub("CVR-nr:", "", winner_cvr),
          winner_cvr = gsub("CVR-nr::", "", winner_cvr),
          winner_cvr = gsub("CVR-nr.:", "", winner_cvr),
@@ -332,7 +335,7 @@ winner_data_long <- winner_data_long %>%
          winner_cvr = gsub("Cvr:", "", winner_cvr)) 
 
 # Check all 'CVR' or any variation on the capitalisation strings no longer present
-cvr_string_check <- winner_data_long %>% 
+cvr_string_check <- multi_winner_data_long %>% 
   filter(str_detect(winner_cvr, regex("cvr", ignore_case = TRUE))) %>% 
   nrow()
 
@@ -341,14 +344,14 @@ if (cvr_string_check > 0) {
 }
 
 # Flag valid CVR string post cleaning (8 numerical digits)
-winner_data_long <- winner_data_long %>% 
+multi_winner_data_long <- multi_winner_data_long %>% 
   mutate(valid_cvr = coalesce(str_detect(winner_cvr, "^\\d{8}$"), FALSE))
 
 ### 2.4.2 Fix erroneous CVR cites across firm
 # Many bidder names have multiple CVR numbers, some are not valid
 # Make a key and join each instance of a firm with the valid CVR
 # I only focus on firms with ONE valid CVR but more than one entry in the CVR
-valid_invalid_cvr_winner_key <- winner_data_long %>% 
+valid_invalid_cvr_winner_key <- multi_winner_data_long %>% 
   distinct(winner_name, winner_cvr, valid_cvr) %>% 
   mutate(n_valid_cvr = sum(valid_cvr), 
          n_total_cvr = n(),
@@ -360,12 +363,12 @@ single_valid_cvr_key <- valid_invalid_cvr_winner_key %>%
   select(-valid_cvr, -n_valid_cvr, n_total_cvr)
 
 # Join key
-winner_data_long <- left_join(winner_data_long, 
+multi_winner_data_long <- left_join(multi_winner_data_long, 
                               single_valid_cvr_key, 
                               by = c("winner_name"))
 
 # Overwrite erroneous CVRs
-winner_data_long <- winner_data_long %>% 
+multi_winner_data_long <- multi_winner_data_long %>% 
   mutate(winner_cvr_original = winner_cvr) %>% 
   mutate(flag_cvr_overwrite = coalesce(!is.na(winner_cvr_real) & winner_cvr_real != winner_cvr, FALSE),
          winner_cvr = ifelse(!is.na(winner_cvr_real) & winner_cvr_real != winner_cvr,
