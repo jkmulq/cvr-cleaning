@@ -220,7 +220,6 @@ winner_data <- winner_data %>%
 winner_data <- winner_data %>% 
   mutate(
     name_delim_flag_missing = is.na(winner_name) | winner_name == "",
-    name_delim_flag_comma = coalesce(str_detect(winner_name, fixed(",")), FALSE),
     name_delim_flag_semicolon = coalesce(str_detect(winner_name, fixed(";")), FALSE), 
     name_delim_flag_pipe = coalesce(str_detect(winner_name, fixed("|")), FALSE), 
     name_delim_flag_ampersand = coalesce(str_detect(winner_name, fixed("&")), FALSE),
