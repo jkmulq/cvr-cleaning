@@ -345,60 +345,44 @@ multi_winner_names_data_long <- multi_winner_names_data_long %>%
 multi_winner_names_data_long <- multi_winner_names_data_long %>% 
   mutate(winner_cvr = parse_number(winner_cvr))
 
-
-## 2.5 Pivot multi nondistinct CVR to long
-multi_winner_data_long <- multi_winner_data %>% 
+## 2.5 Pivot multiple distinct CVRs to long
+# This section focuses on multiple distinct CVRs with only one identifiable firm name
+multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data %>% 
   separate_longer_delim(cols = "winner_cvr", delim = ";")
 
 ### 2.4.1 Basic cleaning
 # Remove spaces
-multi_winner_data_long <- multi_winner_data_long %>% 
+multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
   mutate(winner_cvr = gsub(" ", "", winner_cvr))
 
 # Remove bidder_country prefix if present
 # e.g. bidder_country = "DK" and bidder_bodyIds = "DK12345678"
 # or bidder_country = "SE" and bidder_bodyIds = "SE123456789"
-multi_winner_data_long <- multi_winner_data_long %>% 
+multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
   mutate(winner_cvr = if_else(str_sub(winner_cvr, start = 1, end = 2) == winner_country,
                               substring(winner_cvr, first = 3),
                               winner_cvr))
 
-# Remove starting string:
-# 'CVR-nr:', 'CVR-nr::', 'CVR-nr.:', 'CVR-nummer', 'CVR-nr.'
-# 'CVRnr.', 	'CVR.nr.', 'CVR.:', 'CVR'
-multi_winner_data_long <- multi_winner_data_long %>% 
-  mutate(winner_cvr = gsub("CVR-nr:", "", winner_cvr),
-         winner_cvr = gsub("CVR-nr::", "", winner_cvr),
-         winner_cvr = gsub("CVR-nr.:", "", winner_cvr),
-         winner_cvr = gsub("CVR-nummer", "", winner_cvr),
-         winner_cvr = gsub("CVR-nr.", "", winner_cvr),
-         winner_cvr = gsub("CVRnr.", "", winner_cvr),
-         winner_cvr = gsub("CVR.nr.", "", winner_cvr),
-         winner_cvr = gsub("CVR.:", "", winner_cvr),
-         winner_cvr = gsub("CVR", "", winner_cvr),
-         winner_cvr = gsub("CVR(VATno.)", "", winner_cvr),
-         winner_cvr = gsub("Cvr.nr.", "", winner_cvr),
-         winner_cvr = gsub("Cvr-nr.", "", winner_cvr),
-         winner_cvr = gsub("Cvr:", "", winner_cvr)) 
-
-# Check all 'CVR' or any variation on the capitalisation strings no longer present
-cvr_string_check <- multi_winner_data_long %>% 
-  filter(str_detect(winner_cvr, regex("cvr", ignore_case = TRUE))) %>% 
-  nrow()
-
-if (cvr_string_check > 0) {
-  stop("some cvr numbers still contain some variation of the letters 'cvr' in the string.")
-}
+# Remove any punctuation and all unicode letters
+multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
+  mutate(winner_cvr = str_remove_all(winner_cvr, "[[:punct:]]"),
+         winner_cvr = str_remove_all(winner_cvr, "\\p{L}"),
+         winner_cvr = as.character(parse_number(winner_cvr))) # Easy way to process all characters as NA
 
 # Flag valid CVR string post cleaning (8 numerical digits)
-multi_winner_data_long <- multi_winner_data_long %>% 
+multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
   mutate(valid_cvr = coalesce(str_detect(winner_cvr, "^\\d{8}$"), FALSE))
+
+# Make distinct by (row_id, tender_id, winner_cvr, winner_name)
+## Since a lot of these rows come from records with multiple instances of the same CVR number
+multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
+  distinct(row_id, tender_id, winner_cvr, winner_name, .keep_all = TRUE)
 
 ### 2.4.2 Fix erroneous CVR cites across firm
 # Many bidder names have multiple CVR numbers, some are not valid
 # Make a key and join each instance of a firm with the valid CVR
 # I only focus on firms with ONE valid CVR but more than one entry in the CVR
-valid_invalid_cvr_winner_key <- multi_winner_data_long %>% 
+valid_invalid_cvr_winner_key <- multi_distinct_cvr_data_long %>% 
   distinct(winner_name, winner_cvr, valid_cvr) %>% 
   mutate(n_valid_cvr = sum(valid_cvr), 
          n_total_cvr = n(),
