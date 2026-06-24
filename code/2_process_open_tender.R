@@ -188,6 +188,16 @@ winner_data <- winner_data %>%
                                        "check whether bidder ID contains multiple winning firms",
                                        NA))
 
+# Convert valid delims to semi-colon
+winner_data <- winner_data %>%
+  mutate(
+    winner_cvr = if_else(delim_flag_valid_comma, str_replace_all(winner_cvr, fixed(","), ";"), winner_cvr),
+    winner_cvr = if_else(delim_flag_valid_pipe, str_replace_all(winner_cvr, fixed("|"), ";"), winner_cvr),
+    winner_cvr = if_else(delim_flag_valid_slash, str_replace_all(winner_cvr, fixed("/"), ";"), winner_cvr),
+    winner_cvr = if_else(delim_flag_valid_ampersand, str_replace_all(winner_cvr, fixed("&"), ";"), winner_cvr),
+    winner_cvr = if_else(delim_flag_valid_og, str_replace_all(winner_cvr, "og", ";"), winner_cvr)
+  )
+
 # Flag likely multi-value winner ID strings.
 # At this stage, `flag_multi_winner` means the source string has an accepted
 # multi-value delimiter. It does not yet mean the row has multiple distinct
