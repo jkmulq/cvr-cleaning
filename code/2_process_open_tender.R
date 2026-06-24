@@ -280,16 +280,21 @@ cat("Number of multiple-distinct-CVR rows not confirmed as multiple winners: ",
     nrow(unconfirmed_multiple_cvr_rows), "\n")
 
 ## 2.3 Separate into single and multiple CVRs
+# Multiple distinct CVRs, identified multiple firm names
 multi_winner_names_data <- winner_data %>% 
   filter(flag_multiple_distinct_valid_cvrs, flag_multiple_distinct_winner_names)
-multi_nondistinct_cvr_data <- winner_data %>% 
+
+# Multiple distinct CVRs, single firm name
+multi_distinct_cvr_data <- winner_data %>% 
   filter(flag_multiple_distinct_valid_cvrs, !flag_multiple_distinct_winner_names)
+
+# Either no CVR delimiter detected, or nondistinct CVR numbers if delimited detected
 single_winner_data <- winner_data %>% 
   filter(!flag_multi_winner | !flag_multiple_distinct_valid_cvrs)
 
 # Check these datasets cover complete data dataset
 if (nrow(multi_winner_names_data) + 
-    nrow(multi_nondistinct_cvr_data) + 
+    nrow(multi_distinct_cvr_data) + 
     nrow(single_winner_data) - 
     nrow(winner_data) != 0) {
   stop("subsetted datasets do not have the same number of rows as the full winner dataset")
