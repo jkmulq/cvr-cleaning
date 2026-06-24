@@ -298,6 +298,8 @@ if (nrow(multi_winner_names_data) +
 ## 2.4 Multi-winner data with confirmed multiple firms
 ### 2.4.1 Clean up name delimiters for easier splitting
 # Since there are few of these cases, I just do them manually for transparency
+# Where original firm names include 'consortium', I have put the firm name corresponding to the CVR obtained from https://virk.dk
+
 multi_winner_names_data <- multi_winner_names_data %>% 
   mutate(winner_name = case_when(
     winner_name == "Konsortiet Dansk Flygtningehjælp og Als Research ApS" ~ "Dansk Flygtningehjælp;Als Research ApS",
@@ -305,7 +307,7 @@ multi_winner_names_data <- multi_winner_names_data %>%
     winner_name == "C. C. Brun Entreprise A/S og Rørbæk & Møller ApS" ~ "C. C. Brun Entreprise A/S;Rørbæk & Møller ApS",
     winner_name == "konsortiet IESenergy A/S / Victor DST A/S" ~ "IESenergy A/S;Victor DST A/S",
     winner_name == "IESEnergy A/S/VictorDST A/S" ~ "IESEnergy A/S;VictorDST A/S",
-    winner_name == "LM Byg Konsortiet v/LM Byg A/S og M.J. Eriksson A/S" ~ "LM Byg Konsortiet v/LM Byg A/S;M.J. Eriksson A/S",
+    winner_name == "LM Byg Konsortiet v/LM Byg A/S og M.J. Eriksson A/S" ~ "LM Byg A/S;M.J. Eriksson A/S",
     winner_name == "Crone & Co | Impact Group" ~ "Crone & Co;Impact Group",
     winner_name == "Nøhr & Sigsgaard A/S og Jakon A/S" ~ "Nøhr & Sigsgaard A/S;Jakon A/S",
     winner_name == "Arkitema K/S / Tegnestuen Vandkunsten A/S / JJW Arkitekter A/S" ~ "Arkitema K/S;Tegnestuen Vandkunsten A/S;JJW Arkitekter A/S",
@@ -321,6 +323,22 @@ multi_winner_names_data <- multi_winner_names_data %>%
 if (any(is.na(multi_winner_names_data$winner_name))) {
   stop("you haven't cleaned all the multiple distinct cvr winner names. check `multi_winner_names_data` and try again.")
 }
+
+### 2.4.2 Pivot to longer
+# Method below assumes ordering of CVRs matches ordering of winner name
+multi_winner_names_data_long <- multi_winner_names_data %>% 
+  separate_longer_delim(cols = c("winner_cvr", "winner_name"), delim = ";")
+
+### 2.4.3 Clean up CVR names
+# Extract the number (already confirmed to be 8 digit from detection step above)
+# Edge case is CVR5EByg:30811097
+multi_winner_names_data_long <- multi_winner_names_data_long %>% 
+  mutate(winner_cvr = ifelse(winner_cvr == "CVR5EByg:30811097", "30811097", winner_cvr))
+
+# Now extract number
+multi_winner_names_data_long <- multi_winner_names_data_long %>% 
+  mutate(winner_cvr = parse_number(winner_cvr))
+
 
 ## 2.4 Pivot multi CVR to long
 multi_winner_data_long <- multi_winner_data %>% 
