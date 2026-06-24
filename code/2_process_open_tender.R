@@ -340,7 +340,7 @@ multi_winner_names_data_long <- multi_winner_names_data_long %>%
   mutate(winner_cvr = parse_number(winner_cvr))
 
 
-## 2.4 Pivot multi CVR to long
+## 2.5 Pivot multi nondistinct CVR to long
 multi_winner_data_long <- multi_winner_data %>% 
   separate_longer_delim(cols = "winner_cvr", delim = ";")
 
