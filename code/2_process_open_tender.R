@@ -265,30 +265,19 @@ reviewed_multiple_winner_names <- winner_data %>%
 missing_reviewed_winner_names <- reviewed_multiple_winner_names %>%
   filter(is.na(winner_name) | winner_name == "")
 
-if (length(missing_valid_name_rows) > 0) {
-  print(missing_valid_name_rows)
-  stop("Some manually reviewed winner-name row IDs are not present in winner_data.")
+if (nrow(missing_reviewed_winner_names) > 0) {
+  print(missing_reviewed_winner_names)
+  stop("Some manually reviewed multiple-winner rows have missing winner names.")
 }
 
-# Check accepted row_id's still have a plausible name delimiter cue
-invalid_valid_name_rows <- winner_data %>%
-  filter(
-    name_delim_flag_valid_multi &
-      !(
-        name_delim_flag_semicolon |
-          name_delim_flag_pipe |
-          name_delim_flag_ampersand |
-          name_delim_flag_colon |
-          name_delim_flag_og |
-          name_delim_flag_consortium
-      )
-  ) %>%
-  select(row_id, winner_name)
+unconfirmed_multiple_cvr_rows <- winner_data %>%
+  filter(flag_multiple_distinct_valid_cvrs & !flag_multiple_distinct_winner_names) %>%
+  select(row_id, winner_cvr, winner_name, winner_country)
 
-if (nrow(invalid_valid_name_rows) > 0) {
-  print(invalid_valid_name_rows)
-  stop("Some manually reviewed winner-name row IDs no longer have the expected delimiter cue.")
-}
+cat("Number of manually confirmed multiple-winner name rows: ",
+    nrow(reviewed_multiple_winner_names), "\n")
+cat("Number of multiple-distinct-CVR rows not confirmed as multiple winners: ",
+    nrow(unconfirmed_multiple_cvr_rows), "\n")
 
 ## 2.3 Separate into single and multiple CVRs
 multi_winner_data <- winner_data %>% filter(flag_multi_winner)
