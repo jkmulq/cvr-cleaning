@@ -427,12 +427,17 @@ multi_cvr_nondistinct_names_data_long <- left_join(multi_cvr_nondistinct_names_d
                               single_valid_cvr_key, 
                               by = c("winner_name"))
 
-# Overwrite erroneous CVRs
+# Assume the single valid CVR is the true CVR for this firm name.
+# This does not create separate rows for invalid or non-CVR tokens; the raw
+# OpenTender source string joined later remains the audit trail.
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
-  mutate(winner_cvr_original = winner_cvr) %>% 
-  mutate(flag_cvr_overwrite = coalesce(!is.na(winner_cvr_real) & winner_cvr_real != winner_cvr, FALSE),
-         winner_cvr = ifelse(!is.na(winner_cvr_real) & winner_cvr_real != winner_cvr,
-                             winner_cvr_real, winner_cvr)) 
+  mutate(
+    flag_assumed_single_valid_cvr = coalesce(
+      !is.na(winner_cvr_real) & (is.na(winner_cvr) | winner_cvr_real != winner_cvr),
+      FALSE
+    ),
+    winner_cvr = ifelse(flag_assumed_single_valid_cvr, winner_cvr_real, winner_cvr)
+  )
 
 # Update valid CVR flag
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
