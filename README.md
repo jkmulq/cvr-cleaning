@@ -166,7 +166,7 @@ The OpenTender script currently:
 19. Splits confirmed multi-firm rows into one row per winner after hand-coding the corresponding winner-name delimiters.
 20. Splits the remaining multi-CVR or delimited rows separately, cleans CVR strings by removing spaces, country prefixes, punctuation, and letters, and flags valid eight-digit CVRs.
 21. For firm names that appear with one valid CVR and one or more invalid CVR entries, assumes the single valid CVR is the true CVR, collapses duplicate rows created by that assumption, and records this with `flag_assumed_single_valid_cvr`.
-22. Flags firm names that appear with multiple valid CVRs using `flag_multi_valid_cvr`, because those cases need additional review rather than automatic overwrite.
+22. Flags firm names that appear with multiple valid CVRs using `flag_multi_valid_cvr`, because those cases need additional review rather than automatic assumption.
 
 ### OpenTender Particularities
 
@@ -175,7 +175,7 @@ The OpenTender script currently:
 - The script intentionally separates "valid delimiter" flags from "manual review" flags so hand-reviewed cases remain auditable.
 - The script also separates "multiple distinct valid CVRs" from "multiple winning firms." This matters because some OpenTender rows list several CVR-like values for a single bidder name, while only a small manually confirmed set represents true multi-firm winning groups.
 - For confirmed multi-firm rows, the script manually standardizes a small number of winner-name strings so CVRs and names can be expanded together. Consortium labels are replaced with the firm names corresponding to the CVRs, with the script noting virk.dk as the reference source for those cases.
-- For repeated or partly invalid CVR strings attached to one firm name, the script uses a conservative overwrite rule: only firms with exactly one valid CVR and more than one CVR entry get their invalid entries replaced, and the change is flagged.
+- For repeated or partly invalid CVR strings attached to one firm name, the script uses a conservative assumption rule: only firms with exactly one valid CVR and more than one CVR entry get their invalid entries collapsed to that valid CVR, and the change is flagged.
 - The current OpenTender workflow is focused on bidder/winner CVR cleanup. Buyer identifier cleaning has not yet been implemented beyond creating `buyer_data_original`.
 - Because manually reviewed cases are stored as `row_id` lists, the script includes drift checks to prevent those row IDs from silently pointing to the wrong records.
 
@@ -193,7 +193,7 @@ Important in-session objects include:
 - `buyer_data_original` - Original buyer fields retained for later buyer CVR cleaning.
 - `winner_data` - Winner/bidder working table with delimiter and manual-review flags.
 - `multi_winner_names_data_long` - Manually confirmed multi-firm winner rows split to one row per winner name and CVR.
-- `multi_cvr_nondistinct_names_data_long` - Delimited or multi-CVR rows that do not represent manually confirmed multi-firm winner-name cases, with CVR cleanup, overwrite flags, and multi-valid-CVR flags.
+- `multi_cvr_nondistinct_names_data_long` - Delimited or multi-CVR rows that do not represent manually confirmed multi-firm winner-name cases, with CVR cleanup, assumed-single-valid-CVR flags, and multi-valid-CVR flags.
 
 ## Cleaning And Review Flags
 
@@ -236,5 +236,5 @@ See `TODO.md` for the active development roadmap and progress tracker.
 4. Run `code/1_process_kfst.R`.
 5. Inspect the KFST diagnostics and saved files in `data/clean/`.
 6. Run `code/2_process_open_tender.R`.
-7. Inspect OpenTender delimiter summaries, manual-review flags, confirmed multi-winner rows, overwrite flags, and multi-valid-CVR flags.
+7. Inspect OpenTender delimiter summaries, manual-review flags, confirmed multi-winner rows, assumed-single-valid-CVR flags, and multi-valid-CVR flags.
 8. Add OpenTender buyer cleaning and export steps once the cleaned output format is finalized.
