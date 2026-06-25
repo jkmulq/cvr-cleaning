@@ -473,3 +473,34 @@ multi_valid_cvr_firms <- valid_invalid_cvr_winner_key %>%
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
   mutate(flag_multi_valid_cvr = coalesce(if_else(winner_name %in% multi_valid_cvr_firms, 
                                                  TRUE, FALSE), FALSE))
+
+## 2.6 Bind winner data
+## Goal: Create one OpenTender winner table with cleaned CVR candidates and
+## keep the OpenTender-specific review flags created above.
+single_winner_data <- single_winner_data %>%
+  mutate(winner_cvr = as.character(winner_cvr),
+         winner_number = 1,
+         source = "single winner")
+
+multi_winner_names_data_long <- multi_winner_names_data_long %>%
+  mutate(winner_cvr = as.character(winner_cvr),
+         winner_number = row_number(),
+         source = "multiple confirmed winner names",
+         .by = c(row_id, tender_id))
+
+multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>%
+  mutate(winner_cvr = as.character(winner_cvr),
+         source = "multiple CVR candidates for one winner name",
+         winner_number = row_number(),
+         .by = c(row_id, tender_id))
+
+clean_winner_data <- bind_rows(
+  single_winner_data,
+  multi_winner_names_data_long,
+  multi_cvr_nondistinct_names_data_long
+) %>%
+  arrange(row_id, winner_number) %>%
+  select(row_id, tender_id, winner_number, winner_cvr, winner_name, winner_country, source, everything())
+
+clean_winner_data <- clean_winner_data %>%
+  rename(winner_cvr_candidate_original = winner_cvr)
