@@ -519,14 +519,17 @@ multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %
   )
 
 # Other firms have many valid CVRs and many invalid CVRs. 
-# Flag them.
+# Flag them, but I keep all their rows.
 multi_valid_cvr_firms <- valid_invalid_cvr_winner_key %>% 
   filter(n_valid_cvr > 1) %>% 
-  distinct(winner_name, n_valid_cvr, n_total_cvr) %>% 
-  .$winner_name
+  distinct(winner_name, n_valid_cvr, n_total_cvr) 
+
+cat("Number of winning firms with several valid CVRs:", nrow(multi_valid_cvr_firms), "\n")
+cat("Ave. number of valid CVRs for these firms:", mean(multi_valid_cvr_firms$n_valid_cvr), "\n")
+cat("Ave. number of total CVRs (valid + invalid) for these firms:", mean(multi_valid_cvr_firms$n_total_cvr), "\n")
 
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
-  mutate(flag_multi_valid_cvr = coalesce(if_else(winner_name %in% multi_valid_cvr_firms, 
+  mutate(flag_multi_valid_cvr = coalesce(if_else(winner_name %in% multi_valid_cvr_firms$winner_name, 
                                                  TRUE, FALSE), FALSE))
 
 ## Add metadata
