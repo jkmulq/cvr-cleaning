@@ -473,7 +473,7 @@ valid_invalid_cvr_winner_key <- multi_cvr_nondistinct_names_data_long %>%
 
 single_valid_cvr_key <- valid_invalid_cvr_winner_key %>% 
   filter(n_valid_cvr == 1, n_total_cvr > 1, valid_cvr) %>% 
-  rename(winner_cvr_real = winner_cvr) %>% 
+  rename(winner_cvr_clean_real = winner_cvr_clean) %>%
   select(-valid_cvr, -n_valid_cvr, n_total_cvr) %>% 
   distinct()
 
