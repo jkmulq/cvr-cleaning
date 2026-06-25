@@ -461,7 +461,7 @@ multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %
   distinct(tender_id, row_id, winner_name, winner_cvr_clean, valid_cvr, 
            .keep_all = TRUE)
 
-### 2.4.2 Fix erroneous CVR cites across firm
+### 2.5.2 Fix erroneous CVR cites across firm
 # Many bidder names have multiple CVR numbers, some are not valid
 # Make a key and join each instance of a firm with the valid CVR
 # I only focus on firms with ONE valid CVR but more than one entry in the CVR
