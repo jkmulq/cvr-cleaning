@@ -58,7 +58,7 @@ extract_multiple_cvr <- function(
   if (length(out_list) == 0) {
     return(out %>% mutate(max_detected = max_detected))
   }
-  
+
   bind_cols(out, tibble(max_detected = max_detected), tibble::as_tibble(out_list))
 }
 
