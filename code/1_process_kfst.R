@@ -139,7 +139,15 @@ tender_lot_data <- data %>%
 # 2 Winners
 winner_data <- data %>% 
   select(tender_id, lot_id, winner_cvr, winner_name, winner_country, n_lot_winners)
-original_winner_data <- winner_data # Store original for later joining
+
+# Store original winner fields separately. The cleaned table keeps both the raw
+# source field and the standardized CVR field.
+original_winner_data <- winner_data %>%
+  rename(
+    winner_cvr_original = winner_cvr,
+    winner_name_original = winner_name,
+    winner_country_original = winner_country
+  )
 
 ## 2.1 Separate winners
 ## Goal: Separate winners into single winners and multiple winners.
@@ -239,12 +247,17 @@ clean_winner_data <- bind_rows(
 ) %>% 
   arrange(tender_id)
 
+clean_winner_data <- clean_winner_data %>%
+  rename(winner_cvr_candidate_original = winner_cvr)
+
+clean_winner_data <- clean_winner_data %>%
+  mutate(winner_cvr_clean = winner_cvr_candidate_original)
+
 ## 2.4 Join original tender data and original winner data
 clean_winner_data <- left_join(clean_winner_data, tender_lot_data, 
                                by = c("tender_id", "lot_id"))
 clean_winner_data <- left_join(clean_winner_data, original_winner_data, 
-                               by = c("tender_id", "lot_id"),
-                               suffix = c("", "_original"))
+                               by = c("tender_id", "lot_id"))
 
 ### Only keep lots that had winners (defined by original data)
 clean_winner_data <- clean_winner_data %>% 
@@ -256,20 +269,20 @@ clean_winner_data <- clean_winner_data %>%
 clean_winner_data <- clean_winner_data %>%
   mutate(
     # Remove white space
-    flag_cvr_ws = coalesce(str_detect(winner_cvr, "\\s"), FALSE),
-    winner_cvr = str_remove_all(winner_cvr, "\\s+"),
+    flag_cvr_ws = coalesce(str_detect(winner_cvr_clean, "\\s"), FALSE),
+    winner_cvr_clean = str_remove_all(winner_cvr_clean, "\\s+"),
     
     # Remove hyphens
-    flag_cvr_hyphen = coalesce(str_detect(winner_cvr, "-"), FALSE),
-    winner_cvr = str_remove_all(winner_cvr, "-"),
+    flag_cvr_hyphen = coalesce(str_detect(winner_cvr_clean, "-"), FALSE),
+    winner_cvr_clean = str_remove_all(winner_cvr_clean, "-"),
     
     # Remove alphabetical letters
-    flag_cvr_alphabet = coalesce(str_detect(winner_cvr, "[[:alpha:]]"), FALSE),
-    winner_cvr = str_remove_all(winner_cvr, "[[:alpha:]]"),
+    flag_cvr_alphabet = coalesce(str_detect(winner_cvr_clean, "[[:alpha:]]"), FALSE),
+    winner_cvr_clean = str_remove_all(winner_cvr_clean, "[[:alpha:]]"),
     
     # Remove all punctuation
-    flag_cvr_punct = coalesce(str_detect(winner_cvr, "[[:punct:]]"), FALSE),
-    winner_cvr = str_remove_all(winner_cvr, "[[:punct:]]+"),
+    flag_cvr_punct = coalesce(str_detect(winner_cvr_clean, "[[:punct:]]"), FALSE),
+    winner_cvr_clean = str_remove_all(winner_cvr_clean, "[[:punct:]]+"),
     
     # Flag if any standardisation performed
     flag_cvr_standardised = coalesce(
@@ -287,7 +300,7 @@ clean_winner_data <- clean_winner_data %>%
 # Flag valid CVR numbers (exactly 8 digits, no letters or special characters)
 # missing/invalid = FALSE, valid = TRUE
 clean_winner_data <- clean_winner_data %>% 
-  mutate(valid_cvr = coalesce(str_detect(winner_cvr, "^\\d{8}$"), FALSE))
+  mutate(valid_cvr = coalesce(str_detect(winner_cvr_clean, "^\\d{8}$"), FALSE))
 
 # Flag transformed winner CVR number (not equal to original winner CVR number)
 # Don't do this for multiple winners because the original winner CVR number 
@@ -295,17 +308,17 @@ clean_winner_data <- clean_winner_data %>%
 # CVRs listed in the original data, which we have now separated into multiple rows).
 clean_winner_data <- clean_winner_data %>% 
   mutate(flag_winner_cvr_changed = 
-           coalesce(
-             winner_cvr != winner_cvr_original & source == "single winners",
-             FALSE
-           )
+	     coalesce(
+	             winner_cvr_clean != winner_cvr_candidate_original,
+	             FALSE
+	           )
          )
 
 # Flag missing CVR number
 clean_winner_data <- clean_winner_data %>%
   mutate(flag_missing_winner_cvr =
       coalesce(
-        is.na(winner_cvr) | winner_cvr == "",
+        is.na(winner_cvr_clean) | winner_cvr_clean == "",
         FALSE
       )
   )
