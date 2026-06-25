@@ -451,7 +451,8 @@ multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %
 # Make distinct by (row_id, tender_id, winner_cvr_clean, winner_name)
 ## Since a lot of these rows come from records with multiple instances of the same CVR number
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
-  distinct(row_id, tender_id, winner_cvr, winner_name, .keep_all = TRUE)
+  distinct(tender_id, row_id, winner_name, winner_cvr_clean, valid_cvr, 
+           .keep_all = TRUE)
 
 ### 2.4.2 Fix erroneous CVR cites across firm
 # Many bidder names have multiple CVR numbers, some are not valid
