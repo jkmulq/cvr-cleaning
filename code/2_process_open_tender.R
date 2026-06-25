@@ -443,6 +443,26 @@ multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
   mutate(valid_cvr = coalesce(str_detect(winner_cvr, "^\\d{8}$"), FALSE))
 
+# Collapse rows that become duplicates after the single-valid-CVR assumption.
+# The full source string is preserved in `winner_cvr_original` after joining the
+# original OpenTender row below.
+# Note, use summarise() instead of distinct() to control how flags are treated
+# after removing the non-distinct rows. 
+multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>%
+  mutate(
+    flag_assumed_single_valid_cvr = coalesce(flag_assumed_single_valid_cvr, FALSE)
+  ) %>%
+  summarise(
+    # Take the first (just need an aggregate function here)
+    across(-c(flag_assumed_single_valid_cvr, valid_cvr), first), 
+    # If any of the original rows in the (row_id, tender_id, winner_cvr, winner_name) tuple 
+    # had asssumed single valid CVRs, put TRUE. Else, FALSE.
+    flag_assumed_single_valid_cvr = any(flag_assumed_single_valid_cvr, na.rm = TRUE),
+    # Recheck the valid_cvr. 
+    valid_cvr = coalesce(str_detect(first(winner_cvr), "^\\d{8}$"), FALSE),
+    .by = c(row_id, tender_id, winner_cvr, winner_name)
+  )
+
 # Other firms have many valid CVRs and many invalid CVRs. 
 # Flag them.
 multi_valid_cvr_firms <- valid_invalid_cvr_winner_key %>% 
