@@ -599,3 +599,143 @@ clean_winner_data <- clean_winner_data %>%
     flag_assumed_single_valid_cvr = coalesce(flag_assumed_single_valid_cvr, FALSE),
     flag_multi_valid_cvr = coalesce(flag_multi_valid_cvr, FALSE)
   )
+
+## 2.9 Check carried CVR standardisation flags
+## The actual CVR standardisation happens inside each winner dataframe before
+## binding. This section only makes the carried flags complete after bind_rows().
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_cvr_ws = coalesce(flag_cvr_ws, FALSE),
+    flag_cvr_hyphen = coalesce(flag_cvr_hyphen, FALSE),
+    flag_cvr_alphabet = coalesce(flag_cvr_alphabet, FALSE),
+    flag_cvr_punct = coalesce(flag_cvr_punct, FALSE),
+    flag_cvr_standardised = coalesce(
+      flag_cvr_ws |
+        flag_cvr_hyphen |
+        flag_cvr_alphabet |
+        flag_cvr_punct,
+      FALSE
+    )
+  )
+
+## 2.9 Other winner quality flags
+## Quality flags treat NAs as FALSE: missing values are captured by explicit
+## missingness flags, not by propagating NA through boolean indicators.
+# Flag valid CVR numbers (exactly 8 digits, no letters or special characters)
+# missing/invalid = FALSE, valid = TRUE
+clean_winner_data <- clean_winner_data %>%
+  mutate(valid_cvr = coalesce(str_detect(winner_cvr_clean, "^\\d{8}$"), FALSE))
+
+# Flag transformed winner CVR number (not equal to original winner CVR number)
+clean_winner_data <- clean_winner_data %>%
+  mutate(flag_winner_cvr_changed =
+           coalesce(
+             winner_cvr_clean != winner_cvr_candidate_original,
+             FALSE
+           )
+  )
+
+# Flag missing CVR number
+clean_winner_data <- clean_winner_data %>%
+  mutate(flag_missing_winner_cvr =
+           coalesce(
+             is.na(winner_cvr_clean) | winner_cvr_clean == "",
+             FALSE
+           )
+  )
+
+# Flag missing winner name
+clean_winner_data <- clean_winner_data %>%
+  mutate(flag_missing_winner_name =
+           coalesce(
+             is.na(winner_name) | winner_name == "",
+             FALSE
+           )
+  )
+
+# Foreign winner
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_foreign_winner = coalesce(
+      !is.na(winner_country) & winner_country != "" & winner_country != "DK",
+      FALSE
+    )
+  )
+
+# Missing country
+clean_winner_data <- clean_winner_data %>%
+  mutate(flag_missing_winner_country = coalesce(is.na(winner_country) | winner_country == "", FALSE))
+
+# Count extracted winners from each original OpenTender row
+clean_winner_data <- clean_winner_data %>%
+  mutate(n_winners_extracted = n(), .by = c(row_id, tender_id))
+
+# Single bidder
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_single_bidder = coalesce(parse_number(n_bids_received) == 1, FALSE)
+  )
+
+# Multi-lot tender
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_multilot = coalesce(parse_number(n_lots) > 1, FALSE)
+  )
+
+# Cancelled procurement
+clean_winner_data <- clean_winner_data %>%
+  mutate(flag_cancelled = coalesce(tender_cancelled, FALSE))
+
+# Observation review
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_missing_cvr_with_name = coalesce(
+      flag_missing_winner_cvr & !flag_missing_winner_name,
+      FALSE
+    ),
+    flag_review_cvr = coalesce(!flag_missing_winner_cvr & !valid_cvr, FALSE),
+    flag_no_winner_info = coalesce(
+      flag_missing_winner_cvr &
+        flag_missing_winner_name &
+        flag_missing_winner_country,
+      FALSE
+    ),
+    flag_verify_cvr_external = coalesce(
+      case_when(
+        flag_missing_cvr_with_name ~ TRUE,
+        flag_review_cvr ~ TRUE,
+        flag_no_winner_info ~ FALSE, # Cannot verify without information.
+        valid_cvr ~ FALSE,
+        TRUE ~ FALSE
+      ),
+      FALSE
+    )
+  )
+
+## 2.11 Reorder columns for visual inspection
+## Keep the cleaned CVR, original source CVR, winner name, winner country, and
+## quality flags near each other so humans can inspect the cleaning decisions.
+clean_winner_data <- clean_winner_data %>%
+  select(
+    any_of(c(
+      "row_id", "dataset", "tender_id", "lot_id", "lot_number", "winner_number", "source",
+      "winner_cvr_clean", "winner_cvr_candidate_original", "winner_cvr_original",
+      "winner_cvr_candidate_audit", "winner_cvr_real",
+      "winner_name", "winner_name_original",
+      "winner_country", "winner_country_original",
+      "valid_cvr", "flag_winner_cvr_changed",
+      "flag_cvr_standardised", "flag_cvr_ws", "flag_cvr_hyphen",
+      "flag_cvr_alphabet", "flag_cvr_punct", "flag_assumed_single_valid_cvr",
+      "flag_missing_winner_cvr", "flag_missing_winner_name",
+      "flag_missing_winner_country", "flag_foreign_winner",
+      "flag_review_cvr", "flag_missing_cvr_with_name",
+      "flag_no_winner_info", "flag_verify_cvr_external",
+      "flag_manual_review", "manual_review_reason",
+      "flag_multi_winner", "flag_multiple_distinct_valid_cvrs",
+      "flag_multiple_distinct_winner_names", "flag_multi_valid_cvr",
+      "n_winners_extracted", "n_bids_received", "flag_single_bidder",
+      "n_lots", "flag_multilot", "tender_cancelled", "flag_cancelled",
+      "buyer_name", "buyer_cvr_original"
+    )),
+    everything()
+  )
