@@ -458,8 +458,8 @@ multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %
 # Many bidder names have multiple CVR numbers, some are not valid
 # Make a key and join each instance of a firm with the valid CVR
 # I only focus on firms with ONE valid CVR but more than one entry in the CVR
-valid_invalid_cvr_winner_key <- multi_cvr_nondistinct_names_data_long %>% 
-  distinct(winner_name, winner_cvr, valid_cvr) %>% 
+valid_invalid_cvr_winner_key <- multi_cvr_nondistinct_names_data_long %>%
+  distinct(winner_name, winner_cvr_clean, valid_cvr) %>%
   mutate(n_valid_cvr = sum(valid_cvr), 
          n_total_cvr = n(),
          .by = winner_name) 
