@@ -408,24 +408,41 @@ multi_winner_names_data_long <- multi_winner_names_data_long %>%
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data %>% 
   separate_longer_delim(cols = "winner_cvr", delim = ";")
 
-### 2.4.1 Basic cleaning
-# Remove spaces
-multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
-  mutate(winner_cvr = gsub(" ", "", winner_cvr))
+## Clean up/standardise CVR numbers
+## Keep the separated raw CVR candidate before cleaning. Cleaning flags treat
+## NAs as FALSE: a missing source value is not counted as evidence that a
+## cleaning operation was performed.
+multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>%
+  mutate(
+    winner_cvr_candidate_original = winner_cvr,
+    winner_cvr_clean = winner_cvr_candidate_original,
 
-# Remove bidder_country prefix if present
-# e.g. bidder_country = "DK" and bidder_bodyIds = "DK12345678"
-# or bidder_country = "SE" and bidder_bodyIds = "SE123456789"
-multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
-  mutate(winner_cvr = if_else(str_sub(winner_cvr, start = 1, end = 2) == winner_country,
-                              substring(winner_cvr, first = 3),
-                              winner_cvr))
+    # Remove white space
+    flag_cvr_ws = coalesce(str_detect(winner_cvr_candidate_original, "\\s"), FALSE),
+    winner_cvr_clean = str_remove_all(winner_cvr_clean, "\\s+"),
 
-# Remove any punctuation and all unicode letters
-multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
-  mutate(winner_cvr = str_remove_all(winner_cvr, "[[:punct:]]"),
-         winner_cvr = str_remove_all(winner_cvr, "\\p{L}"),
-         winner_cvr = as.character(parse_number(winner_cvr))) # Easy way to process all characters as NA
+    # Remove hyphens
+    flag_cvr_hyphen = coalesce(str_detect(winner_cvr_candidate_original, "-"), FALSE),
+    winner_cvr_clean = str_remove_all(winner_cvr_clean, "-"),
+
+    # Remove alphabetical letters
+    flag_cvr_alphabet = coalesce(str_detect(winner_cvr_candidate_original, "[[:alpha:]]"), FALSE),
+    winner_cvr_clean = str_remove_all(winner_cvr_clean, "[[:alpha:]]"),
+
+    # Remove all punctuation
+    flag_cvr_punct = coalesce(str_detect(winner_cvr_clean, "[[:punct:]]"), FALSE),
+    winner_cvr_clean = str_remove_all(winner_cvr_clean, "[[:punct:]]+"),
+    winner_cvr_clean = as.character(parse_number(winner_cvr_clean)),
+
+    # Flag if any standardisation performed
+    flag_cvr_standardised = coalesce(
+      flag_cvr_ws |
+        flag_cvr_hyphen |
+        flag_cvr_alphabet |
+        flag_cvr_punct,
+      FALSE
+    )
+  )
 
 # Flag valid CVR string post cleaning (8 numerical digits)
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
