@@ -573,17 +573,16 @@ single_winner_data <- single_winner_data %>%
 ## keep the OpenTender-specific review flags created above.
 
 clean_winner_data <- bind_rows(
-  single_winner_data,
-  multi_winner_names_data_long,
-  multi_cvr_nondistinct_names_data_long
+  single_winner_data %>% select(-any_of("winner_cvr")),
+  multi_winner_names_data_long %>% select(-any_of("winner_cvr")),
+  multi_cvr_nondistinct_names_data_long %>% select(-any_of("winner_cvr"))
 ) %>%
   arrange(row_id, winner_number) %>%
-  select(row_id, tender_id, winner_number, winner_cvr, winner_name, winner_country, source, everything())
+  select(row_id, tender_id, winner_number, winner_cvr_clean,
+         winner_cvr_candidate_original, winner_name, winner_country,
+         source, everything())
 
-clean_winner_data <- clean_winner_data %>%
-  rename(winner_cvr_candidate_original = winner_cvr)
-
-## 2.7 Join original tender data
+## 2.8 Join original tender data
 ## This keeps the full OpenTender row attached to the cleaned winner rows, so
 ## replication checks can always go back to the source fields.
 clean_winner_data <- left_join(clean_winner_data, original_tender_data,
