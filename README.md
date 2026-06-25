@@ -21,7 +21,7 @@ alternative IDs, and hand-reviewed delimiter cases.
 - `README.md` - Project overview, setup, data inputs, cleaning logic, and current status.
 - `TODO.md` - Development roadmap and remaining cleaning/matching tasks.
 - `config.R` - Project root, Stata path, and derived directory settings.
-- `code/functions.R` - Shared helper for expanding multi-value KFST winner fields.
+- `code/functions.R` - Shared helpers for expanding multi-value fields and detecting valid CVR candidates.
 - `code/1_process_kfst.R` - KFST cleaning workflow.
 - `code/2_process_open_tender.R` - OpenTender schema check and bidder CVR cleanup workflow.
 - `renv.lock` and `renv/` - Reproducible R environment files.
@@ -137,39 +137,45 @@ Important in-session objects include:
 data/raw/OpenTender/
 ```
 
-The script filters raw files to the 2009-2026 period. Older files and undated
-files are intentionally excluded from the current OpenTender workflow.
+The script currently reads all files present in this folder. This means the
+replication sample is determined by the local OpenTender files supplied under
+`data/raw/OpenTender/`, not by an internal year filter in the script.
 
 ### Main Logic
 
 The OpenTender script currently:
 
 1. Lists raw OpenTender CSV files.
-2. Extracts the year from each file name and keeps only files from 2009 through 2026.
-3. Reads column names from each selected file.
-4. Checks all pairwise file combinations with `setequal()` and stops if column schemas differ.
-5. Reads selected CSV files with `data.table::fread(..., colClasses = "character")` so identifier-like fields are not altered by automatic numeric type guessing.
-6. Row-binds the annual files into one table and records the source file in `dataset`.
-7. Adds `row_id`, a stable row reference within the filtered OpenTender data.
-8. Creates `winner_data_original` from bidder identifier, bidder name, and bidder country fields.
-9. Creates `buyer_data_original` from buyer identifier, buyer name, and buyer country fields.
-10. Investigates delimiter patterns in `bidder_bodyIds`.
-11. Flags delimiter types such as commas, semicolons, periods, pipes, slashes, spaces, hyphens, ampersands, colons, and the Danish word `og`.
-12. Treats commas and the one pipe case as valid delimiters.
-13. Uses manually reviewed `row_id` lists for valid slash, ampersand, colon, and `og` delimiters.
-14. Flags non-reviewed slash, ampersand, colon, and `og` cases for manual review.
-15. Stops if manually reviewed row IDs are missing or no longer contain the expected delimiter, which helps catch row-order drift if the file list changes.
-16. Converts accepted delimiters to semicolons.
-17. Splits `bidder_bodyIds` into `winner_data_long` using semicolons.
-18. Renames the split bidder identifier to `winner_cvr`.
-19. Begins CVR string cleanup by removing spaces, country prefixes, and common `CVR` text prefixes.
-20. Stops if any capitalization variant of `CVR` remains after the current cleanup step.
+2. Reads column names from every listed file.
+3. Checks all pairwise file combinations with `setequal()` and stops if column schemas differ.
+4. Reads the CSV files with `data.table::fread(..., colClasses = "character")` so identifier-like fields are not altered by automatic numeric type guessing.
+5. Row-binds the annual files into one table and records the source file in `dataset`.
+6. Adds `row_id`, a stable row reference within the combined OpenTender data.
+7. Creates `winner_data_original` from bidder identifier, bidder name, and bidder country fields.
+8. Creates `buyer_data_original` from buyer identifier, buyer name, and buyer country fields.
+9. Investigates delimiter patterns in `bidder_bodyIds`.
+10. Flags delimiter types such as commas, semicolons, periods, pipes, slashes, spaces, hyphens, ampersands, colons, and the Danish word `og`.
+11. Treats commas and the one pipe case as valid delimiters.
+12. Uses manually reviewed `row_id` lists for valid slash, ampersand, and `og` delimiters.
+13. Flags non-reviewed slash, ampersand, and `og` cases for manual review.
+14. Stops if manually reviewed row IDs are missing or no longer contain the expected delimiter, which helps catch row-order drift if the file list changes.
+15. Converts accepted delimiters to semicolons.
+16. Flags likely multi-winner rows based on accepted delimiters.
+17. Separately flags rows with more than one distinct valid eight-digit CVR.
+18. Uses a manually reviewed row-ID list to confirm the small subset where multiple distinct CVRs correspond to multiple winning firms rather than repeated or erroneous identifiers for one firm.
+19. Splits confirmed multi-firm rows into one row per winner after hand-coding the corresponding winner-name delimiters.
+20. Splits the remaining multi-CVR or delimited rows separately, cleans CVR strings by removing spaces, country prefixes, punctuation, and letters, and flags valid eight-digit CVRs.
+21. For firm names that appear with one valid CVR and one or more invalid CVR entries, overwrites the invalid entries with the firm's single valid CVR and records this with `flag_cvr_overwrite`.
+22. Flags firm names that appear with multiple valid CVRs using `flag_multi_valid_cvr`, because those cases need additional review rather than automatic overwrite.
 
 ### OpenTender Particularities
 
 - OpenTender bidder IDs often contain several identifier formats for the same bidder, such as `DK` prefixes, spaced CVRs, repeated CVRs, and non-CVR IDs.
 - Some delimiters are genuine separators between multiple winning firms, while others are part of names or identifier text.
 - The script intentionally separates "valid delimiter" flags from "manual review" flags so hand-reviewed cases remain auditable.
+- The script also separates "multiple distinct valid CVRs" from "multiple winning firms." This matters because some OpenTender rows list several CVR-like values for a single bidder name, while only a small manually confirmed set represents true multi-firm winning groups.
+- For confirmed multi-firm rows, the script manually standardizes a small number of winner-name strings so CVRs and names can be expanded together. Consortium labels are replaced with the firm names corresponding to the CVRs, with the script noting virk.dk as the reference source for those cases.
+- For repeated or partly invalid CVR strings attached to one firm name, the script uses a conservative overwrite rule: only firms with exactly one valid CVR and more than one CVR entry get their invalid entries replaced, and the change is flagged.
 - The current OpenTender workflow is focused on bidder/winner CVR cleanup. Buyer identifier cleaning has not yet been implemented beyond creating `buyer_data_original`.
 - Because manually reviewed cases are stored as `row_id` lists, the script includes drift checks to prevent those row IDs from silently pointing to the wrong records.
 
@@ -182,11 +188,12 @@ Important in-session objects include:
 
 - `data_col_names` - Column names by OpenTender source file.
 - `col_name_diffs` - Pairwise schema concordance checks.
-- `data` - Combined OpenTender data for selected 2009-2026 files.
+- `data` - Combined OpenTender data for all listed files in `data/raw/OpenTender/`.
 - `winner_data_original` - Original bidder fields used for winner CVR cleaning.
 - `buyer_data_original` - Original buyer fields retained for later buyer CVR cleaning.
 - `winner_data` - Winner/bidder working table with delimiter and manual-review flags.
-- `winner_data_long` - Bidder identifiers split to one row per semicolon-delimited candidate.
+- `multi_winner_names_data_long` - Manually confirmed multi-firm winner rows split to one row per winner name and CVR.
+- `multi_cvr_nondistinct_names_data_long` - Delimited or multi-CVR rows that do not represent manually confirmed multi-firm winner-name cases, with CVR cleanup, overwrite flags, and multi-valid-CVR flags.
 
 ## Cleaning And Review Flags
 
@@ -199,6 +206,7 @@ Current flag types include:
 - delimiter flags, such as `delim_flag_comma` or `delim_flag_slash`;
 - valid-delimiter flags, such as `delim_flag_valid_slash`;
 - manual-review flags, such as `flag_manual_review`;
+- OpenTender multi-CVR flags, such as `flag_multiple_distinct_valid_cvrs`, `flag_multiple_distinct_winner_names`, `flag_cvr_overwrite`, and `flag_multi_valid_cvr`;
 - missingness flags, such as `flag_missing_winner_cvr`;
 - CVR validity flags, such as `valid_cvr`;
 - source/context flags, such as `flag_foreign_winner`, `flag_single_bidder`, and `flag_cancelled`.
@@ -210,7 +218,7 @@ external CVR register.
 ## Current Status And Remaining Work
 
 - KFST winner and buyer cleaning writes `.rds` and `.dta` files to `data/clean/`.
-- OpenTender bidder/winner delimiter handling and initial CVR cleanup are in progress.
+- OpenTender bidder/winner delimiter handling, true multi-winner review, and CVR cleanup are in progress.
 - OpenTender buyer CVR cleaning is not yet implemented.
 - OpenTender final cleaned outputs are not yet written to disk.
 - External CVR/name matching is not yet implemented.
@@ -227,5 +235,5 @@ See `TODO.md` for the active development roadmap and progress tracker.
 4. Run `code/1_process_kfst.R`.
 5. Inspect the KFST diagnostics and saved files in `data/clean/`.
 6. Run `code/2_process_open_tender.R`.
-7. Inspect OpenTender delimiter summaries, manual-review flags, and `winner_data_long`.
+7. Inspect OpenTender delimiter summaries, manual-review flags, confirmed multi-winner rows, overwrite flags, and multi-valid-CVR flags.
 8. Add OpenTender buyer cleaning and export steps once the cleaned output format is finalized.
