@@ -15,8 +15,8 @@ library(tidyverse)
 library(readxl)
 
 # Paths
-raw_data_dir           <- dirs$raw_data
-raw_data_name      <- "udbudsdata_kfst.xlsx"
+raw_data_dir <- dirs$raw_data
+raw_data_name <- "udbudsdata_kfst.xlsx"
 
 # Source functions
 source(file.path(PROJECT_DIR, "code", "functions.R"))
