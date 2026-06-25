@@ -591,8 +591,8 @@ clean_winner_data <- left_join(clean_winner_data, original_tender_data,
 clean_winner_data <- clean_winner_data %>%
   mutate(winner_cvr_clean = as.character(winner_cvr_clean))
 
-## The single valid CVR overwriting flags and the multi valid CVR flags
-## only exist in the multiple CVR subdatasets. 
+## The single-valid-CVR assumption flags and the multi-valid-CVR flags
+## only exist in the multiple CVR subdatasets.
 ## Treat these flags values as FALSE in the final cleaned table for completeness
 clean_winner_data <- clean_winner_data %>%
   mutate(
