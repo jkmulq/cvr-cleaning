@@ -504,3 +504,12 @@ clean_winner_data <- bind_rows(
 
 clean_winner_data <- clean_winner_data %>%
   rename(winner_cvr_candidate_original = winner_cvr)
+
+## 2.7 Join original tender data
+## This keeps the full OpenTender row attached to the cleaned winner rows, so
+## replication checks can always go back to the source fields.
+clean_winner_data <- left_join(clean_winner_data, original_tender_data,
+                               by = c("row_id", "tender_id"))
+
+clean_winner_data <- clean_winner_data %>%
+  mutate(winner_cvr_clean = as.character(winner_cvr_candidate_original))
