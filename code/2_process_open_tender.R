@@ -448,7 +448,7 @@ multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
   mutate(valid_cvr = coalesce(str_detect(winner_cvr_clean, "^\\d{8}$"), FALSE))
 
-# Make distinct by (row_id, tender_id, winner_cvr, winner_name)
+# Make distinct by (row_id, tender_id, winner_cvr_clean, winner_name)
 ## Since a lot of these rows come from records with multiple instances of the same CVR number
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
   distinct(row_id, tender_id, winner_cvr, winner_name, .keep_all = TRUE)
