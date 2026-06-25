@@ -461,6 +461,16 @@ multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %
   distinct(tender_id, row_id, winner_name, winner_cvr_clean, valid_cvr, 
            .keep_all = TRUE)
 
+# Count whether the original OpenTender row has exactly one distinct valid CVR.
+# This is row-level evidence, before borrowing any CVR from another row with the
+# same winner name.
+multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>%
+  mutate(
+    n_valid_cvr_in_row = sum(valid_cvr, na.rm = TRUE),
+    flag_row_has_single_valid_cvr = coalesce(n_valid_cvr_in_row == 1, FALSE),
+    .by = c(row_id, tender_id, winner_name)
+  )
+
 ### 2.5.2 Fix erroneous CVR cites across firm
 # Many bidder names have multiple CVR numbers, some are not valid
 # Make a key and join each instance of a firm with the valid CVR
@@ -482,31 +492,41 @@ multi_cvr_nondistinct_names_data_long <- left_join(multi_cvr_nondistinct_names_d
                               single_valid_cvr_key, 
                               by = c("winner_name"))
 
-# Assume the single valid CVR is the true CVR for this firm name.
-# This does not create separate rows for invalid or non-CVR tokens; the raw
-# OpenTender source string joined later remains the audit trail.
+# Use the single valid CVR when the original row itself contains exactly one
+# valid CVR. If the original row has no valid CVR, only borrow from the same
+# winner name when that name has exactly one valid CVR elsewhere.
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
   mutate(
-    flag_assumed_single_valid_cvr = coalesce(
-      !is.na(winner_cvr_clean_real) & (is.na(winner_cvr_clean) | winner_cvr_clean_real != winner_cvr_clean),
+    flag_cvr_borrowed_from_winner_name = coalesce(
+      n_valid_cvr_in_row == 0 &
+        !is.na(winner_cvr_clean_real) &
+        (is.na(winner_cvr_clean) | winner_cvr_clean_real != winner_cvr_clean),
       FALSE
     ),
-    winner_cvr_clean = ifelse(flag_assumed_single_valid_cvr, winner_cvr_clean_real, winner_cvr_clean)
+    winner_cvr_clean = ifelse(
+      !is.na(winner_cvr_clean_real) &
+        (flag_row_has_single_valid_cvr | flag_cvr_borrowed_from_winner_name) &
+        (is.na(winner_cvr_clean) | winner_cvr_clean_real != winner_cvr_clean),
+      winner_cvr_clean_real,
+      winner_cvr_clean
+    )
   )
 
 # Update valid CVR flag
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
   mutate(valid_cvr = coalesce(str_detect(winner_cvr_clean, "^\\d{8}$"), FALSE))
 
-# Collapse rows that become duplicates after the single-valid-CVR assumption.
+# Collapse rows that become duplicates after the single-valid-CVR update.
 # The full source string is preserved in `winner_cvr_original` after joining the
 # original OpenTender row below.
-# Note, use summarise() instead of distinct() to control how flags are treated
-# after removing the non-distinct rows. 
+# The borrowing flag is a row-level inference flag, so carry it forward when any
+# candidate token in the collapsed tuple was borrowed.
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>%
   mutate(
-    flag_assumed_single_valid_cvr = coalesce(flag_assumed_single_valid_cvr, FALSE),
-    valid_cvr = coalesce(str_detect(winner_cvr_clean, "^\\d{8}$"), FALSE)
+    flag_cvr_borrowed_from_winner_name = coalesce(flag_cvr_borrowed_from_winner_name, FALSE),
+    flag_cvr_borrowed_from_winner_name = any(flag_cvr_borrowed_from_winner_name, na.rm = TRUE),
+    valid_cvr = coalesce(str_detect(winner_cvr_clean, "^\\d{8}$"), FALSE),
+    .by = c(tender_id, row_id, winner_name, winner_cvr_clean, valid_cvr)
   ) %>%
   distinct(
     tender_id, row_id, winner_name, winner_cvr_clean, valid_cvr, .keep_all = TRUE
@@ -523,8 +543,8 @@ cat("Ave. number of valid CVRs for these firms:", mean(multi_valid_cvr_firms$n_v
 cat("Ave. number of total CVRs (valid + invalid) for these firms:", mean(multi_valid_cvr_firms$n_total_cvr), "\n")
 
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
-  mutate(flag_multi_valid_cvr = coalesce(if_else(winner_name %in% multi_valid_cvr_firms$winner_name, 
-                                                 TRUE, FALSE), FALSE))
+  mutate(flag_winner_has_multi_valid_cvr = coalesce(if_else(winner_name %in% multi_valid_cvr_firms$winner_name,
+                                                            TRUE, FALSE), FALSE))
 
 ## Add metadata
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>%
@@ -591,13 +611,14 @@ clean_winner_data <- left_join(clean_winner_data, original_tender_data,
 clean_winner_data <- clean_winner_data %>%
   mutate(winner_cvr_clean = as.character(winner_cvr_clean))
 
-## The single-valid-CVR assumption flags and the multi-valid-CVR flags
+## The row-level CVR evidence, borrowed-CVR, and multi-valid-CVR flags
 ## only exist in the multiple CVR subdatasets.
 ## Treat these flags values as FALSE in the final cleaned table for completeness
 clean_winner_data <- clean_winner_data %>%
   mutate(
-    flag_assumed_single_valid_cvr = coalesce(flag_assumed_single_valid_cvr, FALSE),
-    flag_multi_valid_cvr = coalesce(flag_multi_valid_cvr, FALSE)
+    flag_row_has_single_valid_cvr = coalesce(flag_row_has_single_valid_cvr, FALSE),
+    flag_cvr_borrowed_from_winner_name = coalesce(flag_cvr_borrowed_from_winner_name, FALSE),
+    flag_winner_has_multi_valid_cvr = coalesce(flag_winner_has_multi_valid_cvr, FALSE)
   )
 
 ## 2.9 Check carried CVR standardisation flags
