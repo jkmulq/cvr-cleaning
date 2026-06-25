@@ -488,15 +488,15 @@ multi_cvr_nondistinct_names_data_long <- left_join(multi_cvr_nondistinct_names_d
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
   mutate(
     flag_assumed_single_valid_cvr = coalesce(
-      !is.na(winner_cvr_real) & (is.na(winner_cvr) | winner_cvr_real != winner_cvr),
+      !is.na(winner_cvr_clean_real) & (is.na(winner_cvr_clean) | winner_cvr_clean_real != winner_cvr_clean),
       FALSE
     ),
-    winner_cvr = ifelse(flag_assumed_single_valid_cvr, winner_cvr_real, winner_cvr)
+    winner_cvr_clean = ifelse(flag_assumed_single_valid_cvr, winner_cvr_clean_real, winner_cvr_clean)
   )
 
 # Update valid CVR flag
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
-  mutate(valid_cvr = coalesce(str_detect(winner_cvr, "^\\d{8}$"), FALSE))
+  mutate(valid_cvr = coalesce(str_detect(winner_cvr_clean, "^\\d{8}$"), FALSE))
 
 # Collapse rows that become duplicates after the single-valid-CVR assumption.
 # The full source string is preserved in `winner_cvr_original` after joining the
