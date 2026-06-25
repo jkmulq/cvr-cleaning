@@ -536,6 +536,45 @@ multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %
          winner_number = row_number(),
          .by = c(row_id, tender_id))
 
+## 2.6 Clean single CVR data
+## Adding the CVR standardisation flags
+single_winner_data <- single_winner_data %>%
+  mutate(winner_cvr = as.character(winner_cvr),
+         winner_cvr_candidate_original = winner_cvr,
+         winner_cvr_clean = winner_cvr_candidate_original,
+         
+         # Remove white space
+         flag_cvr_ws = coalesce(str_detect(winner_cvr_candidate_original, "\\s"), FALSE),
+         winner_cvr_clean = str_remove_all(winner_cvr_clean, "\\s+"),
+         
+         # Remove hyphens
+         flag_cvr_hyphen = coalesce(str_detect(winner_cvr_candidate_original, "-"), FALSE),
+         winner_cvr_clean = str_remove_all(winner_cvr_clean, "-"),
+         
+         # Remove alphabetical letters
+         flag_cvr_alphabet = coalesce(str_detect(winner_cvr_candidate_original, "[[:alpha:]]"), FALSE),
+         winner_cvr_clean = str_remove_all(winner_cvr_clean, "[[:alpha:]]"),
+         
+         # Remove all punctuation
+         flag_cvr_punct = coalesce(str_detect(winner_cvr_clean, "[[:punct:]]"), FALSE),
+         winner_cvr_clean = str_remove_all(winner_cvr_clean, "[[:punct:]]+"),
+         winner_cvr_clean = as.character(parse_number(winner_cvr_clean)),
+         
+         # Flag if any standardisation performed
+         flag_cvr_standardised = coalesce(
+           flag_cvr_ws |
+             flag_cvr_hyphen |
+             flag_cvr_alphabet |
+             flag_cvr_punct,
+           FALSE
+         ),
+         winner_number = 1,
+         source = "single winner")
+
+## 2.7 Bind winner data
+## Goal: Create one OpenTender winner table with cleaned CVR candidates and
+## keep the OpenTender-specific review flags created above.
+
 clean_winner_data <- bind_rows(
   single_winner_data,
   multi_winner_names_data_long,
