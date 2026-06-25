@@ -165,7 +165,7 @@ The OpenTender script currently:
 18. Uses a manually reviewed row-ID list to confirm the small subset where multiple distinct CVRs correspond to multiple winning firms rather than repeated or erroneous identifiers for one firm.
 19. Splits confirmed multi-firm rows into one row per winner after hand-coding the corresponding winner-name delimiters.
 20. Splits the remaining multi-CVR or delimited rows separately, cleans CVR strings by removing spaces, country prefixes, punctuation, and letters, and flags valid eight-digit CVRs.
-21. For firm names that appear with one valid CVR and one or more invalid CVR entries, overwrites the invalid entries with the firm's single valid CVR and records this with `flag_cvr_overwrite`.
+21. For firm names that appear with one valid CVR and one or more invalid CVR entries, assumes the single valid CVR is the true CVR, collapses duplicate rows created by that assumption, and records this with `flag_assumed_single_valid_cvr`.
 22. Flags firm names that appear with multiple valid CVRs using `flag_multi_valid_cvr`, because those cases need additional review rather than automatic overwrite.
 
 ### OpenTender Particularities
@@ -197,23 +197,24 @@ Important in-session objects include:
 
 ## Cleaning And Review Flags
 
-Across both sources, the scripts aim to keep original source values separate from
-cleaned values. This is important because rows sent for review should still show
-the raw string that produced the cleaned value.
+Across both sources, the scripts keep original source values beside cleaned
+values. This is important because rows sent for review should still show the raw
+string that produced the cleaned value.
 
-Current flag types include:
+The flagging convention is deliberately audit-oriented:
 
-- delimiter flags, such as `delim_flag_comma` or `delim_flag_slash`;
-- valid-delimiter flags, such as `delim_flag_valid_slash`;
-- manual-review flags, such as `flag_manual_review`;
-- OpenTender multi-CVR flags, such as `flag_multiple_distinct_valid_cvrs`, `flag_multiple_distinct_winner_names`, `flag_cvr_overwrite`, and `flag_multi_valid_cvr`;
-- missingness flags, such as `flag_missing_winner_cvr`;
-- CVR validity flags, such as `valid_cvr`;
-- source/context flags, such as `flag_foreign_winner`, `flag_single_bidder`, and `flag_cancelled`.
+- boolean flags use `TRUE` / `FALSE`, with explicit missingness flags where
+  missing source values matter;
+- flags are not mutually exclusive, so a row can be valid, foreign, multi-lot,
+  or review-relevant in overlapping ways;
+- delimiter and manual-review flags document how source strings were split;
+- CVR quality flags document syntactic standardisation, missingness, validity,
+  and cases that may need external verification.
 
-The scripts clean CVR strings syntactically and flag rows for review. They do
-not yet match missing CVRs or ambiguous names against virk.dk or another
-external CVR register.
+The detailed flag dictionary is in
+[`docs/cleaning_flags.md`](docs/cleaning_flags.md). The scripts clean CVR
+strings syntactically and flag rows for review. They do not yet match missing
+CVRs or ambiguous names against virk.dk or another external CVR register.
 
 ## Current Status And Remaining Work
 
