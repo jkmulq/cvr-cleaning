@@ -505,17 +505,11 @@ multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %
 # after removing the non-distinct rows. 
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>%
   mutate(
-    flag_assumed_single_valid_cvr = coalesce(flag_assumed_single_valid_cvr, FALSE)
+    flag_assumed_single_valid_cvr = coalesce(flag_assumed_single_valid_cvr, FALSE),
+    valid_cvr = coalesce(str_detect(winner_cvr_clean, "^\\d{8}$"), FALSE)
   ) %>%
-  summarise(
-    # Take the first (just need an aggregate function here)
-    across(-c(flag_assumed_single_valid_cvr, valid_cvr), first), 
-    # If any of the original rows in the (row_id, tender_id, winner_cvr, winner_name) tuple 
-    # had asssumed single valid CVRs, put TRUE. Else, FALSE.
-    flag_assumed_single_valid_cvr = any(flag_assumed_single_valid_cvr, na.rm = TRUE),
-    # Recheck the valid_cvr. 
-    valid_cvr = coalesce(str_detect(first(winner_cvr), "^\\d{8}$"), FALSE),
-    .by = c(row_id, tender_id, winner_cvr, winner_name)
+  distinct(
+    tender_id, row_id, winner_name, winner_cvr_clean, valid_cvr, .keep_all = TRUE
   )
 
 # Other firms have many valid CVRs and many invalid CVRs. 
