@@ -83,7 +83,35 @@ data <- data %>%
   mutate(row_id = row_number()) %>% 
   select(row_id, everything())
 
-## 1.3 Separate winners/buyers/original data
+## 1.3 Original tender data
+## Keep all OpenTender source fields, but rename the variables that clearly
+## correspond to the KFST naming convention.
+original_tender_data <- data %>%
+  rename(
+    lot_id = lot_lotId,
+    lot_number = lot_lotNumber,
+    n_bids_received = lot_bidsCount,
+    n_lots = tender_lots_count,
+    submit_date = tender_bidDeadline,
+    award_date = tender_awardDecisionDate,
+    cpv_code = tender_cpvs,
+    divided_tender = tender_hasLots,
+    joint_tender = tender_isJointProcurement,
+    consortium_winner = bid_isConsortium,
+    winner_cvr_original = bidder_bodyIds,
+    winner_name_original = bidder_name,
+    winner_country_original = bidder_country,
+    buyer_cvr_original = buyer_bodyIds
+  ) %>%
+  mutate(
+    tender_cancelled = coalesce(
+      (!is.na(tender_cancellationDate) & tender_cancellationDate != "") |
+        (!is.na(lot_cancellationDate) & lot_cancellationDate != ""),
+      FALSE
+    )
+  )
+
+## 1.4 Separate winners/buyers/original data
 winner_data_original <- data %>% 
   select(row_id, tender_id, bidder_bodyIds, bidder_name, bidder_country) %>% 
   rename(winner_cvr = bidder_bodyIds, winner_name = bidder_name, winner_country = bidder_country)
