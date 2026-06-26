@@ -534,11 +534,7 @@ clean_winner_data <- bind_rows(
   multi_winner_names_data_long %>% select(-any_of("winner_cvr")),
   multi_cvr_nondistinct_names_data_long %>% select(-any_of("winner_cvr"))
 ) %>%
-  arrange(row_id, winner_number) %>%
-  select(row_id, tender_id, winner_number, winner_name, 
-         winner_cvr_clean, winner_cvr_candidate, 
-         winner_country,
-         source, everything())
+  arrange(row_id, winner_number) 
 
 ## 2.8 Join original tender data
 ## This keeps the full OpenTender row attached to the cleaned winner rows, so
@@ -548,6 +544,14 @@ clean_winner_data <- left_join(clean_winner_data, original_tender_data,
 
 clean_winner_data <- clean_winner_data %>%
   mutate(winner_cvr_clean = as.character(winner_cvr_clean))
+
+# Rearrange columns 
+clean_winner_data <- clean_winner_data %>%
+  select(row_id, tender_id, winner_number, winner_name, 
+         winner_cvr_clean, winner_cvr_candidate, winner_cvr_original,
+         winner_country,
+         source, everything())
+
 
 ## The row-level CVR evidence, borrowed-CVR, and multi-valid-CVR flags
 ## only exist in the multiple CVR subdatasets.
