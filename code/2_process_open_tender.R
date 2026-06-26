@@ -380,18 +380,14 @@ multi_winner_names_data_long <- multi_winner_names_data_long %>%
 ## Keep the separated raw CVR candidate before cleaning. Cleaning flags treat
 ## NAs as FALSE: a missing source value is not counted as evidence that a
 ## cleaning operation was performed.
-multi_winner_names_data_long <- multi_winner_names_data_long %>%
+multi_winner_names_data_long <- multi_winner_names_data_long %>% 
   mutate(
     # Remove white space
-    flag_cvr_ws = coalesce(str_detect(winner_cvr_candidate_original, "\\s"), FALSE),
+    flag_cvr_ws = coalesce(str_detect(winner_cvr_candidate, "\\s"), FALSE),
     winner_cvr_clean = str_remove_all(winner_cvr_clean, "\\s+"),
 
-    # Remove hyphens
-    flag_cvr_hyphen = coalesce(str_detect(winner_cvr_candidate_original, "-"), FALSE),
-    winner_cvr_clean = str_remove_all(winner_cvr_clean, "-"),
-
     # Remove alphabetical letters
-    flag_cvr_alphabet = coalesce(str_detect(winner_cvr_candidate_original, "[[:alpha:]]"), FALSE),
+    flag_cvr_alphabet = coalesce(str_detect(winner_cvr_candidate, "[[:alpha:]]"), FALSE),
     winner_cvr_clean = str_remove_all(winner_cvr_clean, "[[:alpha:]]"),
 
     # Remove all punctuation
@@ -401,10 +397,7 @@ multi_winner_names_data_long <- multi_winner_names_data_long %>%
 
     # Flag if any standardisation performed
     flag_cvr_standardised = coalesce(
-      flag_cvr_ws |
-        flag_cvr_hyphen |
-        flag_cvr_alphabet |
-        flag_cvr_punct,
+      flag_cvr_ws | flag_cvr_alphabet | flag_cvr_punct,
       FALSE
     )
   )
