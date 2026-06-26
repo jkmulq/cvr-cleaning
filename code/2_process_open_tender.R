@@ -415,38 +415,34 @@ multi_winner_names_data_long <- multi_winner_names_data_long %>%
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data %>% 
   separate_longer_delim(cols = "winner_cvr", delim = ";")
 
+# Rename and copy variable for cleaning
+multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>%
+  rename(winner_cvr_candidate = winner_cvr) %>% 
+  mutate(winner_cvr_clean = winner_cvr_candidate)
+
 ## Clean up/standardise CVR numbers
 ## Keep the separated raw CVR candidate before cleaning. Cleaning flags treat
 ## NAs as FALSE: a missing source value is not counted as evidence that a
 ## cleaning operation was performed.
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>%
   mutate(
-    winner_cvr_candidate_original = winner_cvr,
-    winner_cvr_clean = winner_cvr_candidate_original,
 
     # Remove white space
-    flag_cvr_ws = coalesce(str_detect(winner_cvr_candidate_original, "\\s"), FALSE),
+    flag_cvr_ws = coalesce(str_detect(winner_cvr_candidate, "\\s"), FALSE),
     winner_cvr_clean = str_remove_all(winner_cvr_clean, "\\s+"),
 
-    # Remove hyphens
-    flag_cvr_hyphen = coalesce(str_detect(winner_cvr_candidate_original, "-"), FALSE),
-    winner_cvr_clean = str_remove_all(winner_cvr_clean, "-"),
-
     # Remove alphabetical letters
-    flag_cvr_alphabet = coalesce(str_detect(winner_cvr_candidate_original, "[[:alpha:]]"), FALSE),
+    flag_cvr_alphabet = coalesce(str_detect(winner_cvr_candidate, "[[:alpha:]]"), FALSE),
     winner_cvr_clean = str_remove_all(winner_cvr_clean, "[[:alpha:]]"),
 
     # Remove all punctuation
-    flag_cvr_punct = coalesce(str_detect(winner_cvr_clean, "[[:punct:]]"), FALSE),
+    flag_cvr_punct = coalesce(str_detect(winner_cvr_candidate, "[[:punct:]]"), FALSE),
     winner_cvr_clean = str_remove_all(winner_cvr_clean, "[[:punct:]]+"),
     winner_cvr_clean = as.character(parse_number(winner_cvr_clean)),
 
     # Flag if any standardisation performed
     flag_cvr_standardised = coalesce(
-      flag_cvr_ws |
-        flag_cvr_hyphen |
-        flag_cvr_alphabet |
-        flag_cvr_punct,
+      flag_cvr_ws | flag_cvr_alphabet | flag_cvr_punct,
       FALSE
     )
   )
