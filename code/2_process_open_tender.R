@@ -461,17 +461,22 @@ multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %
   distinct(tender_id, row_id, winner_name, winner_cvr_clean, valid_cvr, 
            .keep_all = TRUE)
 
-# Count whether the original OpenTender row has exactly one distinct valid CVR.
-# This is row-level evidence, before borrowing any CVR from another row with the
+# Determine whether the original OpenTender row has exactly one distinct valid CVR.
+# If it does, freeze the CVR to be that before borrowing any CVR from another row with the
 # same winner name.
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>%
   mutate(
     n_valid_cvr_in_row = sum(valid_cvr, na.rm = TRUE),
     flag_row_has_single_valid_cvr = coalesce(n_valid_cvr_in_row == 1, FALSE),
+    winner_cvr_clean_row = ifelse(
+      flag_row_has_single_valid_cvr,
+      winner_cvr_clean[valid_cvr][1], # Takes the valid CVR number
+      NA_character_
+    ),
     .by = c(row_id, tender_id, winner_name)
   )
 
-### 2.5.2 Fix erroneous CVR cites across firm
+### 2.5.2 Borrow CVRs across firm name
 # Many bidder names have multiple CVR numbers, some are not valid
 # Make a key and join each instance of a firm with the valid CVR
 # I only focus on firms with ONE valid CVR but more than one entry in the CVR
@@ -492,22 +497,28 @@ multi_cvr_nondistinct_names_data_long <- left_join(multi_cvr_nondistinct_names_d
                               single_valid_cvr_key, 
                               by = c("winner_name"))
 
-# Use the single valid CVR when the original row itself contains exactly one
-# valid CVR. If the original row has no valid CVR, only borrow from the same
-# winner name when that name has exactly one valid CVR elsewhere.
+# Use the row's own single valid CVR before using any same-name reference.
+# This overwrites invalid sibling tokens created by the wide-to-long pivot while
+# keeping cross-row borrowing as a separate, narrower flag.
+# E.g. DK12345678; 1234568912 separates to [12345678, 1234568912] overwritten to [12345678, 12345678]
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
   mutate(
+    # Borrow if
     flag_cvr_borrowed_from_winner_name = coalesce(
-      n_valid_cvr_in_row == 0 &
-        !is.na(winner_cvr_clean_real) &
-        (is.na(winner_cvr_clean) | winner_cvr_clean_real != winner_cvr_clean),
+      n_valid_cvr_in_row == 0 & # no valid CVRs in the row
+        !is.na(winner_cvr_clean_real) & # There's one available in another row
+        # and the expanded CVR is missing or doesn't match the valid CVR from another row.
+        (is.na(winner_cvr_clean) | winner_cvr_clean_real != winner_cvr_clean), 
       FALSE
     ),
+    # Prioritise valid CVRs extracted from that row, otherwise borrow from other row.
+    winner_cvr_clean_reference = coalesce(winner_cvr_clean_row, winner_cvr_clean_real),
+    # Overwrite clean CVR if another valid one is available, and it is missing/not equal to the reference CVR
     winner_cvr_clean = ifelse(
-      !is.na(winner_cvr_clean_real) &
+      !is.na(winner_cvr_clean_reference) &
         (flag_row_has_single_valid_cvr | flag_cvr_borrowed_from_winner_name) &
-        (is.na(winner_cvr_clean) | winner_cvr_clean_real != winner_cvr_clean),
-      winner_cvr_clean_real,
+        (is.na(winner_cvr_clean) | winner_cvr_clean_reference != winner_cvr_clean),
+      winner_cvr_clean_reference,
       winner_cvr_clean
     )
   )
