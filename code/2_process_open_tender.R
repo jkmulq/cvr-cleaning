@@ -519,8 +519,11 @@ single_winner_data <- single_winner_data %>%
          # Flag if any standardisation performed
          flag_cvr_standardised = coalesce(
            flag_cvr_ws | flag_cvr_alphabet | flag_cvr_punct, FALSE
-         ),
-         winner_number = 1,
+         ))
+
+# Create metadata
+single_winner_data <- single_winner_data %>% 
+  mutate(winner_number = 1,
          source = "single winner")
 
 ## 2.7 Bind winner data
