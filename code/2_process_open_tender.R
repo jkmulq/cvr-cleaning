@@ -382,13 +382,6 @@ multi_winner_names_data_long <- multi_winner_names_data_long %>%
 ## cleaning operation was performed.
 multi_winner_names_data_long <- multi_winner_names_data_long %>%
   mutate(
-    winner_cvr_candidate_original = winner_cvr,
-    winner_cvr_clean = ifelse(
-      winner_cvr_candidate_original == "CVR5EByg:30811097",
-      "30811097",
-      winner_cvr_candidate_original
-    ),
-
     # Remove white space
     flag_cvr_ws = coalesce(str_detect(winner_cvr_candidate_original, "\\s"), FALSE),
     winner_cvr_clean = str_remove_all(winner_cvr_clean, "\\s+"),
