@@ -363,6 +363,19 @@ if (any(is.na(multi_winner_names_data$winner_name))) {
 multi_winner_names_data_long <- multi_winner_names_data %>% 
   separate_longer_delim(cols = c("winner_cvr", "winner_name"), delim = ";")
 
+# Rename and create copy
+multi_winner_names_data_long <- multi_winner_names_data_long %>% 
+  rename(winner_cvr_candidate = winner_cvr) %>% 
+  mutate(winner_cvr_clean = winner_cvr_candidate)
+
+# Deal with tricky edge case separately
+multi_winner_names_data_long <- multi_winner_names_data_long %>%
+  mutate(winner_cvr_clean = ifelse(
+    winner_cvr_candidate == "CVR5EByg:30811097",
+    "30811097",
+    winner_cvr_candidate
+  ))
+
 ## Clean up/standardise CVR numbers
 ## Keep the separated raw CVR candidate before cleaning. Cleaning flags treat
 ## NAs as FALSE: a missing source value is not counted as evidence that a
