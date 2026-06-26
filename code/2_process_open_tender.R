@@ -447,7 +447,7 @@ multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %
     )
   )
 
-# Flag valid CVR string post cleaning (8 numerical digits)
+# Flag valid CVR string post cleaning/standardisation (8 numerical digits)
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
   mutate(valid_cvr = coalesce(str_detect(winner_cvr_clean, "^\\d{8}$"), FALSE))
 
