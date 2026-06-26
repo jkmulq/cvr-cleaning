@@ -496,14 +496,15 @@ multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %
          .by = c(row_id, tender_id))
 
 ## 2.6 Clean single CVR data
+# Rename and copy
+single_winner_data <- single_winner_data %>% 
+  rename(winner_cvr_candidate = winner_cvr) %>% 
+  mutate(winner_cvr_clean = winner_cvr_candidate)
+
 ## Adding the CVR standardisation flags
 single_winner_data <- single_winner_data %>%
-  mutate(winner_cvr = as.character(winner_cvr),
-         winner_cvr_candidate_original = winner_cvr,
-         winner_cvr_clean = winner_cvr_candidate_original,
-         
-         # Remove white space
-         flag_cvr_ws = coalesce(str_detect(winner_cvr_candidate_original, "\\s"), FALSE),
+  mutate(# Remove white space
+         flag_cvr_ws = coalesce(str_detect(winner_cvr_candidate, "\\s"), FALSE),
          winner_cvr_clean = str_remove_all(winner_cvr_clean, "\\s+"),
          
          # Remove hyphens
