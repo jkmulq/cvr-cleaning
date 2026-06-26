@@ -535,8 +535,9 @@ clean_winner_data <- bind_rows(
   multi_cvr_nondistinct_names_data_long %>% select(-any_of("winner_cvr"))
 ) %>%
   arrange(row_id, winner_number) %>%
-  select(row_id, tender_id, winner_number, winner_cvr_clean,
-         winner_cvr_candidate_original, winner_name, winner_country,
+  select(row_id, tender_id, winner_number, winner_name, 
+         winner_cvr_clean, winner_cvr_candidate, 
+         winner_country,
          source, everything())
 
 ## 2.8 Join original tender data
