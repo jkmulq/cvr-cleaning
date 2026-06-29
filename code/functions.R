@@ -75,16 +75,25 @@ clean_cvr_candidate <- function(x) {
 
 # Extract valid-looking Danish CVRs from each candidate string. The lookarounds
 # require exactly eight digits, so longer identifiers such as "111151609" are
-# not counted as CVRs.
+# not counted as CVRs. Whitespace is removed before matching so a spaced CVR can
+# be read as one number; consequently, whitespace alone cannot separate two CVRs.
 extract_valid_cvr_candidates <- function(x) {
   x <- clean_cvr_candidate(x)
-  unlist(stringr::str_extract_all(x, "(?<!\\d)\\d{8}(?!\\d)"))
+  out <- unlist(stringr::str_extract_all(
+    x,
+    "(?<!\\d)\\d{8}(?!\\d)"
+  ))
+  
+  if (length(out) == 0) {
+    return(NA_character_)
+  }
+  
+  # Return
+  return(out)
 }
 
-# Return TRUE only when a source field contains more than one distinct valid CVR.
-# Repeated forms of the same CVR, such as "55775214" and "DK55775214", count
-# once. Invalid identifiers are ignored.
-has_multiple_distinct_valid_cvrs <- function(x, delim = ";") {
+# Find number of unique candidates
+compute_distinct_valid_cvr <- function(x) {
   vapply(
     x,
     FUN.VALUE = logical(1),
