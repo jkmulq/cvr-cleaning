@@ -171,41 +171,13 @@ if (nrow(multi_winner_data) +
 }
 
 ## 2.4 Multi-winner data with confirmed multiple firms
-### 2.4.1 Clean up name delimiters for easier splitting
-# Since there are few of these cases, I just do them manually for transparency
-# Where original firm names include 'consortium', I have put the firm name corresponding to the CVR obtained from https://virk.dk
-
-multi_winner_names_data <- multi_winner_names_data %>% 
-  mutate(winner_name = case_when(
-    winner_name == "Konsortiet Dansk Flygtningehjælp og Als Research ApS" ~ "Dansk Flygtningehjælp;Als Research ApS",
-    winner_name ==  "MT Højgaard A/S og Moe A/S" ~ "MT Højgaard A/S;Moe A/S",
-    winner_name == "C. C. Brun Entreprise A/S og Rørbæk & Møller ApS" ~ "C. C. Brun Entreprise A/S;Rørbæk & Møller ApS",
-    winner_name == "konsortiet IESenergy A/S / Victor DST A/S" ~ "IESenergy A/S;Victor DST A/S",
-    winner_name == "IESEnergy A/S/VictorDST A/S" ~ "IESEnergy A/S;VictorDST A/S",
-    winner_name == "LM Byg Konsortiet v/LM Byg A/S og M.J. Eriksson A/S" ~ "LM Byg A/S;M.J. Eriksson A/S",
-    winner_name == "Crone & Co | Impact Group" ~ "Crone & Co;Impact Group",
-    winner_name == "Nøhr & Sigsgaard A/S og Jakon A/S" ~ "Nøhr & Sigsgaard A/S;Jakon A/S",
-    winner_name == "Arkitema K/S / Tegnestuen Vandkunsten A/S / JJW Arkitekter A/S" ~ "Arkitema K/S;Tegnestuen Vandkunsten A/S;JJW Arkitekter A/S",
-    winner_name == "LINK Arkitektur A/S & 5E Byg A/S" ~ "LINK Arkitektur A/S;5E Byg A/S",
-    winner_name == "PÅLSSON ARKITEKTER A/S / ERIK Arkitekter A/S / AI A/S" ~ "PÅLSSON ARKITEKTER A/S;ERIK Arkitekter A/S;AI A/S",
-    winner_name == "Konsortium bestående af DitoBus Excursions A/S, Jørns Busrejser A/S og Nilles Busser A/S" ~ "DitoBus Excursions A/S;Jørns Busrejser A/S;Nilles Busser A/S",
-    winner_name == "New Stories - MacMann Berg P/S" ~ "New Stories;MacMann Berg P/S",
-    winner_name == "Konsortiet KomPublic ApS og syv.ai ApS" ~ "KomPublic ApS;syv.ai ApS",
-    winner_name == "Team bestående af Einar Kornerup A/S og Wissenberg A/S" ~ "Einar Kornerup A/S;Wissenberg A/S"
-  )) 
-
-# Deliberately default all others to NA so we get an easy check of completeness
-if (any(is.na(multi_winner_names_data$winner_name))) {
-  stop("you haven't cleaned all the multiple distinct cvr winner names. check `multi_winner_names_data` and try again.")
-}
-
-### 2.4.2 Pivot to longer
-# Method below assumes ordering of CVRs matches ordering of winner name
-multi_winner_names_data_long <- multi_winner_names_data %>% 
-  separate_longer_delim(cols = c("winner_cvr", "winner_name"), delim = ";")
+### 2.4.1 Split by CVR number
+# These are separated by a standardised delimiter ';', so easy to separate out.
+multi_winner_data_long <- multi_winner_data %>% 
+  separate_longer_delim(cols = winner_cvr, delim = ";")
 
 # Rename and create copy
-multi_winner_names_data_long <- multi_winner_names_data_long %>% 
+multi_winner_data_long <- multi_winner_data_long %>% 
   rename(winner_cvr_candidate = winner_cvr) %>% 
   mutate(winner_cvr_clean = winner_cvr_candidate)
 
