@@ -387,10 +387,6 @@ clean_winner_data <- clean_winner_data %>%
 clean_winner_data <- clean_winner_data %>%
   mutate(flag_missing_winner_country = coalesce(is.na(winner_country) | winner_country == "", FALSE))
 
-# Count extracted winners from each original OpenTender row
-clean_winner_data <- clean_winner_data %>%
-  mutate(n_winners_extracted = n(), .by = c(row_id, tender_id))
-
 # Single bidder
 clean_winner_data <- clean_winner_data %>%
   mutate(
