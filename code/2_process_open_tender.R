@@ -429,7 +429,7 @@ clean_winner_data <- clean_winner_data %>%
     )
   )
 
-## 2.12 Reorder columns
+## 2.11 Reorder columns
 ## Keep the cleaned CVR, original source CVR, winner name, winner country, and
 ## quality flags near each other so we can inspect the cleaning decisions.
 clean_winner_data <- clean_winner_data %>%
