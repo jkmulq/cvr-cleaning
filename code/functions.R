@@ -106,3 +106,134 @@ compute_distinct_valid_cvr <- function(x) {
     USE.NAMES = FALSE
   )
 }
+
+# This is an R version of the main fuzzy-matching preparation used in
+# Bisnode matching documentation_V7.docx and the referenced Python notebooks.
+# It keeps spaces between words because the notebooks use this version for
+# their main fuzzy match (step 5).
+prepare_cvr_name <- function(x) {
+  name_original <- as.character(x)
+  name_clean <- tolower(trimws(name_original))
+
+  # Replace accented letters with the spellings used in the
+  # notebooks. This happens before "oe" and "aa" are simplified below.
+  letter_replacements <- c(
+    "ø" = "oe",
+    "æ" = "ae",
+    "å" = "aa",
+    "ö" = "oe",
+    "ä" = "ae",
+    "á" = "a",
+    "é" = "e",
+    "è" = "e",
+    "à" = "a"
+  )
+
+  for (old in names(letter_replacements)) {
+    name_clean <- gsub(
+      old,
+      letter_replacements[[old]],
+      name_clean,
+      fixed = TRUE
+    )
+  }
+
+  # Detect legal form only when it is a standalone term, then remove it from
+  # the name. Longer expressions come first to avoid partial matches.
+  firm_type_patterns <- c(
+    "aktieselskabet" = "a/s",
+    "aktieselskab" = "a/s",
+    "anpartsselskabet" = "aps",
+    "anpartsselskab" = "aps",
+    "a[.]m[.]b[.]a[.]?" = "amba",
+    "a\\s+m\\s+b\\s+a" = "amba",
+    "s[.]m[.]b[.]a[.]?" = "smba",
+    "f[.]m[.]b[.]a[.]?" = "fmba",
+    "a/s[.]?" = "a/s",
+    "gmbh" = "a/s",
+    "aps" = "aps",
+    "i/s" = "i/s",
+    "k/s" = "k/s",
+    "ks" = "k/s",
+    "ivs" = "ivs",
+    "p/s" = "p/s",
+    "amba[.]?" = "amba",
+    "smba" = "smba",
+    "fmba" = "fmba",
+    "as" = "a/s",
+    "ab" = "aps",
+    "a/" = "a/s"
+  )
+
+  firm_type <- rep("Undetermined", length(name_clean))
+
+  for (pattern in names(firm_type_patterns)) {
+    standalone_pattern <- paste0(
+      "(?<![[:alnum:]])",
+      pattern,
+      "(?![[:alnum:]])"
+    )
+    found <- grepl(standalone_pattern, name_clean, perl = TRUE)
+    use_type <- found & firm_type == "Undetermined" & !is.na(found)
+    firm_type[use_type] <- firm_type_patterns[[pattern]]
+    name_clean <- gsub(standalone_pattern, " ", name_clean, perl = TRUE)
+  }
+
+  # Apply the generalizations used before the main fuzzy match.
+  name_clean <- gsub("oe", "o", name_clean, fixed = TRUE)
+  name_clean <- gsub("aa", "a", name_clean, fixed = TRUE)
+  name_clean <- gsub("&", " og ", name_clean, fixed = TRUE)
+  name_clean <- gsub("v/", " ", name_clean, fixed = TRUE)
+  name_clean <- gsub("/", "", name_clean, fixed = TRUE)
+  name_clean <- gsub("[-()]", " ", name_clean)
+  name_clean <- gsub("[,.:\"'´`]", "", name_clean)
+  name_clean <- gsub("\\s+", " ", trimws(name_clean))
+
+  # Standardize selected whole words. Splitting the name first makes it clear
+  # that, for example, "company" is changed but "accompany" is not.
+  word_replacements <- c(
+    "international" = "int",
+    "and" = "og",
+    "av" = "af",
+    "of" = "af",
+    "limited" = "ltd",
+    "denmark" = "dk",
+    "danmark" = "dk",
+    "holdings" = "holding",
+    "sweden" = "se",
+    "sverige" = "se",
+    "corporation" = "corp",
+    "company" = "co",
+    "comp" = "co",
+    "copenhagen" = "kbh",
+    "kobenhavn" = "kbh",
+    "cph" = "kbh",
+    "kopenhamn" = "kbh",
+    "i" = "1",
+    "ii" = "2",
+    "iii" = "3"
+  )
+
+  replace_words <- function(value) {
+    if (is.na(value) || value == "") return(NA_character_)
+
+    words <- strsplit(value, " ", fixed = TRUE)[[1]]
+    replace <- words %in% names(word_replacements)
+    words[replace] <- unname(word_replacements[words[replace]])
+    paste(words, collapse = " ")
+  }
+
+  name_clean <- vapply(
+    name_clean,
+    replace_words,
+    character(1),
+    USE.NAMES = FALSE
+  )
+
+  tibble::tibble(
+    name_original = name_original,
+    name_clean = name_clean,
+    firm_type = firm_type,
+    first_letter = substr(name_clean, 1, 1)
+  )
+}
