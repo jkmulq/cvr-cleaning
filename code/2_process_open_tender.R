@@ -138,7 +138,10 @@ winner_data <- winner_data %>%
       flag_row_multiple_valid_cvr,
       str_replace_all(
         winner_cvr,
-        regex("\\s*(,|;|\\||/|&|\\bog\\b)\\s*", ignore_case = TRUE),
+        regex(
+          "\\s*(,|;|\\||/|&|\\bog\\b|(?<=[\\d\\)])og(?=[[:alnum:]]))\\s*",
+          ignore_case = TRUE
+        ),
         ";"
       ),
       winner_cvr
