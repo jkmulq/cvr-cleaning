@@ -218,24 +218,25 @@ multi_winner_data_long <- multi_winner_data_long %>%
 ## 2.5 Clean single CVR data
 # Rename and copy
 single_winner_data <- single_winner_data %>% 
-  rename(winner_cvr_candidate = winner_cvr) %>% 
-  mutate(winner_cvr_clean = winner_cvr_candidate)
+  rename(winner_cvr_candidate = winner_cvr)
 
-## Adding the CVR standardisation flags
+### 2.5.1 Extract and clean CVR
+single_winner_data$winner_cvr_clean <- map_chr(
+  single_winner_data$winner_cvr_candidate,
+  ~unique(extract_valid_cvr_candidates(.x))
+  )
+
+### 2.5.2 Adding the CVR standardisation flags
 single_winner_data <- single_winner_data %>%
   mutate(# Remove white space
          flag_cvr_ws = coalesce(str_detect(winner_cvr_candidate, "\\s"), FALSE),
-         winner_cvr_clean = str_remove_all(winner_cvr_clean, "\\s+"),
-         
+
          # Remove alphabetical letters
          flag_cvr_alphabet = coalesce(str_detect(winner_cvr_candidate, "[[:alpha:]]"), FALSE),
-         winner_cvr_clean = str_remove_all(winner_cvr_clean, "[[:alpha:]]"),
-         
+
          # Remove all punctuation
-         flag_cvr_punct = coalesce(str_detect(winner_cvr_clean, "[[:punct:]]"), FALSE),
-         winner_cvr_clean = str_remove_all(winner_cvr_clean, "[[:punct:]]+"),
-         winner_cvr_clean = as.character(parse_number(winner_cvr_clean)),
-         
+         flag_cvr_punct = coalesce(str_detect(winner_cvr_candidate, "[[:punct:]]"), FALSE),
+
          # Flag if any standardisation performed
          flag_cvr_standardised = coalesce(
            flag_cvr_ws | flag_cvr_alphabet | flag_cvr_punct, FALSE
@@ -249,12 +250,7 @@ single_winner_data <- single_winner_data %>%
 ## 2.6 Bind winner data
 ## Goal: Create one OpenTender winner table with cleaned CVR candidates and
 ## keep the OpenTender-specific review flags created above.
-
-clean_winner_data <- bind_rows(
-  single_winner_data %>% select(-any_of("winner_cvr")),
-  multi_winner_names_data_long %>% select(-any_of("winner_cvr")),
-  multi_cvr_nondistinct_names_data_long %>% select(-any_of("winner_cvr"))
-) %>%
+clean_winner_data <- bind_rows(single_winner_data, multi_winner_data_long) %>%
   arrange(row_id, winner_number) 
 
 ## 2.7 Join original tender data
@@ -262,9 +258,6 @@ clean_winner_data <- bind_rows(
 ## replication checks can always go back to the source fields.
 clean_winner_data <- left_join(clean_winner_data, original_tender_data,
                                by = c("row_id", "tender_id"))
-
-clean_winner_data <- clean_winner_data %>%
-  mutate(winner_cvr_clean = as.character(winner_cvr_clean))
 
 # Rearrange columns 
 clean_winner_data <- clean_winner_data %>%
