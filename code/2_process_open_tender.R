@@ -281,15 +281,58 @@ clean_winner_data <- clean_winner_data %>%
          winner_country,
          source, everything())
 
+# Create valid CVR flag
+clean_winner_data <- clean_winner_data %>% 
+  mutate(valid_cvr = coalesce(str_detect(winner_cvr_clean, "^\\d{8}$"), FALSE))
 
-## The row-level CVR evidence, borrowed-CVR, and multi-valid-CVR flags
-## only exist in the multiple CVR subdatasets.
-## Treat these flags values as FALSE in the final cleaned table for completeness
-clean_winner_data <- clean_winner_data %>%
-  mutate(
-    flag_row_has_single_valid_cvr = coalesce(flag_row_has_single_valid_cvr, FALSE),
-    flag_winner_has_multi_valid_cvr = coalesce(flag_winner_has_multi_valid_cvr, FALSE)
+## 2.8 Fill missing CVRs when present elsewhere in data
+### 2.8.1 Create key of CVR to firm names present in the data
+valid_invalid_cvr_winner_key <- clean_winner_data %>%
+  distinct(winner_name, winner_cvr_clean, valid_cvr) %>%
+  mutate(n_valid_cvr = sum(valid_cvr), 
+         n_total_cvr = n(), # Counts missings
+         .by = winner_name) 
+
+### 2.8.2 Identify a reproducible source row for each valid firm-name/CVR pairing
+valid_cvr_sources <- clean_winner_data %>%
+  filter(valid_cvr, !is.na(winner_name), winner_name != "") %>%
+  summarise(
+    row_id_borrowed_from = paste(sort(unique(row_id)), collapse = ";"),
+    .by = c(winner_name, winner_cvr_clean)
   )
+
+### 2.8.3 Create subset of firms with 1 valid CVR, but more than 1 CVR entry (including missings)
+single_valid_cvr_key <- valid_invalid_cvr_winner_key %>% 
+  filter(n_valid_cvr == 1, n_total_cvr > 1, valid_cvr) %>% 
+  rename(winner_cvr_valid_from_same_name = winner_cvr_clean) %>%
+  select(-valid_cvr, -n_valid_cvr, -n_total_cvr) %>% 
+  distinct()
+
+# Join sources
+single_valid_cvr_key <- single_valid_cvr_key %>%
+  left_join(valid_cvr_sources, 
+            by = c("winner_name", "winner_cvr_valid_from_same_name" = "winner_cvr_clean"))
+
+# Join key
+clean_winner_data <- left_join(clean_winner_data, single_valid_cvr_key, 
+                               by = "winner_name",
+                               na_matches = "never")
+
+### 2.8.4 Overwrite missing CVR when valid alternative available 
+clean_winner_data <- clean_winner_data %>% 
+  mutate(flag_fill_missing_cvr = coalesce((winner_cvr_original == "" | is.na(winner_cvr_original)) &
+                                            !is.na(winner_cvr_valid_from_same_name) &
+                                            winner_cvr_valid_from_same_name != "", 
+                                          FALSE))
+clean_winner_data <- clean_winner_data %>% 
+  mutate(winner_cvr_clean = ifelse(flag_fill_missing_cvr, winner_cvr_valid_from_same_name, winner_cvr_clean))
+
+# Update valid CVR flag
+clean_winner_data <- clean_winner_data %>% 
+  mutate(valid_cvr = coalesce(str_detect(winner_cvr_clean, "^\\d{8}$"), FALSE))
+
+
+
 
 ## 2.9 Check carried CVR standardisation flags
 ## The actual CVR standardisation happens inside each winner dataframe before
