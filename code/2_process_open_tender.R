@@ -124,6 +124,21 @@ buyer_data_original <- data %>%
 # Duplicate data so I can bind back later
 winner_data <- winner_data_original
 
+# Guard against whitespace acting as an unhandled delimiter between two CVRs.
+# The helper removes whitespace to repair spaced CVRs, so these rows would become
+# one 16-digit string and incorrectly bypass the multiple-CVR cleaning workflow.
+whitespace_separated_cvr_rows <- winner_data %>%
+  filter(str_detect(
+    winner_cvr,
+    "(?<![0-9])[0-9]{8}[[:space:]]+[0-9]{8}(?![0-9])"
+  )) %>%
+  select(row_id, tender_id, winner_cvr)
+
+if (nrow(whitespace_separated_cvr_rows) > 0) {
+  print(whitespace_separated_cvr_rows)
+  stop("Some winner rows contain two CVRs separated only by whitespace.")
+}
+
 ## 2.1 Count distinct CVR numbers by row
 winner_data <- winner_data %>% 
   mutate(
