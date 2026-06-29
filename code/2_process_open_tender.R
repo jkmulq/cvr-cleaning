@@ -178,80 +178,23 @@ multi_winner_data_long <- multi_winner_data %>%
 
 # Rename and create copy
 multi_winner_data_long <- multi_winner_data_long %>% 
-  rename(winner_cvr_candidate = winner_cvr) %>% 
-  mutate(winner_cvr_clean = winner_cvr_candidate)
+  rename(winner_cvr_candidate = winner_cvr)
 
-# Deal with tricky edge case separately
-multi_winner_names_data_long <- multi_winner_names_data_long %>%
-  mutate(winner_cvr_clean = ifelse(
-    winner_cvr_candidate == "CVR5EByg:30811097",
-    "30811097",
-    winner_cvr_candidate
-  ))
+### 2.4.2 Extract and clean CVR
+multi_winner_data_long$winner_cvr_clean <- map_chr(multi_winner_data_long$winner_cvr_candidate,
+                                                   extract_valid_cvr_candidates)
 
-## Clean up/standardise CVR numbers
-## Keep the separated raw CVR candidate before cleaning. Cleaning flags treat
-## NAs as FALSE: a missing source value is not counted as evidence that a
-## cleaning operation was performed.
-multi_winner_names_data_long <- multi_winner_names_data_long %>% 
+# Flag the cleaning steps
+multi_winner_data_long <- multi_winner_data_long %>% 
   mutate(
     # Remove white space
     flag_cvr_ws = coalesce(str_detect(winner_cvr_candidate, "\\s"), FALSE),
-    winner_cvr_clean = str_remove_all(winner_cvr_clean, "\\s+"),
 
     # Remove alphabetical letters
     flag_cvr_alphabet = coalesce(str_detect(winner_cvr_candidate, "[[:alpha:]]"), FALSE),
-    winner_cvr_clean = str_remove_all(winner_cvr_clean, "[[:alpha:]]"),
-
-    # Remove all punctuation
-    flag_cvr_punct = coalesce(str_detect(winner_cvr_clean, "[[:punct:]]"), FALSE),
-    winner_cvr_clean = str_remove_all(winner_cvr_clean, "[[:punct:]]+"),
-    winner_cvr_clean = as.character(parse_number(winner_cvr_clean)),
-
-    # Flag if any standardisation performed
-    flag_cvr_standardised = coalesce(
-      flag_cvr_ws | flag_cvr_alphabet | flag_cvr_punct,
-      FALSE
-    )
-  )
-
-## Add metadata
-multi_winner_names_data_long <- multi_winner_names_data_long %>%
-  mutate(winner_cvr_clean = as.character(winner_cvr_clean),
-         winner_number = row_number(),
-         source = "multiple confirmed winner names",
-         .by = c(row_id, tender_id))
-
-## 2.5 Multiple distinct CVRs
-### 2.5.1 Pivot to long
-# This section focuses on multiple distinct CVRs with only one identifiable firm name
-multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data %>% 
-  separate_longer_delim(cols = "winner_cvr", delim = ";")
-
-# Rename and copy variable for cleaning
-multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>%
-  rename(winner_cvr_candidate = winner_cvr) %>% 
-  mutate(winner_cvr_clean = winner_cvr_candidate)
-
-## Clean up/standardise CVR numbers
-## Keep the separated raw CVR candidate before cleaning. Cleaning flags treat
-## NAs as FALSE: a missing source value is not counted as evidence that a
-## cleaning operation was performed.
-multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>%
-  mutate(
-
-    # Remove white space
-    flag_cvr_ws = coalesce(str_detect(winner_cvr_candidate, "\\s"), FALSE),
-    winner_cvr_clean = str_remove_all(winner_cvr_clean, "\\s+"),
-
-    # Remove alphabetical letters
-    flag_cvr_alphabet = coalesce(str_detect(winner_cvr_candidate, "[[:alpha:]]"), FALSE),
-    winner_cvr_clean = str_remove_all(winner_cvr_clean, "[[:alpha:]]"),
 
     # Remove all punctuation
     flag_cvr_punct = coalesce(str_detect(winner_cvr_candidate, "[[:punct:]]"), FALSE),
-    winner_cvr_clean = str_remove_all(winner_cvr_clean, "[[:punct:]]+"),
-    winner_cvr_clean = as.character(parse_number(winner_cvr_clean)),
 
     # Flag if any standardisation performed
     flag_cvr_standardised = coalesce(
@@ -260,53 +203,17 @@ multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %
     )
   )
 
-# Flag valid CVR string post cleaning/standardisation (8 numerical digits)
-multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
-  mutate(valid_cvr = coalesce(str_detect(winner_cvr_clean, "^\\d{8}$"), FALSE))
+### 2.4.3 Make distinct (sometimes CVR numbers are repeated within a row)
+multi_winner_data_long <- multi_winner_data_long %>% 
+  distinct(row_id, tender_id, winner_cvr_clean, .keep_all = TRUE)
 
-# Make distinct by (row_id, tender_id, winner_cvr_clean, winner_name)
-## Since a lot of these rows come from records with multiple instances of the same CVR number
-multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
-  distinct(tender_id, row_id, winner_name, winner_cvr_clean, valid_cvr, 
-           .keep_all = TRUE)
-
-# Determine whether the original OpenTender row has one or more distinct valid CVR.
-# If it does, drop the invalid expanded rows for that source row.
-# If it does not, keep them.
-multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>%
-  mutate(n_valid_cvr_in_row = sum(valid_cvr, na.rm = TRUE), 
-         n_total_expanded_rows = n(),
-         .by = c(row_id, tender_id, winner_name))
-
-multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
-  mutate(flag_row_has_valid_cvr = coalesce(n_valid_cvr_in_row >= 1, FALSE))
-
-# I keep expanded rows if:
-#   - there's at least one valid CVR in the source row and the expanded row is a valid CVR
-#   - there's no valid CVR's in the source row.
-multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
-  filter((flag_row_has_valid_cvr & valid_cvr) | (!flag_row_has_valid_cvr))
-
-# Other firms have many valid CVRs and many invalid CVRs. 
-# Flag them, but I keep all their rows.
-multi_valid_cvr_firms <- multi_cvr_nondistinct_names_data_long %>% 
-  filter(n_valid_cvr_in_row > 1) %>% 
-  distinct(winner_name, n_valid_cvr_in_row, n_total_expanded_rows) 
-
-cat("Number of winning firms with several valid CVRs:", nrow(multi_valid_cvr_firms), "\n")
-cat("Ave. number of valid CVRs for these firms:", mean(multi_valid_cvr_firms$n_valid_cvr_in_row), "\n")
-cat("Ave. number of expanded rows (valid + invalid CVRs) for these firms:", mean(multi_valid_cvr_firms$n_total_expanded_rows), "\n")
-
-multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>% 
-  mutate(flag_winner_has_multi_valid_cvr = coalesce(if_else(winner_name %in% multi_valid_cvr_firms$winner_name,
-                                                            TRUE, FALSE), FALSE))
-
-## Add metadata
-multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %>%
+### 2.4.4 Add metadata
+multi_winner_data_long <- multi_winner_data_long %>%
   mutate(winner_cvr_clean = as.character(winner_cvr_clean),
-         source = "multiple CVR candidates for one winner name",
          winner_number = row_number(),
+         source = "multiple confirmed winners",
          .by = c(row_id, tender_id))
+
 
 ## 2.6 Clean single CVR data
 # Rename and copy
