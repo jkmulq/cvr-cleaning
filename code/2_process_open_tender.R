@@ -559,7 +559,6 @@ clean_winner_data <- clean_winner_data %>%
 clean_winner_data <- clean_winner_data %>%
   mutate(
     flag_row_has_single_valid_cvr = coalesce(flag_row_has_single_valid_cvr, FALSE),
-    flag_cvr_borrowed_from_winner_name = coalesce(flag_cvr_borrowed_from_winner_name, FALSE),
     flag_winner_has_multi_valid_cvr = coalesce(flag_winner_has_multi_valid_cvr, FALSE)
   )
 
