@@ -331,6 +331,16 @@ clean_winner_data <- clean_winner_data %>%
 clean_winner_data <- clean_winner_data %>% 
   mutate(valid_cvr = coalesce(str_detect(winner_cvr_clean, "^\\d{8}$"), FALSE))
 
+### 2.8.5 Standardise winner_name (prepare for fuzzy match)
+
+winner_name_prepared <- prepare_cvr_name(clean_winner_data$winner_name)
+
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    winner_name_match = winner_name_prepared$name_clean,
+    winner_firm_type = winner_name_prepared$firm_type,
+    winner_name_first_letter = winner_name_prepared$first_letter
+  )
 
 ## 2.9 Check carried CVR standardisation flags
 ## The actual CVR standardisation happens inside each winner dataframe before
