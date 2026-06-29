@@ -338,12 +338,10 @@ clean_winner_data <- clean_winner_data %>%
 clean_winner_data <- clean_winner_data %>%
   mutate(
     flag_cvr_ws = coalesce(flag_cvr_ws, FALSE),
-    flag_cvr_hyphen = coalesce(flag_cvr_hyphen, FALSE),
     flag_cvr_alphabet = coalesce(flag_cvr_alphabet, FALSE),
     flag_cvr_punct = coalesce(flag_cvr_punct, FALSE),
     flag_cvr_standardised = coalesce(
       flag_cvr_ws |
-        flag_cvr_hyphen |
         flag_cvr_alphabet |
         flag_cvr_punct,
       FALSE
