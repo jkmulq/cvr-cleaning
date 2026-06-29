@@ -126,192 +126,32 @@ winner_data <- winner_data_original
 
 ## 2.1 Count distinct CVR numbers by row
 winner_data <- winner_data %>% 
-  mutate(flag_row_multiple_valid_cvr = has_multiple_distinct_valid_cvrs(winner_cvr))
-
-## 2.2 Investigate bidder ID delimiter for multiple CVR numbers/winning firms
-### 2.2.1 Find delimiter types
-winner_data <- winner_data %>%
   mutate(
-    delim_flag_missing = is.na(winner_cvr) | winner_cvr == "",
-    delim_flag_comma = coalesce(str_detect(winner_cvr, ","), FALSE),
-    delim_flag_semicolon = coalesce(str_detect(winner_cvr, ";"), FALSE), 
-    delim_flag_period = coalesce(str_detect(winner_cvr, fixed(".")), FALSE), 
-    delim_flag_pipe = coalesce(str_detect(winner_cvr, fixed("|")), FALSE), 
-    delim_flag_slash = coalesce(str_detect(winner_cvr, "/"), FALSE), 
-    delim_flag_space = coalesce(str_detect(winner_cvr, "\\s"), FALSE),
-    delim_flag_hyphen = coalesce(str_detect(winner_cvr, "-"), FALSE),
-    delim_flag_no_punct = !str_detect(winner_cvr, "[[:punct:]]") & !delim_flag_missing,
-    delim_flag_no_punct = coalesce(delim_flag_no_punct, FALSE),
-    delim_flag_ampersand = coalesce(str_detect(winner_cvr, "&"), FALSE),
-    delim_flag_colon = coalesce(str_detect(winner_cvr, ":"), FALSE),
-    delim_flag_og = coalesce(str_detect(winner_cvr, "og"), FALSE)
+    n_valid_cvr = compute_distinct_valid_cvr(winner_cvr),
+    flag_row_multiple_valid_cvr = (n_valid_cvr > 1)
   )
 
-# Print summaries
-winner_data %>% 
-  summarise(across(.cols = starts_with("delim_flag_"), ~sum(.x, na.rm = TRUE)), 
-            n = n()) %>% 
-  mutate(row_sum = rowSums(.) - n) %>% 
-  t() 
-
-# Most of these potential delimiters don't separate CVR numbers
-# 'period' is not valid
-# Hyphens aren't (most come from Swedish bidder numbers)
-# Space is not (usually separates a single CVR by 2 digits)
-
-# The 1 '|' row represents a genuine delimiter, as well as all the commas.
-# Flag these. 
-winner_data <- winner_data %>%
-  mutate(delim_flag_valid_comma = coalesce(delim_flag_comma, FALSE),
-         delim_flag_valid_pipe = coalesce(delim_flag_pipe, FALSE))
-
-
-# Sometimes '/' is for a name inside the bidder ID column, 
-# other times it separates multiple bidders. 
-# Flag likely valid ones for conversion to semi-colon
-valid_slash_rows <- c(73374, 140635, 141894, 146029, 157184)
-winner_data <- winner_data %>% 
-  mutate(delim_flag_valid_slash = row_id %in% valid_slash_rows,
-         flag_review_slash = coalesce(delim_flag_slash, FALSE) & !delim_flag_valid_slash) 
-
-# Ampersand also represents valid delimiter sometimes too.
-# Flag likely valid ones for conversion to semi-colon
-valid_ampersand_rows <- c(62215, 65494, 148062)
-winner_data <- winner_data %>% 
-  mutate(delim_flag_valid_ampersand = row_id %in% valid_ampersand_rows,
-         flag_review_ampersand = coalesce(delim_flag_ampersand, FALSE) & !delim_flag_valid_ampersand)
-
-# 'og' (meaning 'and') sometime have multiple CVR numbers too
-# Flag likely valid ones for conversion to semi-colon
-valid_og_rows <- c(59588, 78505, 105116, 144636, 146512, 156134)
-winner_data <- winner_data %>% 
-  mutate(delim_flag_valid_og = row_id %in% valid_og_rows,
-         flag_review_og = coalesce(delim_flag_og, FALSE) & !delim_flag_valid_og)
-
-# Check manually accepted row_id's still present in the data
-missing_valid_delim_rows <- setdiff(
-  c(valid_slash_rows, valid_ampersand_rows, valid_og_rows),
-  winner_data$row_id
-)
-
-if (length(missing_valid_delim_rows) > 0) {
-  print(missing_valid_delim_rows)
-  stop("Some manually reviewed delimiter row IDs are not present in winner_data.")
-}
-
-# Check accepted row_id's have expected delimiter
-invalid_valid_delim_rows <- winner_data %>%
-  filter(
-    (delim_flag_valid_slash & !delim_flag_slash) |
-      (delim_flag_valid_ampersand & !delim_flag_ampersand) |
-      (delim_flag_valid_og & !delim_flag_og)
-  ) %>%
-  select(row_id, winner_cvr)
-
-if (nrow(invalid_valid_delim_rows) > 0) {
-  print(invalid_valid_delim_rows)
-  stop("Some manually reviewed delimiter row IDs no longer have the expected delimiter.")
-}
-
-# Flag all failures for manual review 
-winner_data <- winner_data %>% 
-  mutate(flag_manual_review = flag_review_slash | flag_review_ampersand  | flag_review_og,
-         manual_review_reason = ifelse(flag_review_slash | flag_review_ampersand | flag_review_og, 
-                                       "check whether bidder ID contains multiple winning firms",
-                                       NA))
-
-# Convert valid delims to semi-colon
+## 2.2 Standardise CVR number delimiters
 winner_data <- winner_data %>%
   mutate(
-    winner_cvr = if_else(delim_flag_valid_comma, str_replace_all(winner_cvr, fixed(","), ";"), winner_cvr),
-    winner_cvr = if_else(delim_flag_valid_pipe, str_replace_all(winner_cvr, fixed("|"), ";"), winner_cvr),
-    winner_cvr = if_else(delim_flag_valid_slash, str_replace_all(winner_cvr, fixed("/"), ";"), winner_cvr),
-    winner_cvr = if_else(delim_flag_valid_ampersand, str_replace_all(winner_cvr, fixed("&"), ";"), winner_cvr),
-    winner_cvr = if_else(delim_flag_valid_og, str_replace_all(winner_cvr, "og", ";"), winner_cvr)
+    winner_cvr = ifelse(
+      flag_row_multiple_valid_cvr,
+      str_replace_all(
+        winner_cvr,
+        regex("\\s*(,|;|\\||/|&|\\bog\\b)\\s*", ignore_case = TRUE),
+        ";"
+      ),
+      winner_cvr
+    ),
+    winner_cvr = str_replace_all(winner_cvr, ";+", ";")
   )
 
-# Flag likely multi-value winner ID strings.
-# `flag_multi_winner` means the source string has an accepted
-# multi-value delimiter. It does not yet mean the row has multiple distinct
-# cleaned CVRs, because some delimited values repeat the same identifier.
-# Likewise, `single_cvr` means non-empty and not accepted-multi at this stage,
-# not yet a valid eight-digit Danish CVR.
-winner_data <- winner_data %>% 
-  mutate(flag_multi_winner = coalesce(delim_flag_valid_comma | delim_flag_valid_pipe | 
-                                        delim_flag_valid_slash | delim_flag_valid_ampersand |
-                                        delim_flag_valid_og, FALSE),
-         single_cvr = coalesce(!is.na(winner_cvr) & winner_cvr != "" & !flag_multi_winner, FALSE))
-
-# Flag rows with several distinct valid CVRs (can use ; as delimiter since we converted them above)
-winner_data <- winner_data %>%
-  mutate(
-    flag_multiple_distinct_valid_cvrs = has_multiple_distinct_valid_cvrs(winner_cvr, delim = ";")
-  )
 
 # Print number of true multi CVR numbers.
-n_true_multi_cvrs <- sum(winner_data$flag_multiple_distinct_valid_cvrs, na.rm = TRUE)
-cat("Number of true multi CVR numbers detected: ", n_true_multi_cvrs, "\n")
+n_true_multi_cvrs <- sum(winner_data$flag_row_multiple_valid_cvr, na.rm = TRUE)
+cat("Number of true multi CVR numbers detected:", n_true_multi_cvrs, "\n")
 
-# Since the number is small, manually reviewed row IDs confirm cases where the
-# multiple distinct valid CVR flag corresponds to multiple firms in winner_name.
-multiple_distinct_winner_names_row_ids <- c(
-  157184, 156134, 148062, 146512, 146029, 144636, 141894, 140635,
-  138833, 105116, 78505, 73374, 65494, 62215, 59588
-)
-
-winner_data <- mutate(
-  winner_data,
-  flag_multiple_distinct_winner_names = coalesce(row_id %in% multiple_distinct_winner_names_row_ids, FALSE)
-)
-
-# Check manually reviewed row IDs still exist and still have multiple distinct
-# valid CVRs. If either check fails, the manual coding needs to be revisited.
-missing_multiple_distinct_name_rows <- setdiff(
-  multiple_distinct_winner_names_row_ids,
-  winner_data$row_id
-)
-
-if (length(missing_multiple_distinct_name_rows) > 0) {
-  print(missing_multiple_distinct_name_rows)
-  stop("Some manually reviewed multiple-winner row IDs are not present in winner_data.")
-}
-
-invalid_multiple_distinct_name_rows <- winner_data %>%
-  filter(flag_multiple_distinct_winner_names & !flag_multiple_distinct_valid_cvrs) %>%
-  select(row_id, winner_cvr, winner_name)
-
-if (nrow(invalid_multiple_distinct_name_rows) > 0) {
-  print(invalid_multiple_distinct_name_rows)
-  stop("Some manually reviewed multiple-winner rows are no longer flagged as multiple distinct valid CVRs.")
-}
-
-## 2.3 Check reviewed multiple-winner names
-# The automatic CVR flag can find multiple distinct valid CVRs even when the
-# winner name is a single firm. Keep the final multiple-winner-name flag tied to
-# the manually reviewed row IDs above, then audit the inputs needed for that
-# decision.
-reviewed_multiple_winner_names <- winner_data %>%
-  filter(flag_multiple_distinct_winner_names) %>%
-  select(row_id, winner_cvr, winner_name, winner_country)
-
-missing_reviewed_winner_names <- reviewed_multiple_winner_names %>%
-  filter(is.na(winner_name) | winner_name == "")
-
-if (nrow(missing_reviewed_winner_names) > 0) {
-  print(missing_reviewed_winner_names)
-  stop("Some manually reviewed multiple-winner rows have missing winner names.")
-}
-
-unconfirmed_multiple_cvr_rows <- winner_data %>%
-  filter(flag_multiple_distinct_valid_cvrs & !flag_multiple_distinct_winner_names) %>%
-  select(row_id, winner_cvr, winner_name, winner_country)
-
-cat("Number of manually confirmed multiple-winner name rows: ",
-    nrow(reviewed_multiple_winner_names), "\n")
-cat("Number of multiple-distinct-CVR rows not confirmed as multiple winners: ",
-    nrow(unconfirmed_multiple_cvr_rows), "\n")
-
-## 2.4 Separate into single and multiple CVRs
+## 2.3 Separate into single and multiple CVRs
 # Multiple distinct CVRs, identified multiple firm names
 multi_winner_names_data <- winner_data %>% 
   filter(flag_multiple_distinct_valid_cvrs, flag_multiple_distinct_winner_names)
