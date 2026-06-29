@@ -332,8 +332,6 @@ clean_winner_data <- clean_winner_data %>%
   mutate(valid_cvr = coalesce(str_detect(winner_cvr_clean, "^\\d{8}$"), FALSE))
 
 
-
-
 ## 2.9 Check carried CVR standardisation flags
 ## The actual CVR standardisation happens inside each winner dataframe before
 ## binding. This section only makes the carried flags complete after bind_rows().
