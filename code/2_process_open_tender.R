@@ -124,8 +124,12 @@ buyer_data_original <- data %>%
 # Duplicate data so I can bind back later
 winner_data <- winner_data_original
 
-## 2.1 Investigate bidder ID delimiter for multiple CVR numbers/winning firms
-### 2.1.1 Find delimiter types
+## 2.1 Count distinct CVR numbers by row
+winner_data <- winner_data %>% 
+  mutate(flag_row_multiple_valid_cvr = has_multiple_distinct_valid_cvrs(winner_cvr))
+
+## 2.2 Investigate bidder ID delimiter for multiple CVR numbers/winning firms
+### 2.2.1 Find delimiter types
 winner_data <- winner_data %>%
   mutate(
     delim_flag_missing = is.na(winner_cvr) | winner_cvr == "",
@@ -281,7 +285,7 @@ if (nrow(invalid_multiple_distinct_name_rows) > 0) {
   stop("Some manually reviewed multiple-winner rows are no longer flagged as multiple distinct valid CVRs.")
 }
 
-## 2.2 Check reviewed multiple-winner names
+## 2.3 Check reviewed multiple-winner names
 # The automatic CVR flag can find multiple distinct valid CVRs even when the
 # winner name is a single firm. Keep the final multiple-winner-name flag tied to
 # the manually reviewed row IDs above, then audit the inputs needed for that
@@ -307,7 +311,7 @@ cat("Number of manually confirmed multiple-winner name rows: ",
 cat("Number of multiple-distinct-CVR rows not confirmed as multiple winners: ",
     nrow(unconfirmed_multiple_cvr_rows), "\n")
 
-## 2.3 Separate into single and multiple CVRs
+## 2.4 Separate into single and multiple CVRs
 # Multiple distinct CVRs, identified multiple firm names
 multi_winner_names_data <- winner_data %>% 
   filter(flag_multiple_distinct_valid_cvrs, flag_multiple_distinct_winner_names)
@@ -329,8 +333,8 @@ if (nrow(multi_winner_names_data) +
   stop("subsetted datasets do not have the same number of rows as the full winner dataset")
 }
 
-## 2.4 Multi-winner data with confirmed multiple firms
-### 2.4.1 Clean up name delimiters for easier splitting
+## 2.5 Multi-winner data with confirmed multiple firms
+### 2.5.1 Clean up name delimiters for easier splitting
 # Since there are few of these cases, I just do them manually for transparency
 # Where original firm names include 'consortium', I have put the firm name corresponding to the CVR obtained from https://virk.dk
 
@@ -358,7 +362,7 @@ if (any(is.na(multi_winner_names_data$winner_name))) {
   stop("you haven't cleaned all the multiple distinct cvr winner names. check `multi_winner_names_data` and try again.")
 }
 
-### 2.4.2 Pivot to longer
+### 2.5.2 Pivot to longer
 # Method below assumes ordering of CVRs matches ordering of winner name
 multi_winner_names_data_long <- multi_winner_names_data %>% 
   separate_longer_delim(cols = c("winner_cvr", "winner_name"), delim = ";")
@@ -409,7 +413,7 @@ multi_winner_names_data_long <- multi_winner_names_data_long %>%
          source = "multiple confirmed winner names",
          .by = c(row_id, tender_id))
 
-## 2.5 Pivot multiple distinct CVRs to long
+## 2.6 Pivot multiple distinct CVRs to long
 # This section focuses on multiple distinct CVRs with only one identifiable firm name
 multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data %>% 
   separate_longer_delim(cols = "winner_cvr", delim = ";")
@@ -494,7 +498,7 @@ multi_cvr_nondistinct_names_data_long <- multi_cvr_nondistinct_names_data_long %
          winner_number = row_number(),
          .by = c(row_id, tender_id))
 
-## 2.6 Clean single CVR data
+## 2.7 Clean single CVR data
 # Rename and copy
 single_winner_data <- single_winner_data %>% 
   rename(winner_cvr_candidate = winner_cvr) %>% 
@@ -525,7 +529,7 @@ single_winner_data <- single_winner_data %>%
   mutate(winner_number = 1,
          source = "single winner")
 
-## 2.7 Bind winner data
+## 2.8 Bind winner data
 ## Goal: Create one OpenTender winner table with cleaned CVR candidates and
 ## keep the OpenTender-specific review flags created above.
 
@@ -536,7 +540,7 @@ clean_winner_data <- bind_rows(
 ) %>%
   arrange(row_id, winner_number) 
 
-## 2.8 Join original tender data
+## 2.9 Join original tender data
 ## This keeps the full OpenTender row attached to the cleaned winner rows, so
 ## replication checks can always go back to the source fields.
 clean_winner_data <- left_join(clean_winner_data, original_tender_data,
@@ -580,7 +584,7 @@ clean_winner_data <- clean_winner_data %>%
     )
   )
 
-## 2.10 Other winner quality flags
+## 2.11 Other winner quality flags
 ## Quality flags treat NAs as FALSE: missing values are captured by explicit
 ## missingness flags, not by propagating NA through boolean indicators.
 # Flag valid CVR numbers (exactly 8 digits, no letters or special characters)
@@ -674,7 +678,7 @@ clean_winner_data <- clean_winner_data %>%
     )
   )
 
-## 2.11 Reorder columns
+## 2.12 Reorder columns
 ## Keep the cleaned CVR, original source CVR, winner name, winner country, and
 ## quality flags near each other so we can inspect the cleaning decisions.
 clean_winner_data <- clean_winner_data %>%
