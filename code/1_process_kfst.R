@@ -138,7 +138,7 @@ tender_lot_data <- data %>%
 
 # 2 Winners
 winner_data <- data %>% 
-  select(tender_id, lot_id, winner_cvr, winner_name, winner_country, n_lot_winners)
+  select(tender_id, lot_id, winner_cvr, winner_name, winner_country)
 
 # Store original winner fields separately. The cleaned table keeps both the raw
 # source field and the standardized CVR field.
@@ -257,11 +257,12 @@ clean_winner_data <- clean_winner_data %>%
 clean_winner_data <- left_join(clean_winner_data, tender_lot_data, 
                                by = c("tender_id", "lot_id"))
 clean_winner_data <- left_join(clean_winner_data, original_winner_data, 
-                               by = c("tender_id", "lot_id"))
+                               by = c("tender_id", "lot_id"),
+                               suffix = c("", "_original"))
 
 ### Only keep lots that had winners (defined by original data)
 clean_winner_data <- clean_winner_data %>% 
-  filter(n_lot_winners_original > 0)
+  filter(n_lot_winners > 0)
 
 ## 2.5 Clean up/standardise CVR numbers
 ## Cleaning flags treat NAs as FALSE: a missing source value is not counted as
@@ -355,7 +356,7 @@ clean_winner_data <- clean_winner_data %>%
   mutate(n_winners_extracted = n(), .by = c("tender_id", "lot_id"))
 clean_winner_data <- clean_winner_data %>%
   mutate(flag_mismatch_winner_count = 
-           coalesce(n_winners_extracted != n_lot_winners_original, FALSE))
+           coalesce(n_winners_extracted != n_lot_winners, FALSE))
 
 # Single bidder
 clean_winner_data <- clean_winner_data %>%
@@ -453,7 +454,8 @@ clean_buyer_data <- bind_rows(single_buyer_data, multiple_buyer_long) %>%
 
 ## 3.6 Join original tender data and original buyer data
 clean_buyer_data <- left_join(clean_buyer_data, tender_lot_data %>% select(-buyer_name), # Don't need to add buyer_name here. 
-                               by = c("tender_id", "lot_id"))
+                               by = c("tender_id", "lot_id"),
+                              suffix = c("", "_original"))
 clean_buyer_data <- left_join(clean_buyer_data, original_buyer_data, 
                                by = c("tender_id", "lot_id"),
                                suffix = c("", "_original"))
