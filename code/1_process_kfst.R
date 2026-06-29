@@ -294,7 +294,17 @@ clean_winner_data <- clean_winner_data %>%
     )
     )
 
-## 2.6 Other winner quality flags
+## 2.6 Standardise winner names for matching
+winner_name_prepared <- prepare_cvr_name(clean_winner_data$winner_name)
+
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    winner_name_match = winner_name_prepared$name_clean,
+    winner_firm_type = winner_name_prepared$firm_type,
+    winner_name_first_letter = winner_name_prepared$first_letter
+  )
+
+## 2.7 Other winner quality flags
 ## Quality flags treat NAs as FALSE: missing values are captured by explicit
 ## missingness flags, not by propagating NA through boolean indicators.
 # Flag valid CVR numbers (exactly 8 digits, no letters or special characters)
