@@ -96,18 +96,13 @@ extract_valid_cvr_candidates <- function(x) {
 compute_distinct_valid_cvr <- function(x) {
   vapply(
     x,
-    FUN.VALUE = logical(1),
-    FUN = function(value) {
-      if (is.na(value) || value == "") {
-        return(FALSE)
-      }
-
-      # OpenTender winner IDs have already had accepted delimiters converted to
-      # semicolons before this helper is called.
-      cvr_candidates <- strsplit(value, delim, fixed = TRUE)[[1]]
-      valid_cvrs <- extract_valid_cvr_candidates(cvr_candidates)
-
-      length(unique(valid_cvrs)) > 1
-    }
+    function(value) {
+      cands <- extract_valid_cvr_candidates(value)
+      cands <- cands[!is.na(cands)]
+      cands <- unique(cands)
+      length(cands)
+    },
+    integer(1),
+    USE.NAMES = FALSE
   )
 }
