@@ -356,15 +356,6 @@ clean_winner_data <- clean_winner_data %>%
 clean_winner_data <- clean_winner_data %>%
   mutate(valid_cvr = coalesce(str_detect(winner_cvr_clean, "^\\d{8}$"), FALSE))
 
-# Flag transformed winner CVR number (not equal to original winner CVR number)
-clean_winner_data <- clean_winner_data %>%
-  mutate(flag_winner_cvr_changed =
-           coalesce(
-             winner_cvr_clean != winner_cvr_candidate_original,
-             FALSE
-           )
-  )
-
 # Flag missing CVR number
 clean_winner_data <- clean_winner_data %>%
   mutate(flag_missing_winner_cvr =
