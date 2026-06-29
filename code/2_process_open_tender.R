@@ -215,7 +215,7 @@ multi_winner_data_long <- multi_winner_data_long %>%
          .by = c(row_id, tender_id))
 
 
-## 2.6 Clean single CVR data
+## 2.5 Clean single CVR data
 # Rename and copy
 single_winner_data <- single_winner_data %>% 
   rename(winner_cvr_candidate = winner_cvr) %>% 
@@ -246,7 +246,7 @@ single_winner_data <- single_winner_data %>%
   mutate(winner_number = 1,
          source = "single winner")
 
-## 2.7 Bind winner data
+## 2.6 Bind winner data
 ## Goal: Create one OpenTender winner table with cleaned CVR candidates and
 ## keep the OpenTender-specific review flags created above.
 
@@ -257,7 +257,7 @@ clean_winner_data <- bind_rows(
 ) %>%
   arrange(row_id, winner_number) 
 
-## 2.8 Join original tender data
+## 2.7 Join original tender data
 ## This keeps the full OpenTender row attached to the cleaned winner rows, so
 ## replication checks can always go back to the source fields.
 clean_winner_data <- left_join(clean_winner_data, original_tender_data,
