@@ -33,6 +33,6 @@ setDT(winner_data)
 setDT(name_key)
 setDT(biname_key)
 
-# Concord column names across keys
+## 1.1 Concord column names across keys
 setnames(name_key, "name", "registered_name")
 setnames(biname_key, "binavn", "registered_name")
