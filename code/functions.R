@@ -464,6 +464,26 @@ find_fuzzy_matches <- function(
   rbindlist(found, use.names = TRUE, fill = TRUE)
 }
 
+# Accept candidate 1 only when it exceeds the threshold for that fuzzy step.
+accept_fuzzy_match <- function(candidates, threshold) {
+  if (nrow(candidates) == 0) return(data.table())
+  
+  candidates[
+    fuzzy_candidate_rank == 1 &
+      fuzzy_candidate_score > threshold,
+    .(
+      match_row_id,
+      winner_cvr_name_match = fuzzy_candidate_cvr,
+      registered_name_match = fuzzy_candidate_name,
+      name_match_source = fuzzy_candidate_source,
+      name_match_step = fuzzy_candidate_step,
+      name_match_method = "fuzzy",
+      name_match_score = fuzzy_candidate_score,
+      name_match_n_candidates = n_top_score_candidates
+    )
+  ]
+}
+
 # Add a step's matches to matched and remove those rows from remaining.
 # This small repeated block mirrors the notebook's matched/remaining workflow.
 keep_step_matches <- function(new_matches) {
