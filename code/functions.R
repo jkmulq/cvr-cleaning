@@ -230,6 +230,38 @@ prepare_cvr_name <- function(x) {
     USE.NAMES = FALSE
   )
 
+  # Steps 2 and 3 use the prepared name without spaces.
+  name_no_spaces <- gsub(" ", "", name_clean, fixed = TRUE)
+
+  # Steps 4 and 6 remove common, low-information words and ignore word order.
+  common_words <- c(
+    "af", "arhus", "asset", "assets", "broderna", "brdr", "brodrerne",
+    "co", "dansk", "data", "development", "dk", "ejendomsselskabet",
+    "finans", "forsikring", "group", "holding", "hotels", "hotel", "int",
+    "invest", "kbh", "komplementaerssaelskabet", "livforsikringsselskab",
+    "management", "media", "nordic", "nordisk", "og", "scandinavia",
+    "scandinavian", "se", "service", "services", "skandia", "software",
+    "system", "systems", "ltd", "filial", "for"
+  )
+
+  make_broad_name <- function(value) {
+    if (is.na(value) || value == "") return(NA_character_)
+
+    words <- strsplit(value, " ", fixed = TRUE)[[1]]
+    words <- words[!words %in% common_words]
+
+    if (length(words) == 0) return(NA_character_)
+
+    paste(sort(words), collapse = "")
+  }
+
+  name_broad <- vapply(
+    name_clean,
+    make_broad_name,
+    character(1),
+    USE.NAMES = FALSE
+  )
+
   tibble::tibble(
     name_original = name_original,
     name_clean = name_clean,
