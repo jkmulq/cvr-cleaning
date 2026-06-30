@@ -36,3 +36,26 @@ setDT(biname_key)
 ## 1.1 Concord column names across keys
 setnames(name_key, "name", "registered_name")
 setnames(biname_key, "binavn", "registered_name")
+
+## 1.2 Improve keys before matching
+# Key source identifiers
+name_key[, name_source := "name"]
+biname_key[, name_source := "biname"]
+
+# Ensure CVRs are eight-character strings.
+name_key[, cvr := sprintf("%08d", as.integer(cvr))]
+biname_key[, cvr := sprintf("%08d", as.integer(cvr))]
+
+# Extract first letter of the broadly generalized name.
+name_key[, broad_first_letter := substr(name_broad, 1, 1)]
+biname_key[, broad_first_letter := substr(name_broad, 1, 1)]
+
+# Combine keys for exact matching. 
+cvr_key <- rbindlist(
+  list(name_key, biname_key),
+  use.names = TRUE
+)
+
+# If the same match is available as both a main name and a biname, 
+# prioritise main name
+cvr_key[, source_order := fifelse(name_source == "name", 1L, 2L)]
