@@ -364,7 +364,7 @@ levenshtein_ratio <- function(value, candidates) {
 #   1. keep CVR names with the same firm type and first letter;
 #   2. remove names outside the two-year date allowance;
 #   3. calculate similarity scores;
-#   4. keep the highest score if it reaches the step threshold.
+#   4. return the five highest-scoring CVRs.
 find_fuzzy_matches <- function(
     rows,
     key,
@@ -387,7 +387,9 @@ find_fuzzy_matches <- function(
     winner_firm_type_value <- winner$winner_firm_type
     winner_first_letter_value <- substr(winner_name, 1, 1)
     
-    # Step 5 uses first_letter; step 6 uses broad_first_letter.
+    # Create candidate matches
+    # - same firm type
+    # - either first letter or first broad letter
     if (first_letter_column == "first_letter") {
       candidates <- key[
         list(winner_firm_type_value, winner_first_letter_value),
@@ -404,9 +406,11 @@ find_fuzzy_matches <- function(
     
     if (nrow(candidates) == 0) next
     
+    # Keep candidate matches with valid registration dates
     candidates[, match_date := winner$match_date]
     candidates <- keep_valid_dates(candidates)
     
+    # Extract candidate names and keep only non-missings
     candidate_names <- candidates[[key_name_column]]
     keep <- !is.na(candidate_names) & candidate_names != ""
     candidates <- candidates[keep]
@@ -422,34 +426,38 @@ find_fuzzy_matches <- function(
     
     if (nrow(candidates) == 0) next
     
-    # Keep only candidates tied at the highest score.
-    candidates <- candidates[score == max(score)]
-    n_candidates <- uniqueN(candidates$cvr)
-    
-    # Resolve ties using the same date/oldest-firm rule as exact matching.
+    # Order candidates by score, then use the date/oldest-firm rule for ties.
     candidates[, active_on_tender_date := (
       (is.na(gyldigfra) | is.na(match_date) | match_date >= gyldigfra) &
         (is.na(gyldigtil) | is.na(match_date) | match_date <= gyldigtil)
     )]
     setorder(
       candidates,
+      -score,
       -active_on_tender_date,
       gyldigfra,
       cvr,
       na.last = TRUE
     )
     
-    best <- candidates[1]
+    # A CVR can appear several times because it has several registered names or
+    # active periods. Keep only its highest-ranked appearance.
+    candidates <- unique(candidates, by = "cvr")
+    n_top_score_candidates <- uniqueN(
+      candidates[score == max(score), cvr]
+    )
+    candidates <- head(candidates, 5)
+    candidates[, fuzzy_candidate_rank := seq_len(.N)]
     
-    found[[row_number]] <- best[, .(
+    found[[row_number]] <- candidates[, .(
       match_row_id = winner$match_row_id,
-      winner_cvr_name_match = cvr,
-      registered_name_match = registered_name,
-      name_match_source = name_source,
-      name_match_step = step,
-      name_match_method = "fuzzy",
-      name_match_score = score,
-      name_match_n_candidates = n_candidates
+      fuzzy_candidate_cvr = cvr,
+      fuzzy_candidate_name = registered_name,
+      fuzzy_candidate_source = name_source,
+      fuzzy_candidate_step = step,
+      fuzzy_candidate_score = score,
+      fuzzy_candidate_rank,
+      n_top_score_candidates
     )]
   }
   
