@@ -300,7 +300,10 @@ winner_name_prepared <- prepare_cvr_name(clean_winner_data$winner_name)
 
 clean_winner_data <- clean_winner_data %>%
   mutate(
+    winner_name_basic = winner_name_prepared$name_basic,
     winner_name_match = winner_name_prepared$name_clean,
+    winner_name_no_spaces = winner_name_prepared$name_no_spaces,
+    winner_name_broad = winner_name_prepared$name_broad,
     winner_firm_type = winner_name_prepared$firm_type,
     winner_name_first_letter = winner_name_prepared$first_letter
   )

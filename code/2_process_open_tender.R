@@ -337,7 +337,10 @@ winner_name_prepared <- prepare_cvr_name(clean_winner_data$winner_name)
 
 clean_winner_data <- clean_winner_data %>%
   mutate(
+    winner_name_basic = winner_name_prepared$name_basic,
     winner_name_match = winner_name_prepared$name_clean,
+    winner_name_no_spaces = winner_name_prepared$name_no_spaces,
+    winner_name_broad = winner_name_prepared$name_broad,
     winner_firm_type = winner_name_prepared$firm_type,
     winner_name_first_letter = winner_name_prepared$first_letter
   )
@@ -453,7 +456,8 @@ clean_winner_data <- clean_winner_data %>%
       "winner_cvr_clean", "winner_cvr_candidate", "winner_cvr_original",
       "winner_cvr_valid_from_same_name", "row_id_borrowed_from",
       "flag_fill_missing_cvr",
-      "winner_name", "winner_name_original", "winner_name_match",
+      "winner_name", "winner_name_original", "winner_name_basic",
+      "winner_name_match", "winner_name_no_spaces", "winner_name_broad",
       "winner_firm_type", "winner_name_first_letter",
       "winner_country", "winner_country_original",
       "valid_cvr", "n_valid_cvr", "flag_row_multiple_valid_cvr",
