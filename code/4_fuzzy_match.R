@@ -59,3 +59,19 @@ cvr_key <- rbindlist(
 # If the same match is available as both a main name and a biname, 
 # prioritise main name
 cvr_key[, source_order := fifelse(name_source == "name", 1L, 2L)]
+
+
+# 2 Filter KFST data
+## Only attempt to fuzzy match Danish firms AND 
+## row is missing cvr number and row has winning firm name (flag_check_fuzzy_match)
+
+## 2.1 Row id for later joining
+winner_data[, match_row_id := .I]
+
+# The CVR key contains Danish firms, so only rows marked DK are automatically
+remaining <- winner_data[
+  flag_check_fuzzy_match &
+    toupper(trimws(winner_country)) == "DK"
+]
+
+cat("No. observations to fuzzy match:", nrow(remaining))
