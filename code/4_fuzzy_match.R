@@ -242,3 +242,154 @@ cat("Number of fuzzy matches", nrow(new_matches))
 
 rm(new_matches, step_candidates, name_key, biname_key)
 gc()
+
+
+# 5 Join matches back to the full KFST winner data
+# A winner can have candidates from more than one fuzzy step or key. Rank them
+# together, remove repeated CVRs, and retain the best five in wide columns.
+if (nrow(fuzzy_candidates) > 0) {
+  fuzzy_candidates[, source_order := fifelse(
+    fuzzy_candidate_source == "name",
+    1L,
+    2L
+  )]
+  setorder(
+    fuzzy_candidates,
+    match_row_id,
+    -fuzzy_candidate_score,
+    fuzzy_candidate_step,
+    source_order,
+    fuzzy_candidate_rank
+  )
+  fuzzy_candidates <- unique(
+    fuzzy_candidates,
+    by = c("match_row_id", "fuzzy_candidate_cvr")
+  )
+  fuzzy_candidates <- fuzzy_candidates[
+    ,
+    head(.SD, 5),
+    by = match_row_id
+  ]
+  fuzzy_candidates[
+    ,
+    fuzzy_candidate_rank := seq_len(.N),
+    by = match_row_id
+  ]
+  
+  fuzzy_candidates_wide <- dcast(
+    fuzzy_candidates,
+    match_row_id ~ fuzzy_candidate_rank,
+    value.var = c(
+      "fuzzy_candidate_cvr",
+      "fuzzy_candidate_name",
+      "fuzzy_candidate_score",
+      "fuzzy_candidate_source",
+      "fuzzy_candidate_step"
+    )
+  )
+  
+  winner_data <- merge(
+    winner_data,
+    fuzzy_candidates_wide,
+    by = "match_row_id",
+    all.x = TRUE,
+    sort = FALSE
+  )
+}
+
+winner_data[
+  matched,
+  on = "match_row_id",
+  `:=`(
+    winner_cvr_name_match = i.winner_cvr_name_match,
+    registered_name_match = i.registered_name_match,
+    name_match_source = i.name_match_source,
+    name_match_step = i.name_match_step,
+    name_match_method = i.name_match_method,
+    name_match_score = i.name_match_score,
+    name_match_n_candidates = i.name_match_n_candidates
+  )
+]
+
+# Fuzzy matches and matches tied across several CVRs are retained but flagged.
+winner_data[, flag_name_match_found := !is.na(winner_cvr_name_match)]
+winner_data[, flag_name_match_ambiguous := (
+  flag_name_match_found &
+    name_match_n_candidates > 1
+)]
+winner_data[, flag_review_name_match := (
+  flag_name_match_found &
+    (
+      name_match_method == "fuzzy" |
+        flag_name_match_ambiguous
+    )
+)]
+
+# Step 7 in the documentation is manual review. This flag includes:
+#   - rows that did not receive a match;
+#   - fuzzy matches;
+#   - matches where several CVRs were possible.
+winner_data[, flag_manual_name_review := (
+  flag_check_fuzzy_match &
+    (
+      !flag_name_match_found |
+        flag_review_name_match
+    )
+)]
+
+# Keep the original cleaned CVR unchanged. winner_cvr_final uses the proposed
+# CVR only when the original cleaned field was missing.
+winner_data[, winner_cvr_final := fifelse(
+  is.na(winner_cvr_clean) | winner_cvr_clean == "",
+  winner_cvr_name_match,
+  as.character(winner_cvr_clean)
+)]
+
+winner_data[, name_match_status := fcase(
+  !flag_check_fuzzy_match,
+  "not requested",
+  flag_review_name_match,
+  "manual review - fuzzy or ambiguous match",
+  flag_name_match_found,
+  "matched",
+  is.na(winner_country) | toupper(trimws(winner_country)) != "DK",
+  "manual review - not marked as Danish",
+  default = "manual review - no automatic match"
+)]
+
+# Save a compact table containing only rows that need a person to inspect.
+manual_name_review <- winner_data[
+  flag_manual_name_review == TRUE,] %>% 
+  select(
+    tender_id,
+    lot_id,
+    winner_number,
+    winner_name,
+    winner_name_match,
+    winner_firm_type,
+    winner_country,
+    pub_date,
+    winner_cvr_name_match,
+    registered_name_match,
+    starts_with("fuzzy_candidate_name"),
+    starts_with("fuzzy_candidate_score"),
+    name_match_step,
+    name_match_method,
+    name_match_score,
+    name_match_n_candidates,
+    flag_name_match_ambiguous,
+    name_match_status
+  )
+
+# Delete match_row_id
+winner_data[, match_row_id := NULL]
+
+# 7. Save
+saveRDS(
+  winner_data,
+  file.path(clean_data_dir, "clean_winner_data_kfst_name_matched.rds")
+)
+saveRDS(
+  manual_name_review,
+  file.path(clean_data_dir, "manual_name_review_kfst.rds")
+)
