@@ -44,11 +44,19 @@ This file tracks development work against the current codebase and the project b
   - The brief focuses on the full available period up to 2026, while noting analysis had previously covered 2009-2023.
 - [ ] Clean OpenTender bidder CVRs.
   - Target: clean `bidder bodyid id` into valid eight-digit CVR numbers where possible.
+- [x] Investigate row-level single-valid-CVR overwrite edge cases.
+  - Audit finding before fix: 36 rows had `flag_row_has_single_valid_cvr == TRUE` but retained invalid final CVR rows.
+  - These occur when the row itself has exactly one valid CVR, but the same `winner_name` has multiple valid CVRs elsewhere, so `winner_cvr_clean_real` is missing.
+  - Conclusion: invalid sibling tokens now collapse to the row's own single valid CVR; only `flag_cvr_borrowed_from_winner_name` distinguishes cross-row borrowing.
+  - Key examples include `Nykredit A/S`, `Hoffmann A/S`, and `Deloitte Statsautoriseret Revisionsaktieselskab`.
 - [ ] Clean OpenTender buyer CVRs.
   - Target: clean `buyer bodyid id` into valid eight-digit CVR numbers where possible.
 - [ ] Expand OpenTender multi-identifier fields.
   - Target: ensure cleaned data contain at most one bidder or buyer CVR per row when the source field contains multiple identifiers.
+- [ ] Clean OpenTender tender- and lot-level variables.
+  - Target: review and standardize dates, counts, amounts, indicators, and other tender fields while retaining the original source variables.
 - [ ] Add reproducible OpenTender outputs and diagnostics.
+  - RDS is the preferred output format. The current `write_dta()` error is not a blocker; Stata export can remain optional.
 
 ## Scope Decisions
 
