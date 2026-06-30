@@ -275,3 +275,201 @@ prepare_cvr_name <- function(x) {
     first_letter = substr(name_clean, 1, 1)
   )
 }
+
+
+
+# ===============================
+# Fuzzy matching helper functions
+# ===============================
+
+# The notebook allows the KFST and CVR dates to differ by up to two years.
+# Missing CVR start/end dates are treated as open-ended.
+keep_valid_dates <- function(candidates) {
+  candidates[
+    is.na(match_date) |
+      (
+        (is.na(gyldigfra) | match_date >= gyldigfra - 730L) &
+          (is.na(gyldigtil) | match_date <= gyldigtil + 730L)
+      )
+  ]
+}
+
+# Exact joins can return several CVRs for one winner name. Prefer:
+#   1. a main CVR name rather than a biname;
+#   2. a name active on the exact publication date;
+#   3. the oldest registered name.
+# The number of possible CVRs is retained for manual review.
+select_preferred_exact_match <- function(candidates, step) {
+  
+  # Remove candidates whose registered-name dates are incompatible
+  candidates <- keep_valid_dates(candidates)
+  
+  # If empty return an empty data.table
+  if (nrow(candidates) == 0) {
+    return(data.table())
+  }
+  
+  # Record whether the CVR name was active on the tender date
+  candidates[, active_on_tender_date := (
+    (is.na(gyldigfra) | is.na(match_date) | match_date >= gyldigfra) &
+      (is.na(gyldigtil) | is.na(match_date) | match_date <= gyldigtil)
+  )]
+  
+  # Count the distinct CVRs available for each KFST winner
+  candidates[
+    ,
+    name_match_n_candidates := uniqueN(cvr),
+    by = match_row_id
+  ]
+  
+  # Put the preferred candidate first:
+  # 1. main name before biname
+  # 2. active on the tender date
+  # 3. oldest registration
+  candidates <- candidates[
+    order(
+      match_row_id,
+      source_order,
+      -active_on_tender_date,
+      gyldigfra,
+      cvr,
+      na.last = TRUE
+    )
+  ]
+  
+  # Keep the first candidate for each KFST winner
+  selected <- candidates[, .SD[1], by = match_row_id]
+  
+  # Return only the fields needed later
+  selected[, .(
+    match_row_id,
+    winner_cvr_name_match = cvr,
+    registered_name_match = registered_name,
+    name_match_source = name_source,
+    name_match_step = step,
+    name_match_method = "exact",
+    name_match_score = 100,
+    name_match_n_candidates
+  )]
+}
+
+# The documentation describes a Levenshtein similarity score from 0 to 100.
+levenshtein_ratio <- function(value, candidates) {
+  distance <- as.numeric(adist(value, candidates))
+  total_length <- nchar(value) + nchar(candidates)
+  round(100 * (total_length - distance) / total_length)
+}
+
+# Fuzzy matching happens only after the exact steps. For each remaining winner:
+#   1. keep CVR names with the same firm type and first letter;
+#   2. remove names outside the two-year date allowance;
+#   3. calculate similarity scores;
+#   4. keep the highest score if it reaches the step threshold.
+find_fuzzy_matches <- function(
+    rows,
+    key,
+    winner_name_column,
+    key_name_column,
+    first_letter_column,
+    threshold,
+    step
+) {
+  if (nrow(rows) == 0) return(data.table())
+  
+  found <- vector("list", nrow(rows))
+  
+  for (row_number in seq_len(nrow(rows))) {
+    winner <- rows[row_number]
+    winner_name <- winner[[winner_name_column]]
+    
+    if (is.na(winner_name) || winner_name == "") next
+    
+    winner_firm_type_value <- winner$winner_firm_type
+    winner_first_letter_value <- substr(winner_name, 1, 1)
+    
+    # Step 5 uses first_letter; step 6 uses broad_first_letter.
+    if (first_letter_column == "first_letter") {
+      candidates <- key[
+        list(winner_firm_type_value, winner_first_letter_value),
+        on = .(firm_type, first_letter),
+        nomatch = 0
+      ]
+    } else {
+      candidates <- key[
+        list(winner_firm_type_value, winner_first_letter_value),
+        on = .(firm_type, broad_first_letter),
+        nomatch = 0
+      ]
+    }
+    
+    if (nrow(candidates) == 0) next
+    
+    candidates[, match_date := winner$match_date]
+    candidates <- keep_valid_dates(candidates)
+    
+    candidate_names <- candidates[[key_name_column]]
+    keep <- !is.na(candidate_names) & candidate_names != ""
+    candidates <- candidates[keep]
+    candidate_names <- candidate_names[keep]
+    
+    if (nrow(candidates) == 0) next
+    
+    candidates[, score := levenshtein_ratio(
+      winner_name,
+      candidate_names
+    )]
+    candidates <- candidates[score >= threshold]
+    
+    if (nrow(candidates) == 0) next
+    
+    # Keep only candidates tied at the highest score.
+    candidates <- candidates[score == max(score)]
+    n_candidates <- uniqueN(candidates$cvr)
+    
+    # Resolve ties using the same date/oldest-firm rule as exact matching.
+    candidates[, active_on_tender_date := (
+      (is.na(gyldigfra) | is.na(match_date) | match_date >= gyldigfra) &
+        (is.na(gyldigtil) | is.na(match_date) | match_date <= gyldigtil)
+    )]
+    setorder(
+      candidates,
+      -active_on_tender_date,
+      gyldigfra,
+      cvr,
+      na.last = TRUE
+    )
+    
+    best <- candidates[1]
+    
+    found[[row_number]] <- best[, .(
+      match_row_id = winner$match_row_id,
+      winner_cvr_name_match = cvr,
+      registered_name_match = registered_name,
+      name_match_source = name_source,
+      name_match_step = step,
+      name_match_method = "fuzzy",
+      name_match_score = score,
+      name_match_n_candidates = n_candidates
+    )]
+  }
+  
+  rbindlist(found, use.names = TRUE, fill = TRUE)
+}
+
+# Add a step's matches to matched and remove those rows from remaining.
+# This small repeated block mirrors the notebook's matched/remaining workflow.
+keep_step_matches <- function(new_matches) {
+  if (nrow(new_matches) == 0) return(invisible(NULL))
+  
+  matched <<- rbindlist(
+    list(matched, new_matches),
+    use.names = TRUE,
+    fill = TRUE
+  )
+  remaining <<- remaining[
+    !new_matches,
+    on = "match_row_id"
+  ]
+  
+  invisible(NULL)
+}
