@@ -179,8 +179,11 @@ prepare_cvr_name <- function(x) {
     name_clean <- gsub(standalone_pattern, " ", name_clean, perl = TRUE)
   }
 
+  # Keep the lightly prepared name for the first exact matching step.
+  name_basic <- gsub("\\s+", " ", trimws(name_clean))
+
   # Apply the generalizations used before the main fuzzy match.
-  name_clean <- gsub("oe", "o", name_clean, fixed = TRUE)
+  name_clean <- gsub("oe", "o", name_basic, fixed = TRUE)
   name_clean <- gsub("aa", "a", name_clean, fixed = TRUE)
   name_clean <- gsub("&", " og ", name_clean, fixed = TRUE)
   name_clean <- gsub("v/", " ", name_clean, fixed = TRUE)
@@ -264,7 +267,10 @@ prepare_cvr_name <- function(x) {
 
   tibble::tibble(
     name_original = name_original,
+    name_basic = name_basic,
     name_clean = name_clean,
+    name_no_spaces = name_no_spaces,
+    name_broad = name_broad,
     firm_type = firm_type,
     first_letter = substr(name_clean, 1, 1)
   )
