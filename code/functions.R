@@ -371,7 +371,6 @@ find_fuzzy_matches <- function(
     winner_name_column,
     key_name_column,
     first_letter_column,
-    threshold,
     step
 ) {
   if (nrow(rows) == 0) return(data.table())
@@ -422,9 +421,6 @@ find_fuzzy_matches <- function(
       winner_name,
       candidate_names
     )]
-    candidates <- candidates[score >= threshold]
-    
-    if (nrow(candidates) == 0) next
     
     # Order candidates by score, then use the date/oldest-firm rule for ties.
     candidates[, active_on_tender_date := (
