@@ -30,8 +30,10 @@ options("RStata.StataVersion" = STATA_VERSION)
 
 # 3. Derived paths (do not edit)
 dirs <- list(
+  data = file.path(PROJECT_DIR, "data"),
+  cvr_key = file.path(PROJECT_DIR, "data", "cvr_matching_data"),
   raw_data   = file.path(PROJECT_DIR, "data", "raw"),
-  clean_data      = file.path(PROJECT_DIR, "data", "clean"),
+  clean_data = file.path(PROJECT_DIR, "data", "clean"),
   code = file.path(PROJECT_DIR, "code")
 )
 
