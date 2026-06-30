@@ -17,7 +17,7 @@ source(file.path(PROJECT_DIR, "code", "functions.R"))
 # Directories
 clean_data_dir <- dirs$clean_data
 
-# 1. Load the KFST winners and the CVR-name keys
+# 1 Load the KFST winners and the CVR-name keys
 
 winner_data <- readRDS(
   file.path(clean_data_dir, "clean_winner_data_kfst.rds")
