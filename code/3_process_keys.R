@@ -39,7 +39,10 @@ key_data[
   key_names_prepared,
   on = .(name = name_original),
   `:=`(
+    name_basic = i.name_basic,
     name_match = i.name_clean,
+    name_no_spaces = i.name_no_spaces,
+    name_broad = i.name_broad,
     firm_type = i.firm_type,
     first_letter = i.first_letter
   )
@@ -74,7 +77,10 @@ alt_name_data[
   binavn_prepared,
   on = .(binavn = name_original),
   `:=`(
+    name_basic = i.name_basic,
     name_match = i.name_clean,
+    name_no_spaces = i.name_no_spaces,
+    name_broad = i.name_broad,
     firm_type = i.firm_type,
     first_letter = i.first_letter
   )
