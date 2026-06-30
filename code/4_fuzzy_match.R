@@ -79,3 +79,7 @@ cat("No. observations to fuzzy match:", nrow(remaining))
 # The CVR key records when a name was valid. 
 # We will use tender publication dates to filter potential matches. 
 remaining[, match_date := as.IDate(pub_date)]
+
+# Table to append matches at each step.
+# Matched rows are removed from remaining (just as in matching.ipynb).
+matched <- data.table()
