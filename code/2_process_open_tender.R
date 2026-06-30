@@ -470,3 +470,9 @@ clean_winner_data <- clean_winner_data %>%
     )),
     everything()
   )
+
+
+
+# 4 Save 
+saveRDS(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_ot.rds"))
+haven::write_dta(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_ot.dta"))
