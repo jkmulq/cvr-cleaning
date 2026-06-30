@@ -75,3 +75,7 @@ remaining <- winner_data[
 ]
 
 cat("No. observations to fuzzy match:", nrow(remaining))
+
+# The CVR key records when a name was valid. 
+# We will use tender publication dates to filter potential matches. 
+remaining[, match_date := as.IDate(pub_date)]
