@@ -384,12 +384,8 @@ manual_name_review <- winner_data[
 # Delete match_row_id
 winner_data[, match_row_id := NULL]
 
-# 7. Save
-saveRDS(
-  winner_data,
-  file.path(clean_data_dir, "clean_winner_data_kfst_name_matched.rds")
-)
-saveRDS(
-  manual_name_review,
-  file.path(clean_data_dir, "manual_name_review_kfst.rds")
-)
+# 7 Save
+saveRDS(winner_data,
+        file.path(clean_data_dir, "clean_winner_data_kfst_name_matched.rds"))
+saveRDS(manual_name_review, 
+        file.path(clean_data_dir, "manual_name_review_kfst.rds"))
