@@ -83,3 +83,65 @@ remaining[, match_date := as.IDate(pub_date)]
 # Table to append matches at each step.
 # Matched rows are removed from remaining (just as in matching.ipynb).
 matched <- data.table()
+
+
+# 3 Exact matching
+## 3.1 Match on lightly prepared name and firm type
+candidate_matches <- cvr_key[
+  remaining,
+  on = .(
+    name_basic = winner_name_basic,
+    firm_type = winner_firm_type
+  ),
+  nomatch = 0,
+  allow.cartesian = TRUE
+]
+# The above matches to both the main name and all the potential business names
+# and also ignores whether the firm's registration date is compatible with 
+# with the tender date. 
+
+# select_preferred_exact_match() prioritises matches from the main firm name, 
+# and removes invalid matches based on registration/tender dates.
+new_matches <- select_preferred_exact_match(candidate_matches, step = 1L)
+keep_step_matches(new_matches) # Remove successful matches from remaining
+cat("Step 1 matches:", nrow(new_matches), "\n")
+
+## 3.2 match on generalized name without spaces, retaining firm type.
+candidate_matches <- cvr_key[
+  remaining,
+  on = .(
+    name_no_spaces = winner_name_no_spaces,
+    firm_type = winner_firm_type
+  ),
+  nomatch = 0,
+  allow.cartesian = TRUE
+]
+new_matches <- select_preferred_exact_match(candidate_matches, step = 2L)
+keep_step_matches(new_matches)
+cat("Step 2 matches:", nrow(new_matches), "\n")
+
+## 3.3 the same generalized name, now ignoring firm type
+candidate_matches <- cvr_key[
+  remaining,
+  on = .(name_no_spaces = winner_name_no_spaces),
+  nomatch = 0,
+  allow.cartesian = TRUE
+]
+new_matches <- select_preferred_exact_match(candidate_matches, step = 3L)
+keep_step_matches(new_matches)
+cat("Step 3 matches:", nrow(new_matches), "\n")
+
+## 3.4 remove common words, ignore word order, and ignore firm type.
+candidate_matches <- cvr_key[
+  remaining,
+  on = .(name_broad = winner_name_broad),
+  nomatch = 0,
+  allow.cartesian = TRUE
+]
+new_matches <- select_preferred_exact_match(candidate_matches, step = 4L)
+keep_step_matches(new_matches)
+cat("Step 4 matches:", nrow(new_matches), "\n")
+
+rm(new_matches, cvr_key)
+gc()
+
