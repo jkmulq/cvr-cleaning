@@ -145,3 +145,52 @@ cat("Step 4 matches:", nrow(new_matches), "\n")
 rm(new_matches, cvr_key)
 gc()
 
+
+# 4 Fuzzy matching
+# Create storage table
+fuzzy_candidates <- data.table()
+
+## 4.1 Main name key, full winner name
+# Find top 5 fuzzy matches
+step_candidates <- find_fuzzy_matches(
+  remaining,
+  name_key,
+  winner_name_column = "winner_name_match",
+  key_name_column = "name_match",
+  first_letter_column = "first_letter",
+  step = 5L
+)
+
+# Append new match candidates the fuzzy_candidates
+fuzzy_candidates <- rbindlist(
+  list(fuzzy_candidates, step_candidates),
+  use.names = TRUE,
+  fill = TRUE
+)
+
+# Accept only if match score exceeds 85
+new_matches <- accept_fuzzy_match(step_candidates, threshold = 85)
+keep_step_matches(new_matches) # Append to larger matched dataset
+cat("Number of new fuzzy matches:", nrow(new_matches))
+
+## 4.2 Biname key, full winner name
+step_candidates <- find_fuzzy_matches(
+  remaining,
+  biname_key,
+  winner_name_column = "winner_name_match",
+  key_name_column = "name_match",
+  first_letter_column = "first_letter",
+  step = 5L
+)
+
+# Append new match candidates the fuzzy_candidates
+fuzzy_candidates <- rbindlist(
+  list(fuzzy_candidates, step_candidates),
+  use.names = TRUE,
+  fill = TRUE
+)
+
+# Accept only if match score exceeds 85
+new_matches <- accept_fuzzy_match(step_candidates, threshold = 85)
+keep_step_matches(new_matches) # Append to larger matched dataset
+cat("Number of new fuzzy matches:", nrow(new_matches))
