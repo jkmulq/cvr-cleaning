@@ -381,6 +381,10 @@ clean_winner_data <- clean_winner_data %>%
       flag_missing_winner_cvr & !flag_missing_winner_name,
       FALSE
     ),
+    flag_check_fuzzy_match = coalesce(
+      flag_missing_winner_cvr & !flag_missing_winner_name,
+      FALSE
+    ),
     flag_review_cvr = coalesce(!flag_missing_winner_cvr & !valid_cvr, FALSE),
     flag_review_n_winners = coalesce(flag_mismatch_winner_count, FALSE), 
     flag_no_winner_info = coalesce(
