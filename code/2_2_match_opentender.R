@@ -370,3 +370,34 @@ gc()
 cat("Number of row eligible for segmentation:", 
     nrow(name_partition_summary[flag_name_partition_eligible == TRUE]), "\n")
 cat("Number of segments extracted:", nrow(name_partition_segments), "\n")
+
+## 5.1 Prepare each proposed firm-name segment
+segment_names_prepared <- prepare_cvr_name(name_partition_segments$segment_text)
+
+# Add prepared segment names to the segment table for matching.
+name_partition_segments[
+  ,
+  `:=`(
+    segment_match_id = .I,
+    winner_name_basic = segment_names_prepared$name_basic,
+    winner_name_match = segment_names_prepared$name_clean,
+    winner_name_no_spaces = segment_names_prepared$name_no_spaces,
+    winner_name_broad = segment_names_prepared$name_broad,
+    winner_firm_type = segment_names_prepared$firm_type
+  )
+]
+
+# Setup matching infrastructure for segmented names. 
+# Each segment is treated as a separate row for matching.
+segment_remaining <- name_partition_segments[,
+  .(
+    match_row_id = segment_match_id,
+    winner_name_basic,
+    winner_name_match,
+    winner_name_no_spaces,
+    winner_name_broad,
+    winner_firm_type,
+    match_date
+  )
+]
+segment_matches <- data.table()
