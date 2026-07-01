@@ -272,6 +272,7 @@ consortium_candidates <- cvr_key[
   allow.cartesian = TRUE
 ]
 new_consortium_matches <- select_preferred_exact_match(consortium_candidates, step = 8L)
+keep_step_matches(new_consortium_matches)
 consortium_name_results <- rbindlist(
   list(consortium_name_results, new_consortium_matches),
   use.names = TRUE,
