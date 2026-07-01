@@ -640,3 +640,30 @@ remaining <- remaining[!potential_multiple_ids, on = "match_row_id"]
 
 rm(complete_summary, cvr_key)
 gc()
+
+# 6 Fuzzy matching
+# Create storage table
+fuzzy_candidates <- data.table()
+
+## 6.1 Main name key, full winner name
+# Find top 5 fuzzy matches
+step_candidates <- find_fuzzy_matches(
+  remaining,
+  name_key,
+  winner_name_column = "winner_name_match",
+  key_name_column = "name_match",
+  first_letter_column = "first_letter",
+  step = 5L
+)
+
+# Append new match candidates the fuzzy_candidates
+fuzzy_candidates <- rbindlist(
+  list(fuzzy_candidates, step_candidates),
+  use.names = TRUE,
+  fill = TRUE
+)
+
+# Accept only if match score exceeds 85
+new_matches <- accept_fuzzy_match(step_candidates, threshold = 85)
+keep_step_matches(new_matches) # Append to larger matched dataset
+cat("Number of new fuzzy matches:", nrow(new_matches))
