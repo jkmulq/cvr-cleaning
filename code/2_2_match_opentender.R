@@ -737,3 +737,56 @@ cat("Number of fuzzy matches", nrow(new_matches))
 rm(new_matches, step_candidates, name_key, biname_key)
 gc()
 
+
+# 7 Join matches back to the full OpenTender winner data
+# A winner can have candidates from more than one fuzzy step or key. Rank them
+# together, remove repeated CVRs, and retain the best five in wide columns.
+if (nrow(fuzzy_candidates) > 0) {
+  fuzzy_candidates[, source_order := fifelse(
+    fuzzy_candidate_source == "name",
+    1L,
+    2L
+  )]
+  setorder(
+    fuzzy_candidates,
+    match_row_id,
+    -fuzzy_candidate_score,
+    fuzzy_candidate_step,
+    source_order,
+    fuzzy_candidate_rank
+  )
+  fuzzy_candidates <- unique(
+    fuzzy_candidates,
+    by = c("match_row_id", "fuzzy_candidate_cvr")
+  )
+  fuzzy_candidates <- fuzzy_candidates[
+    ,
+    head(.SD, 5),
+    by = match_row_id
+  ]
+  fuzzy_candidates[
+    ,
+    fuzzy_candidate_rank := seq_len(.N),
+    by = match_row_id
+  ]
+  
+  fuzzy_candidates_wide <- dcast(
+    fuzzy_candidates,
+    match_row_id ~ fuzzy_candidate_rank,
+    value.var = c(
+      "fuzzy_candidate_cvr",
+      "fuzzy_candidate_name",
+      "fuzzy_candidate_score",
+      "fuzzy_candidate_source",
+      "fuzzy_candidate_step"
+    )
+  )
+  
+  winner_data <- merge(
+    winner_data,
+    fuzzy_candidates_wide,
+    by = "match_row_id",
+    all.x = TRUE,
+    sort = FALSE
+  )
+}
