@@ -174,15 +174,14 @@ consortium_name_rows <- copy(remaining)
 # Flag the relevant rows, then remove the labels from a temporary name.
 consortium_name_rows[, flag_collaboration_text := stringr::str_detect(winner_name, consortium_language_pattern)]
 consortium_name_rows <- consortium_name_rows[flag_collaboration_text == TRUE, ]
-consortium_name_rows[, winner_name_without_consortium_language := str_remove_all(winner_name, consortium_language_pattern)]
 
 # Small cleanup prior to matching processing
 consortium_name_rows[
   ,
   winner_name_without_consortium_language :=
-    winner_name %>% 
-    stringr::str_remove_all(consortium_language_pattern)  %>% 
-    stringr::str_replace_all("[;:()]+", " ")  %>% 
+    winner_name |>
+    stringr::str_remove_all(consortium_language_pattern) |>
+    stringr::str_replace_all("[;:()]+", " ") |>
     stringr::str_squish()
 ]
 
@@ -650,6 +649,28 @@ fuzzy_candidates <- data.table()
 step_candidates <- find_fuzzy_matches(
   remaining,
   name_key,
+  winner_name_column = "winner_name_match",
+  key_name_column = "name_match",
+  first_letter_column = "first_letter",
+  step = 5L
+)
+
+# Append new match candidates the fuzzy_candidates
+fuzzy_candidates <- rbindlist(
+  list(fuzzy_candidates, step_candidates),
+  use.names = TRUE,
+  fill = TRUE
+)
+
+# Accept only if match score exceeds 85
+new_matches <- accept_fuzzy_match(step_candidates, threshold = 85)
+keep_step_matches(new_matches) # Append to larger matched dataset
+cat("Number of new fuzzy matches:", nrow(new_matches))
+
+## 6.2 Biname key, full winner name
+step_candidates <- find_fuzzy_matches(
+  remaining,
+  biname_key,
   winner_name_column = "winner_name_match",
   key_name_column = "name_match",
   first_letter_column = "first_letter",
