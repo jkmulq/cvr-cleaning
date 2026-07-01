@@ -711,3 +711,29 @@ fuzzy_candidates <- rbindlist(
 new_matches <- accept_fuzzy_match(step_candidates, threshold = 86)
 keep_step_matches(new_matches) # Append to new matched dataset
 cat("Number of fuzzy matches:", nrow(new_matches))
+
+## 6.4 biname name key, but using the broader name
+step_candidates <- find_fuzzy_matches(
+  remaining,
+  biname_key,
+  winner_name_column = "winner_name_broad",
+  key_name_column = "name_broad",
+  first_letter_column = "broad_first_letter",
+  step = 6L
+)
+
+# Append new match candidates to fuzzy_candidates
+fuzzy_candidates <- rbindlist(
+  list(fuzzy_candidates, step_candidates),
+  use.names = TRUE,
+  fill = TRUE
+)
+
+# Accept if threshold exceeds 89
+new_matches <- accept_fuzzy_match(step_candidates, threshold = 89)
+keep_step_matches(new_matches) # Append to matched dataset
+cat("Number of fuzzy matches", nrow(new_matches))
+
+rm(new_matches, step_candidates, name_key, biname_key)
+gc()
+
