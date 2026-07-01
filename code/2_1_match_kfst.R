@@ -311,6 +311,45 @@ winner_data[
   )
 ]
 
+# Give each numeric matching step a stable, descriptive code. The numeric step
+# is retained so the original matching order remains easy to inspect.
+winner_data[, name_match_step_code := fcase(
+  name_match_method == "exact" & name_match_step == 1L,
+  "exact matching: basic name and firm type",
+  name_match_method == "exact" & name_match_step == 2L,
+  "exact matching: no spaces and firm type",
+  name_match_method == "exact" & name_match_step == 3L,
+  "exact matching: no spaces",
+  name_match_method == "exact" & name_match_step == 4L,
+  "exact matching: broad name",
+  name_match_method == "fuzzy" & name_match_step == 5L &
+    name_match_source == "name",
+  "fuzzy matching: prepared main name",
+  name_match_method == "fuzzy" & name_match_step == 5L &
+    name_match_source == "biname",
+  "fuzzy matching: prepared biname",
+  name_match_method == "fuzzy" & name_match_step == 6L &
+    name_match_source == "name",
+  "fuzzy matching: broad main name",
+  name_match_method == "fuzzy" & name_match_step == 6L &
+    name_match_source == "biname",
+  "fuzzy matching: broad biname",
+  !is.na(winner_cvr_clean) & winner_cvr_clean != "" &
+    source == "single winners",
+  "CVR source: single CVR row",
+  !is.na(winner_cvr_clean) & winner_cvr_clean != "" &
+    source == "multiple winners",
+  "CVR source: multiple CVR separation",
+  !is.na(winner_cvr_clean) & winner_cvr_clean != "",
+  "existing CVR, unclassified",
+  flag_check_fuzzy_match &
+    toupper(trimws(winner_country)) == "DK",
+  "matching candidate: no match found",
+  flag_check_fuzzy_match,
+  "not a matching candidate: not marked as Danish",
+  default = "not a matching candidate: no CVR name"
+)]
+
 # Fuzzy matches and matches tied across several CVRs are retained but flagged.
 winner_data[, flag_name_match_found := !is.na(winner_cvr_name_match)]
 winner_data[, flag_name_match_ambiguous := (
