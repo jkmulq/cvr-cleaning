@@ -481,3 +481,41 @@ segment_matches <- rbindlist(
   use.names = TRUE,
   fill = TRUE
 )
+
+# Join the segment matches back to the segment table
+setnames(segment_matches, "match_row_id", "segment_match_id")
+name_partition_segments[
+  segment_matches,
+  on = "segment_match_id",
+  `:=`(
+    segment_cvr_match = i.winner_cvr_name_match,
+    segment_registered_name_match = i.registered_name_match,
+    segment_match_source = i.name_match_source,
+    segment_match_step = i.name_match_step,
+    segment_match_n_candidates = i.name_match_n_candidates
+  )
+]
+
+## 5.6 Evaluate segment matches within each partition
+partition_evaluation <- name_partition_segments[,
+  .(name_partition_n_firms = .N,
+    
+    # Are all CVRs in a segment filled?
+    all_segments_matched = all(!is.na(segment_cvr_match)), 
+    
+    # Did each matched CVR match only one CVR in the key?
+    all_segments_unique = all(!is.na(segment_match_n_candidates) 
+                              & segment_match_n_candidates == 1L),
+    
+    # Number of distinct CVRs matched in the partition.
+    n_distinct_segment_cvrs = uniqueN(segment_cvr_match, na.rm = TRUE),
+    
+    # What is the maximum step at which a segment matched? 
+    # We might prefer segments that match in earlier (i.e. with stricter rules)
+    max_segment_match_step = if (all(is.na(segment_match_step))) {
+      NA_integer_
+    } else {
+      max(segment_match_step, na.rm = TRUE)
+    }
+  ),
+  by = .(match_row_id, partition_id, partition_text)]
