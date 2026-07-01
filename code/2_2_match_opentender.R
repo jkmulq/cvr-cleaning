@@ -532,3 +532,30 @@ partition_evaluation[,
       n_distinct_segment_cvrs == name_partition_n_firms
   )
 ]
+
+# Join partition evaluations back onto segments
+name_partition_segments[
+  partition_evaluation,
+  on = .(match_row_id, partition_id, partition_text),
+  `:=`(
+    name_partition_n_firms = i.name_partition_n_firms,
+    all_segments_matched = i.all_segments_matched,
+    all_segments_unique = i.all_segments_unique,
+    n_distinct_segment_cvrs = i.n_distinct_segment_cvrs,
+    max_segment_match_step = i.max_segment_match_step,
+    partition_complete = i.partition_complete
+  )
+]
+
+# Separate out complete partitions
+complete_partitions <- partition_evaluation[partition_complete == TRUE, ]
+
+rm(
+  segment_names_prepared,
+  segment_remaining,
+  segment_candidates,
+  new_segment_matches,
+  segment_matches,
+  partition_evaluation,
+  complete_partitions
+)
