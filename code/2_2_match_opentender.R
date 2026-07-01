@@ -629,3 +629,14 @@ remaining <- remaining[
   !unique_partition_ids,
   on = "match_row_id"
 ]
+
+# Rows with several complete partitions are ambiguous. 
+# Keep their original rows and partition diagnostics for manual review
+# do not fuzzy match the combined winner name.
+potential_multiple_ids <- name_partition_summary[
+  name_partition_status == "not accepted: multiple complete partitions",
+  .(match_row_id)]
+remaining <- remaining[!potential_multiple_ids, on = "match_row_id"]
+
+rm(complete_summary, cvr_key)
+gc()
