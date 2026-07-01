@@ -401,3 +401,24 @@ segment_remaining <- name_partition_segments[,
   )
 ]
 segment_matches <- data.table()
+
+## 5.2 Exact segment match: prepared name and firm type
+segment_candidates <- cvr_key[
+  segment_remaining,
+  on = .(
+    name_basic = winner_name_basic,
+    firm_type = winner_firm_type
+  ),
+  nomatch = 0,
+  allow.cartesian = TRUE
+]
+new_segment_matches <- select_preferred_exact_match(segment_candidates, step = 1L)
+segment_matches <- rbindlist(
+  list(segment_matches, new_segment_matches),
+  use.names = TRUE,
+  fill = TRUE
+)
+segment_remaining <- segment_remaining[
+  !new_segment_matches,
+  on = "match_row_id"
+]
