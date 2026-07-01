@@ -365,3 +365,8 @@ name_partition_segments <- rbindlist(
 
 rm(partition_summaries, partition_tables, result, winner)
 gc()
+
+# Print diagnostics
+cat("Number of row eligible for segmentation:", 
+    nrow(name_partition_summary[flag_name_partition_eligible == TRUE]), "\n")
+cat("Number of segments extracted:", nrow(name_partition_segments), "\n")
