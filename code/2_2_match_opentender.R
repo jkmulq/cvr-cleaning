@@ -561,3 +561,40 @@ rm(
   partition_evaluation,
   complete_partitions
 )
+
+## 5.7 Summarise the result for each original winner row
+# Create dummy variables in main partition summary object
+name_partition_summary[,
+  `:=`(
+    name_partition_n_complete = 0L,
+    proposed_name_partition = NA_character_,
+    name_partition_n_firms = NA_integer_
+  )
+]
+
+# Join complete partitions onto main partition object
+name_partition_summary[
+  complete_summary,
+  on = "match_row_id",
+  `:=`(
+    name_partition_n_complete = i.name_partition_n_complete,
+    proposed_name_partition = i.proposed_name_partition,
+    name_partition_n_firms = i.proposed_name_partition_n_firms
+  )
+]
+
+# Flag partition status
+name_partition_summary[,
+  name_partition_status := fcase(
+    !flag_name_partition_eligible,
+    "not tested: insufficient evidence",
+    too_many_delimiters,
+    "not tested: too many delimiters",
+    name_partition_n_complete > 1L,
+    "not accepted: multiple complete partitions",
+    name_partition_n_complete == 1L,
+    "accepted: unique complete partition",
+    default = "no complete partition"
+  )
+]
+name_partition_summary[, flag_potential_multiple_winners := name_partition_n_complete > 0L]
