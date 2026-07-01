@@ -550,6 +550,17 @@ name_partition_segments[
 # Separate out complete partitions
 complete_partitions <- partition_evaluation[partition_complete == TRUE, ]
 
+# Flag rows with multiple accepted partitions
+complete_partitions[, partition_count := .N, by = match_row_id]
+complete_partitions[, flag_multiple_complete_partitions := partition_count > 1L]
+
+# Collapse to single rows
+complete_summary <- complete_partitions[, .(
+    name_partition_n_complete = .N,
+    proposed_name_partition = fifelse(.N == 1L, first(partition_text), NA_character_),
+    proposed_name_partition_n_firms = fifelse(.N == 1L, first(name_partition_n_firms), NA_integer_)
+  ), by = match_row_id]
+
 rm(
   segment_names_prepared,
   segment_remaining,
