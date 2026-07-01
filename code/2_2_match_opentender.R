@@ -220,7 +220,7 @@ consortium_name_results <- rbindlist(
   use.names = TRUE,
   fill = TRUE
 )
-keep_step_matches(auto_consortium_matches)
+keep_step_matches(new_consortium_matches)
 consortium_remaining <- consortium_remaining[
   !new_consortium_matches,
   on = "match_row_id"
@@ -242,7 +242,7 @@ consortium_name_results <- rbindlist(
   use.names = TRUE,
   fill = TRUE
 )
-keep_step_matches(auto_consortium_matches)
+keep_step_matches(new_consortium_matches)
 consortium_remaining <- consortium_remaining[
   !new_consortium_matches,
   on = "match_row_id"
@@ -261,6 +261,7 @@ consortium_name_results <- rbindlist(
   use.names = TRUE,
   fill = TRUE
 )
+keep_step_matches(new_consortium_matches)
 consortium_remaining <- consortium_remaining[!new_consortium_matches, on = "match_row_id"]
 
 ## 4.4 Broad whole name, ignoring firm type
