@@ -279,11 +279,89 @@ consortium_name_results <- rbindlist(
   fill = TRUE
 )
 
-rm(
-  consortium_name_prepared,
-  consortium_remaining,
-  consortium_candidates,
-  new_consortium_matches,
-  auto_consortium_matches
+
+# 5 Deduplication
+## OpenTender data isn't clear whether multiple firm names appear in the data
+## and how they're separated. 
+## This step performs substring exact matching detection to see whether we can 
+## unambiguously parse out multiple firm names. 
+# Generate every possible split/keep combination for names with no more than
+# five potential delimiter positions. 
+# Original row unchanged.
+
+partition_summaries <- vector("list", nrow(remaining)) # Store summary of each partition test
+partition_tables <- vector("list", nrow(remaining)) # Store the proposed segments for each partition test
+
+for (row_number in seq_len(nrow(remaining))) {
+  winner <- remaining[row_number]
+  result <- make_winner_name_partitions(
+    winner$winner_name,
+    max_boundaries = 5L
+  )
+  
+  # Only test partitions when there is positive evidence of several firms:
+  # collaboration vocabulary or at least two legal forms. This protects
+  # geography, divisions, generic fragments, and single legal-form names from
+  # being interpreted as separate firms. 
+  # The rule is recorded in TODO.md so it can be removed cleanly if the test is too restrictive.
+  partition_eligible <- (result$flag_collaboration_text | result$n_legal_forms >= 2L)
+  eligibility_reason <- fcase(
+    result$flag_collaboration_text & result$n_legal_forms >= 2L,
+    "collaboration vocabulary and multiple legal forms",
+    result$flag_collaboration_text,
+    "collaboration vocabulary",
+    result$n_legal_forms >= 2L,
+    "multiple legal forms",
+    default = "excluded - insufficient multiple-firm evidence"
+  )
+  
+  # Create data.table of paritions
+  partition_summaries[[row_number]] <- data.table(
+    match_row_id = winner$match_row_id,
+    name_partition_n_boundaries = result$n_boundaries,
+    name_partition_n_legal_forms = result$n_legal_forms,
+    flag_name_partition_eligible = partition_eligible,
+    name_partition_eligibility_reason = eligibility_reason,
+    flag_joint_venture_text = result$flag_joint_venture_text,
+    flag_consortium_text = result$flag_consortium_text,
+    flag_collaboration_text = result$flag_collaboration_text,
+    too_many_delimiters = result$too_many_delimiters
+  )
+  
+  if (partition_eligible && nrow(result$partitions) > 0) {
+    partition_tables[[row_number]] <- copy(result$partitions)[
+      ,
+      `:=`(
+        match_row_id = winner$match_row_id,
+        tender_id = winner$tender_id,
+        lot_id = winner$lot_id,
+        winner_number = winner$winner_number,
+        winner_name_original = result$original_name,
+        winner_name_working = result$working_name,
+        name_partition_n_boundaries = result$n_boundaries,
+        name_partition_n_legal_forms = result$n_legal_forms,
+        name_partition_eligibility_reason = eligibility_reason,
+        flag_joint_venture_text = result$flag_joint_venture_text,
+        flag_consortium_text = result$flag_consortium_text,
+        flag_collaboration_text = result$flag_collaboration_text,
+        match_date = winner$match_date
+      )
+    ]
+  }
+}
+
+# Bind into data.tables
+name_partition_summary <- rbindlist(
+  partition_summaries,
+  use.names = TRUE,
+  fill = TRUE
 )
 
+name_partition_segments <- rbindlist(
+  partition_tables,
+  use.names = TRUE,
+  fill = TRUE
+)
+
+rm(partition_summaries, partition_tables, result, winner)
+gc()
