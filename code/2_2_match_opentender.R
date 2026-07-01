@@ -598,3 +598,34 @@ name_partition_summary[,
   )
 ]
 name_partition_summary[, flag_potential_multiple_winners := name_partition_n_complete > 0L]
+
+# Separate accepted partitions
+unique_partition_ids <- name_partition_summary[
+  name_partition_status == "accepted: unique complete partition",
+  .(match_row_id)
+]
+separated_name_segments <- name_partition_segments[
+  partition_complete == TRUE &
+    match_row_id %in% unique_partition_ids$match_row_id,
+  .(
+    match_row_id,
+    name_partition_segment_number = segment_number,
+    separated_winner_name = segment_text,
+    separated_winner_name_basic = winner_name_basic,
+    separated_winner_name_match = winner_name_match,
+    separated_winner_name_no_spaces = winner_name_no_spaces,
+    separated_winner_name_broad = winner_name_broad,
+    separated_winner_firm_type = winner_firm_type,
+    separated_winner_cvr = segment_cvr_match,
+    separated_registered_name = segment_registered_name_match,
+    separated_name_source = segment_match_source,
+    separated_match_step = segment_match_step,
+    separated_n_candidates = segment_match_n_candidates
+  )
+]
+
+# Remove successfully separated rows from remaining object
+remaining <- remaining[
+  !unique_partition_ids,
+  on = "match_row_id"
+]
