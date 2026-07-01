@@ -144,3 +144,144 @@ gc()
 cat("total exact matches:", nrow(matched))
 cat("share:", round(nrow(matched) / nrow(remaining_original), 3))
 
+
+# 4 Exact matching after removing consortium language
+## The previous four exact steps above use the untouched prepared winner name.
+## This stage only considers remaining names with a potential collaboration label.
+## It removes consortium/JV labels from a temporary whole-name string and asks
+## whether that complete string represents one registered firm before trying
+## to split potential multiple firm entries into separate entries.
+
+# Regex for consortium labels. Covers the Danish and English consortium/JV labels.
+# Examples include: "Konsortiet", "konsortium", "konsortie", "ARC-Konsortiet",
+# "Consortium", "Building Consortium", "joint venture", "joint-venture", "jointventure"
+# "JV", "J.V.", "J V", "J. V.", among others.
+consortium_language_pattern <- stringr::regex(
+  paste(
+    "konsorti(?:et|um|e)?",
+    "consorti(?:um)?",
+    "joint[ -]?venture",
+    "(?<![[:alnum:]])j[.]?\\s*v[.]?(?![[:alnum:]])",
+    "sammenslutningen(?:\\s+af)?",
+    "i\\s+samarbejde\\s+med",
+    "sammen\\s+med",
+    sep = "|"
+  ),
+  ignore_case = TRUE
+)
+consortium_name_rows <- copy(remaining)
+
+# Flag the relevant rows, then remove the labels from a temporary name.
+consortium_name_rows[, flag_collaboration_text := stringr::str_detect(winner_name, consortium_language_pattern)]
+consortium_name_rows <- consortium_name_rows[flag_collaboration_text == TRUE, ]
+consortium_name_rows[, winner_name_without_consortium_language := str_remove_all(winner_name, consortium_language_pattern)]
+
+# Small cleanup prior to matching processing
+consortium_name_rows[
+  ,
+  winner_name_without_consortium_language :=
+    winner_name %>% 
+    stringr::str_remove_all(consortium_language_pattern)  %>% 
+    stringr::str_replace_all("[;:()]+", " ")  %>% 
+    stringr::str_squish()
+]
+
+# Prepare names
+consortium_name_prepared <- prepare_cvr_name(consortium_name_rows$winner_name_without_consortium_language)
+consortium_name_rows[
+  ,
+  `:=`(
+    winner_name_basic = consortium_name_prepared$name_basic,
+    winner_name_match = consortium_name_prepared$name_clean,
+    winner_name_no_spaces = consortium_name_prepared$name_no_spaces,
+    winner_name_broad = consortium_name_prepared$name_broad,
+    winner_firm_type = consortium_name_prepared$firm_type
+  )
+]
+consortium_remaining <- copy(consortium_name_rows)
+consortium_name_results <- data.table()
+
+## 4.1 Lightly prepared whole name and firm type
+consortium_candidates <- cvr_key[
+  consortium_remaining,
+  on = .(
+    name_basic = winner_name_basic,
+    firm_type = winner_firm_type
+  ),
+  nomatch = 0,
+  allow.cartesian = TRUE
+]
+new_consortium_matches <- select_preferred_exact_match(
+  consortium_candidates,
+  step = 5L
+)
+consortium_name_results <- rbindlist(
+  list(consortium_name_results, new_consortium_matches),
+  use.names = TRUE,
+  fill = TRUE
+)
+keep_step_matches(auto_consortium_matches)
+consortium_remaining <- consortium_remaining[
+  !new_consortium_matches,
+  on = "match_row_id"
+]
+
+## 4.2 Generalized whole name without spaces, retaining firm type
+consortium_candidates <- cvr_key[
+  consortium_remaining,
+  on = .(
+    name_no_spaces = winner_name_no_spaces,
+    firm_type = winner_firm_type
+  ),
+  nomatch = 0,
+  allow.cartesian = TRUE
+]
+new_consortium_matches <- select_preferred_exact_match(consortium_candidates, step = 6L)
+consortium_name_results <- rbindlist(
+  list(consortium_name_results, new_consortium_matches),
+  use.names = TRUE,
+  fill = TRUE
+)
+keep_step_matches(auto_consortium_matches)
+consortium_remaining <- consortium_remaining[
+  !new_consortium_matches,
+  on = "match_row_id"
+]
+
+## 4.3 Whole name without spaces, ignoring firm type
+consortium_candidates <- cvr_key[
+  consortium_remaining,
+  on = .(name_no_spaces = winner_name_no_spaces),
+  nomatch = 0,
+  allow.cartesian = TRUE
+]
+new_consortium_matches <- select_preferred_exact_match(consortium_candidates, step = 7L)
+consortium_name_results <- rbindlist(
+  list(consortium_name_results, new_consortium_matches),
+  use.names = TRUE,
+  fill = TRUE
+)
+consortium_remaining <- consortium_remaining[!new_consortium_matches, on = "match_row_id"]
+
+## 4.4 Broad whole name, ignoring firm type
+consortium_candidates <- cvr_key[
+  consortium_remaining,
+  on = .(name_broad = winner_name_broad),
+  nomatch = 0,
+  allow.cartesian = TRUE
+]
+new_consortium_matches <- select_preferred_exact_match(consortium_candidates, step = 8L)
+consortium_name_results <- rbindlist(
+  list(consortium_name_results, new_consortium_matches),
+  use.names = TRUE,
+  fill = TRUE
+)
+
+rm(
+  consortium_name_prepared,
+  consortium_remaining,
+  consortium_candidates,
+  new_consortium_matches,
+  auto_consortium_matches
+)
+
