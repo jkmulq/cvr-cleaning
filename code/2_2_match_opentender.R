@@ -508,15 +508,7 @@ partition_evaluation <- name_partition_segments[,
                               & segment_match_n_candidates == 1L),
     
     # Number of distinct CVRs matched in the partition.
-    n_distinct_segment_cvrs = uniqueN(segment_cvr_match, na.rm = TRUE),
-    
-    # What is the maximum step at which a segment matched? 
-    # We might prefer segments that match in earlier (i.e. with stricter rules)
-    max_segment_match_step = if (all(is.na(segment_match_step))) {
-      NA_integer_
-    } else {
-      max(segment_match_step, na.rm = TRUE)
-    }
+    n_distinct_segment_cvrs = uniqueN(segment_cvr_match, na.rm = TRUE)
   ),
   by = .(match_row_id, partition_id, partition_text)]
 
@@ -542,7 +534,6 @@ name_partition_segments[
     all_segments_matched = i.all_segments_matched,
     all_segments_unique = i.all_segments_unique,
     n_distinct_segment_cvrs = i.n_distinct_segment_cvrs,
-    max_segment_match_step = i.max_segment_match_step,
     partition_complete = i.partition_complete
   )
 ]
