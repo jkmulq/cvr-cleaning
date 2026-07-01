@@ -519,3 +519,16 @@ partition_evaluation <- name_partition_segments[,
     }
   ),
   by = .(match_row_id, partition_id, partition_text)]
+
+# Flag 'complete' partitions:
+# - all segments matched
+# - all segments unique
+# - number of distinct CVRs equals the number of segments in the partition
+partition_evaluation[,
+  partition_complete := (
+    name_partition_n_firms >= 2L &
+      all_segments_matched &
+      all_segments_unique &
+      n_distinct_segment_cvrs == name_partition_n_firms
+  )
+]
