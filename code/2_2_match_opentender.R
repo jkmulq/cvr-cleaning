@@ -422,3 +422,62 @@ segment_remaining <- segment_remaining[
   !new_segment_matches,
   on = "match_row_id"
 ]
+
+## 5.3 Exact segment match: name without spaces and firm type
+segment_candidates <- cvr_key[
+  segment_remaining,
+  on = .(
+    name_no_spaces = winner_name_no_spaces,
+    firm_type = winner_firm_type
+  ),
+  nomatch = 0,
+  allow.cartesian = TRUE
+]
+new_segment_matches <- select_preferred_exact_match(segment_candidates, step = 2L)
+segment_matches <- rbindlist(
+  list(segment_matches, new_segment_matches),
+  use.names = TRUE,
+  fill = TRUE
+)
+segment_remaining <- segment_remaining[
+  !new_segment_matches,
+  on = "match_row_id"
+]
+
+## 5.4 Exact segment match: name without spaces, ignoring firm type
+segment_candidates <- cvr_key[
+  segment_remaining,
+  on = .(name_no_spaces = winner_name_no_spaces),
+  nomatch = 0,
+  allow.cartesian = TRUE
+]
+new_segment_matches <- select_preferred_exact_match(
+  segment_candidates,
+  step = 3L
+)
+segment_matches <- rbindlist(
+  list(segment_matches, new_segment_matches),
+  use.names = TRUE,
+  fill = TRUE
+)
+segment_remaining <- segment_remaining[
+  !new_segment_matches,
+  on = "match_row_id"
+]
+
+## 5.5 Exact segment match: broad name, ignoring firm type
+segment_candidates <- cvr_key[
+  segment_remaining,
+  on = .(name_broad = winner_name_broad),
+  nomatch = 0,
+  allow.cartesian = TRUE
+]
+new_segment_matches <- select_preferred_exact_match(
+  segment_candidates,
+  step = 4L
+)
+segment_matches <- rbindlist(
+  list(segment_matches, new_segment_matches),
+  use.names = TRUE,
+  fill = TRUE
+)
