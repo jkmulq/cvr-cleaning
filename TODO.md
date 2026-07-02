@@ -39,6 +39,22 @@ This file tracks development work against the current codebase and the project b
 
 ## OpenTender Cleaning
 
+- [x] Implement conservative multiple-name partition rule.
+  - Candidate for multi-firm separation if original name contains consortium/joint venture langauge AND/OR at least two legal types. 
+  - Splits each candidate by all possible segments defined by specific delimiters. 
+  - Partition accepted if all segments exact match to a unique identifiable name in the CVR name key. 
+  - Partition Treat exact steps 1-4 equally.
+  - Purpose: conservative test to minimise potential false positives
+- [ ] Revisit ambiguous OpenTender exact-name matches.
+  - Exact step 4 currently has 415 ambiguous matches out of 1,105 matches (37.6%).
+  - These matches use the broadest prepared name and should not be treated as final without checking the competing CVRs.
+- [ ] Reconsider the OpenTender fuzzy-matching thresholds.
+  - Test raising the current thresholds by a few points to reduce false-positive CVR matches.
+  - Compare match coverage and manually reviewed false-positive rates at each proposed threshold before choosing new cutoffs.
+- [ ] Evaluate fuzzy-match confidence using the gap between the top two candidates.
+  - Calculate the first-ranked score minus the second-ranked score for each winner name.
+  - Treat small score gaps as less convincing because two CVRs fit the winner name almost equally well; large gaps provide stronger evidence for the top candidate.
+  - Test whether requiring both a minimum top score and a minimum score gap reduces false positives without discarding too many useful matches.
 - [ ] Inspect raw OpenTender schemas across years.
   - Raw files are present for 2006-2026.
   - The brief focuses on the full available period up to 2026, while noting analysis had previously covered 2009-2023.
