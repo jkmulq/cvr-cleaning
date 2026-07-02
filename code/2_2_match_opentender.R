@@ -779,3 +779,260 @@ if (nrow(fuzzy_candidates) > 0) {
     sort = FALSE
   )
 }
+
+# Add the multiple-firm diagnostics to the original winner rows.
+# Note, rows that received a whole-name exact match were not assessed for delimiters.
+winner_data[name_partition_summary, on = "match_row_id",
+  `:=`(
+    name_partition_status = i.name_partition_status,
+    name_partition_n_boundaries = i.name_partition_n_boundaries,
+    name_partition_n_legal_forms = i.name_partition_n_legal_forms,
+    flag_name_partition_eligible = i.flag_name_partition_eligible,
+    name_partition_eligibility_reason = i.name_partition_eligibility_reason,
+    name_partition_n_complete = i.name_partition_n_complete,
+    proposed_name_partition = i.proposed_name_partition,
+    name_partition_n_firms = i.name_partition_n_firms,
+    flag_potential_multiple_winners = i.flag_potential_multiple_winners,
+    flag_joint_venture_text = i.flag_joint_venture_text,
+    flag_consortium_text = i.flag_consortium_text,
+    flag_collaboration_text = i.flag_collaboration_text)]
+
+# Coalesce flags to FALSE for rows that were not assessed for multiple winners
+winner_data[, `:=`(
+    flag_potential_multiple_winners = fcoalesce(flag_potential_multiple_winners, FALSE),
+    flag_joint_venture_text = fcoalesce(flag_joint_venture_text, FALSE),
+    flag_consortium_text = fcoalesce(flag_consortium_text, FALSE),
+    flag_collaboration_text = fcoalesce(flag_collaboration_text, FALSE))]
+
+# Join match data onto dataset
+winner_data[matched, on = "match_row_id",
+  `:=`(
+    winner_cvr_name_match = i.winner_cvr_name_match,
+    registered_name_match = i.registered_name_match,
+    name_match_source = i.name_match_source,
+    name_match_step = i.name_match_step,
+    name_match_method = i.name_match_method,
+    name_match_score = i.name_match_score,
+    name_match_n_candidates = i.name_match_n_candidates)]
+
+# Replace each original combined-name row with one row per uniquely matched
+# segment. The original row_id and winner_name_original remain on every new row
+# so the expansion can always be traced back to the OpenTender source.
+winner_data[, flag_name_partition_expanded := FALSE]
+winner_data[, flag_separated_winner := fifelse(match_row_id %in% unique_partition_ids$match_row_id, 
+                                               TRUE, FALSE)]
+
+# Join the accepted partition segments onto their original winner rows.
+separated_winner_data <- winner_data[unique_partition_ids,
+                                     on = "match_row_id",
+                                     nomatch = 0]
+
+# Expand the winner data with the joined segments
+# Means every separated winner gets the data from the source row.
+separated_winner_data <- separated_winner_data[separated_name_segments,
+                                               on = "match_row_id",
+                                               nomatch = 0]
+
+# Rename
+separated_winner_data[,
+  `:=`(
+    winner_name = separated_winner_name,
+    winner_name_basic = separated_winner_name_basic,
+    winner_name_match = separated_winner_name_match,
+    winner_name_no_spaces = separated_winner_name_no_spaces,
+    winner_name_broad = separated_winner_name_broad,
+    winner_firm_type = separated_winner_firm_type,
+    winner_name_first_letter = substr(separated_winner_name_match, 1, 1),
+    winner_cvr_name_match = separated_winner_cvr,
+    registered_name_match = separated_registered_name,
+    name_match_source = separated_name_source,
+    name_match_step = separated_match_step,
+    name_match_method = "exact",
+    name_match_score = 100,
+    name_match_n_candidates = separated_n_candidates,
+    flag_name_partition_expanded = TRUE)]
+
+# Remove old separated columns to avoid confusion
+separated_columns <- grep(
+  "^separated_",
+  names(separated_winner_data),
+  value = TRUE
+)
+separated_winner_data[, (separated_columns) := NULL]
+separated_winner_data[, flag_separated_winner := TRUE]
+
+# Remove original combined-name rows then appending separated rows
+winner_data <- winner_data[flag_separated_winner == FALSE, ]
+winner_data[, name_partition_segment_number := NA_integer_]
+winner_data <- rbindlist(
+  list(winner_data, separated_winner_data),
+  use.names = TRUE,
+  fill = TRUE
+)
+
+# Give each numeric matching step a stable, descriptive code. 
+# Keep numeric step so the matching route remains easy to inspect.
+winner_data[, name_match_step_code := fcase(
+  flag_name_partition_expanded & name_match_step == 1L,
+  "exact partition: basic name and firm type",
+  flag_name_partition_expanded & name_match_step == 2L,
+  "exact partition: no spaces and firm type",
+  flag_name_partition_expanded & name_match_step == 3L,
+  "exact partition: no spaces",
+  flag_name_partition_expanded & name_match_step == 4L,
+  "exact partition: broad name",
+  name_match_method == "exact" & name_match_step == 1L,
+  "exact: basic name and firm type",
+  name_match_method == "exact" & name_match_step == 2L,
+  "exact: no spaces and firm type",
+  name_match_method == "exact" & name_match_step == 3L,
+  "exact: no spaces",
+  name_match_method == "exact" & name_match_step == 4L,
+  "exact: broad name",
+  name_match_method == "exact" & name_match_step == 5L,
+  "exact consortium removed: basic name and firm type",
+  name_match_method == "exact" & name_match_step == 6L,
+  "exact consortium removed: no spaces and firm type",
+  name_match_method == "exact" & name_match_step == 7L,
+  "exact consortium removed: no spaces",
+  name_match_method == "exact" & name_match_step == 8L,
+  "exact consortium removed: broad name",
+  name_match_method == "fuzzy" & name_match_step == 5L &
+    name_match_source == "name",
+  "fuzzy: prepared main name",
+  name_match_method == "fuzzy" & name_match_step == 5L &
+    name_match_source == "biname",
+  "fuzzy: prepared biname",
+  name_match_method == "fuzzy" & name_match_step == 6L &
+    name_match_source == "name",
+  "fuzzy: broad main name",
+  name_match_method == "fuzzy" & name_match_step == 6L &
+    name_match_source == "biname",
+  "fuzzy: broad biname",
+  flag_fill_missing_cvr,
+  "source: same-name CVR fill",
+  !is.na(winner_cvr_clean) & winner_cvr_clean != "" &
+    source == "single winner",
+  "source: single CVR cleaning",
+  !is.na(winner_cvr_clean) & winner_cvr_clean != "" &
+    source == "multiple confirmed winners",
+  "source: multiple CVR separation",
+  !is.na(winner_cvr_clean) & winner_cvr_clean != "",
+  "source: existing CVR, unclassified",
+  flag_check_fuzzy_match &
+    toupper(trimws(winner_country)) == "DK",
+  "matching candidate: no match found",
+  flag_check_fuzzy_match,
+  "not a matching candidate: not marked as Danish",
+  default = "not a matching candidate: no CVR name"
+)]
+
+# Fuzzy matches and matches tied across several CVRs are retained but flagged.
+winner_data[, flag_name_match_found := !is.na(winner_cvr_name_match)]
+winner_data[, flag_name_match_ambiguous := (flag_name_match_found & name_match_n_candidates > 1)]
+winner_data[, flag_review_name_match := (
+  (flag_potential_multiple_winners & !flag_name_partition_expanded) |
+    (flag_name_match_found & (name_match_method == "fuzzy" | flag_name_match_ambiguous))
+)]
+
+# Step 7 in the documentation is manual review. This flag includes:
+#   - rows that did not receive a match in the CVR-name key
+#   - fuzzy matches
+#   - matches where several CVRs were possible
+#   - partition candidates that did not have a unique complete partition
+winner_data[, flag_manual_name_review := (
+  flag_check_fuzzy_match & # Fuzzy matches
+    (!flag_name_match_found | flag_review_name_match)
+)]
+
+# Create final cvr number
+# Start with the CVR obtained from the original cleaning process.
+winner_data[, winner_cvr_final := as.character(winner_cvr_clean)]
+
+# Fill missing CVRs from name matching
+winner_data[flag_check_fuzzy_match & # Candidates for matching
+              toupper(trimws(winner_country)) == "DK" & # Danish firm 
+              !flag_potential_multiple_winners & # Not a potential multiple-winner row
+              !is.na(winner_cvr_name_match), # Has a matched CVR number
+  winner_cvr_final := winner_cvr_name_match]
+
+# Successfully separated multiple firms use their segment-level CVR matches.
+winner_data[flag_name_partition_expanded == TRUE, winner_cvr_final := winner_cvr_name_match]
+
+# Readable name-match status
+winner_data[, name_match_status := fcase(
+  flag_name_partition_expanded,
+  "matched - separated winner name",
+  !flag_check_fuzzy_match,
+  "not requested",
+  flag_potential_multiple_winners,
+  "manual review - potential multiple winners",
+  flag_review_name_match,
+  "manual review - fuzzy or ambiguous match",
+  name_match_method == "exact" & name_match_step %in% 5:8,
+  "matched - consortium language removed",
+  flag_name_match_found,
+  "matched",
+  is.na(winner_country) | toupper(trimws(winner_country)) != "DK",
+  "manual review - not marked as Danish",
+  default = "manual review - no automatic match"
+)]
+
+# Save a compact table containing only rows that need a person to inspect.
+manual_name_review <- winner_data[
+  flag_manual_name_review == TRUE,
+  .(
+    tender_id,
+    lot_id,
+    winner_number,
+    winner_name,
+    winner_name_match,
+    winner_firm_type,
+    winner_country,
+    tender_publications_firstdContractAwardDate,
+    winner_cvr_name_match,
+    registered_name_match,
+    name_partition_status,
+    name_partition_n_legal_forms,
+    flag_name_partition_eligible,
+    name_partition_eligibility_reason,
+    proposed_name_partition,
+    name_partition_n_firms,
+    name_partition_n_complete,
+    flag_potential_multiple_winners,
+    flag_joint_venture_text,
+    flag_consortium_text,
+    flag_collaboration_text,
+    name_match_step,
+    name_match_step_code,
+    name_match_method,
+    name_match_score,
+    name_match_n_candidates,
+    flag_name_match_ambiguous,
+    name_match_status
+  )
+]
+
+# Add the five retained fuzzy names and scores when those columns exist.
+fuzzy_review_columns <- grep(
+  "^fuzzy_candidate_(cvr|name|score)_",
+  names(winner_data),
+  value = TRUE
+)
+if (length(fuzzy_review_columns) > 0) {
+  manual_name_review <- cbind(
+    manual_name_review,
+    winner_data[
+      flag_manual_name_review == TRUE,
+      ..fuzzy_review_columns
+    ]
+  )
+}
+
+# Delete the temporary joining identifier.
+winner_data[, match_row_id := NULL]
+
+# 8 Save
+saveRDS(winner_data, file.path(clean_data_dir, "clean_winner_data_ot_name_matched.rds"))
+saveRDS(manual_name_review, file.path(clean_data_dir, "manual_name_review_ot.rds"))
+saveRDS(name_partition_segments, file.path(clean_data_dir, "winner_name_partition_diagnostics_ot.rds"))
