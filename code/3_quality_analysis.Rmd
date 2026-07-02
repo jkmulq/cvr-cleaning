@@ -1,0 +1,1052 @@
+---
+title: "CVR Cleaning Quality Analysis"
+author: "Jack Mulqueeney"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    self_contained: true
+knit: >
+  (function(inputFile, encoding) {
+    output_dir <- here::here("output", "docs")
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    rmarkdown::render(
+      inputFile,
+      encoding = encoding,
+      output_dir = output_dir
+    )
+  })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE
+)
+
+library(here)
+library(dplyr)
+library(knitr)
+
+source(here::here("config.R"))
+source(file.path(dirs$code, "functions.R"))
+
+input_files <- c(
+  file.path(dirs$clean_data, "clean_winner_data_kfst.rds"),
+  file.path(dirs$clean_data, "clean_winner_data_kfst_name_matched.rds"),
+  file.path(dirs$clean_data, "clean_winner_data_ot.rds"),
+  file.path(dirs$clean_data, "clean_winner_data_ot_name_matched.rds")
+)
+
+missing_files <- input_files[!file.exists(input_files)]
+
+if (length(missing_files) > 0) {
+  stop(
+    "Run the cleaning and matching scripts first. Missing files: ",
+    paste(missing_files, collapse = ", ")
+  )
+}
+
+kfst_clean <- readRDS(input_files[1])
+kfst_matched <- readRDS(input_files[2])
+ot_clean <- readRDS(input_files[3])
+ot_matched <- readRDS(input_files[4])
+```
+
+<style>
+body {
+  color: #24323d;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+h1, h2, h3 {
+  color: #17324d;
+}
+
+.section-note {
+  background: #f4f8fb;
+  border-left: 5px solid #2f6f9f;
+  border-radius: 4px;
+  margin: 1.2rem 0;
+  padding: 0.9rem 1.1rem;
+}
+
+.warning-note {
+  background: #fff7e8;
+  border-left: 5px solid #d88916;
+  border-radius: 4px;
+  margin: 1.2rem 0;
+  padding: 0.9rem 1.1rem;
+}
+
+.flow {
+  align-items: stretch;
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr auto 1fr;
+  margin: 1.5rem 0 1rem;
+}
+
+.flow-step {
+  align-items: center;
+  background: #edf5fa;
+  border: 2px solid #2f6f9f;
+  border-radius: 8px;
+  display: flex;
+  justify-content: center;
+  min-height: 88px;
+  padding: 0.7rem;
+  text-align: center;
+}
+
+.flow-arrow {
+  align-items: center;
+  color: #2f6f9f;
+  display: flex;
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.ot-flow {
+  background: #fff7e8;
+  border: 2px solid #d88916;
+  border-radius: 8px;
+  margin: 0.7rem auto 1.5rem;
+  max-width: 760px;
+  padding: 0.8rem 1rem;
+  text-align: center;
+}
+
+.ot-label {
+  color: #a45f00;
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.2rem;
+  text-transform: uppercase;
+}
+
+table {
+  margin-bottom: 1.5rem;
+  width: 100%;
+}
+
+thead {
+  background: #17324d;
+  color: white;
+}
+
+th, td {
+  padding: 0.55rem 0.7rem !important;
+  vertical-align: top !important;
+}
+
+tbody tr:nth-child(even) {
+  background: #f5f7f9;
+}
+
+@media (max-width: 900px) {
+  .flow {
+    grid-template-columns: 1fr;
+  }
+
+  .flow-arrow {
+    justify-content: center;
+    transform: rotate(90deg);
+  }
+}
+</style>
+
+# Introduction
+In this note, I summarise the CVR number cleaning process for the KFST and OpenTender datasets. I also describe the name-matching process and provide some examples of how names are cleaned and matched. I also provide summary tables of the cleaning and matching results for both datasets.
+
+# Process overview
+
+Both datasets follow the same main process. OpenTender needs one extra check for winner names that may contain several firms.
+
+<div class="flow">
+  <div class="flow-step"><strong>1. Clean source CVRs</strong></div>
+  <div class="flow-arrow">&rarr;</div>
+  <div class="flow-step"><strong>2. Expand multiple winners</strong></div>
+  <div class="flow-arrow">&rarr;</div>
+  <div class="flow-step"><strong>3. Find candidates with a name but no CVR</strong></div>
+  <div class="flow-arrow">&rarr;</div>
+  <div class="flow-step"><strong>4. Match names to the CVR register</strong></div>
+  <div class="flow-arrow">&rarr;</div>
+  <div class="flow-step"><strong>5. Keep the match or send it to review</strong></div>
+</div>
+
+<div class="ot-flow">
+  <span class="ot-label">OpenTender only</span>
+  Before fuzzy matching, identify rows that might contain multiple firm names and split them if necessary.
+</div>
+
+# Matching process
+
+The process follows the approach in *Bisnode matching documentation_V7*. It
+starts with strict exact matches. It then makes the names more general. Rows
+that match are removed before the next step.
+
+The same cleaning is applied to the winner names and to the registered main names and binames in the CVR keys. 
+
+## Step 1: `winner_name_basic`
+The first matching name is called `winner_name_basic`. To get this name, I
+
+1. Convert to lowercase
+2. Remove spaces at the start and end of the string
+3. Replace Danish and other accented letters with a common spelling
+4. Standardise legal forms, after detecting them as a standalone term (i.e. not as part of another word)
+
+The keys for step (3) and (4) are below.
+
+```{r letter-standardisation}
+letter_standardisation <- tibble::tribble(
+  ~Original, ~Replacement,
+  "ø", "oe",
+  "æ", "ae",
+  "å", "aa",
+  "ö", "oe",
+  "ä", "ae",
+  "á or à", "a",
+  "é or è", "e"
+)
+
+kable(
+  letter_standardisation,
+  align = c("l", "l"),
+  caption = "Letter standardisation"
+)
+```
+
+```{r firm-type-standardisation}
+firm_type_standardisation <- tibble::tribble(
+  ~Terms.recognised, ~Stored.firm.type,
+  "A/S, AS, A/, aktieselskab, aktieselskabet, GmbH", "a/s",
+  "ApS, anpartsselskab, anpartsselskabet, AB", "aps",
+  "I/S", "i/s",
+  "K/S, KS", "k/s",
+  "IVS", "ivs",
+  "P/S", "p/s",
+  "AMBA, A.M.B.A., A M B A", "amba",
+  "SMBA, S.M.B.A.", "smba",
+  "FMBA, F.M.B.A.", "fmba"
+)
+
+kable(
+  firm_type_standardisation,
+  align = c("l", "l"),
+  caption = "Legal-form standardisation"
+)
+```
+
+If no legal form is found, the firm type is stored as `Undetermined`. 
+
+## Steps 2, 3, and 5: `winner_name_match` and `winner_name_no_spaces`
+
+The next stage follows step 2 of the original documentation. It makes the
+following character changes:
+
+- `oe` becomes `o`, and `aa` becomes `a`.
+- `&` becomes `og`.
+- `v/` becomes a space, while other slashes are removed.
+- Hyphens and parentheses become spaces.
+- Commas, periods, colons, and quotation marks are removed.
+- Repeated spaces are collapsed.
+
+The script also standardises selected whole words. It only replaces complete
+words. It does not replace text found inside a longer word.
+
+```{r word-standardisation}
+word_standardisation <- tibble::tribble(
+  ~Original.words, ~Replacement,
+  "international", "int",
+  "and", "og",
+  "av, of", "af",
+  "limited", "ltd",
+  "denmark, danmark", "dk",
+  "holdings", "holding",
+  "sweden, sverige", "se",
+  "corporation", "corp",
+  "company, comp", "co",
+  "copenhagen, kobenhavn, cph, kopenhamn", "kbh",
+  "i, ii, iii", "1, 2, 3"
+)
+
+kable(
+  word_standardisation,
+  align = c("l", "l"),
+  caption = "Whole-word standardisation"
+)
+```
+
+This set of cleaning produces:
+
+1. `winner_name_match`, which keeps spaces and is used in fuzzy step 5.
+2. `winner_name_no_spaces`, which is `winner_name_match` after removing spaces. This match variable is used for exact matching in steps 2 and 3.
+
+## Steps 4 and 6: `winner_name_broad`
+
+Exact step 4 and fuzzy step 6 use `winner_name_broad`. This variable is created from `winner_name_match`, but in addition: 
+
+1. Removes common words with little information about firm identity.
+2. Sorts remaining words alphabetically.
+3. Joins words without spaces.
+
+<div class="section-note">
+<strong>Common words removed:</strong> af, arhus, asset, assets, broderna,
+brdr, brodrerne, co, dansk, data, development, dk, ejendomsselskabet, finans,
+forsikring, group, holding, hotels, hotel, int, invest, kbh,
+komplementaerssaelskabet, livforsikringsselskab, management, media, nordic,
+nordisk, og, scandinavia, scandinavian, se, service, services, skandia,
+software, system, systems, ltd, filial, and for.
+</div>
+
+The four prepared name fields therefore have distinct uses:
+
+```{r prepared-name-fields}
+prepared_name_fields <- tibble::tribble(
+  ~Prepared.field, ~Cleaning.level, ~Used.in,
+  "winner_name_basic",
+  "Lowercase; accented letters standardised; legal form extracted; extra spaces removed",
+  "Exact step 1",
+  
+  "winner_name_no_spaces",
+  "Built from winner_name_match; all spaces removed",
+  "Exact steps 2 and 3",
+  
+  "winner_name_match",
+  "Built from winner_name_basic; punctuation and selected words standardised; spaces retained",
+  "Fuzzy step 5",
+  
+  "winner_name_broad",
+  "Built from winner_name_match; common words removed; remaining words sorted and joined",
+  "Exact step 4 and fuzzy step 6"
+)
+
+kable(
+  prepared_name_fields,
+  align = c("l", "l", "l"),
+  caption = "Prepared name fields used in matching"
+)
+```
+
+## Check against the original documentation
+
+The current R code follows the documented core process. It applies the same letter changes, legal-form extraction, character changes, whole-word replacements, space removal, common-word removal, and word sorting.
+
+The current implementation adds a few conservative safeguards:
+
+- It recognises FMBA as an additional legal form.
+- A fuzzy match is not accepted when several CVRs share the highest score.
+- Repeated appearances of the same CVR are collapsed during candidate ranking.
+  If the same prepared name points to different CVRs, those CVRs are retained
+  and the match is marked as ambiguous instead of silently dropping one.
+
+```{r matching-steps}
+matching_steps <- tibble::tribble(
+  ~Stage, ~Prepared.name, ~Comparison, ~Purpose,
+  "Exact 1", "winner_name_basic", "Basic name and firm type", "Find names that already agree.",
+  "Exact 2", "winner_name_no_spaces", "Prepared name without spaces and firm type", "Allow punctuation and spacing differences.",
+  "Exact 3", "winner_name_no_spaces", "Prepared name without spaces", "Allow the firm type to differ.",
+  "Exact 4", "winner_name_broad", "Broad name", "Remove common words and ignore word order.",
+  "Fuzzy 5", "winner_name_match", "Prepared main names and binames", "Allow small spelling differences. The score must be above 85.",
+  "Fuzzy 6", "winner_name_broad", "Broad main names and binames", "Use the broad name. Main names must score above 86. Binames must score above 89.",
+  "Review", "—", "Remaining or uncertain rows", "Check fuzzy, ambiguous, and unmatched rows by hand."
+)
+
+kable(
+  matching_steps,
+  align = c("l", "l", "l", "l"),
+  caption = "Name-matching stages"
+)
+```
+
+## Real examples of name cleaning
+
+The table below uses two winner names from the KFST matching candidates.
+OpenTender uses the same four name fields before its extra multiple-firm checks.
+
+Exact steps 2 and 3 use the same cleaned name. Step 2 also requires the firm
+type to match. Step 3 ignores the firm type.
+
+```{r real-name-cleaning-examples}
+name_cleaning_example_names <- c(
+  "XL-Byg Vorup Tømmerhandel & Byggecenter A/S",
+  "Struensee & Co. Management Consulting P/S"
+)
+
+name_cleaning_examples <- kfst_matched %>%
+  filter(
+    flag_check_fuzzy_match,
+    toupper(trimws(winner_country)) == "DK"
+  ) %>%
+  filter(winner_name %in% name_cleaning_example_names) %>%
+  distinct(
+    winner_name,
+    winner_name_basic,
+    winner_name_no_spaces,
+    winner_name_broad,
+    winner_firm_type
+  ) %>%
+  mutate(Example = match(winner_name, name_cleaning_example_names))
+
+name_cleaning_examples_long <- bind_rows(
+  name_cleaning_examples %>%
+    transmute(
+      Example,
+      `Original winner name` = winner_name,
+      Step = "Exact 1",
+      `Name used for matching` = winner_name_basic,
+      `Firm type rule` = paste("Must match", winner_firm_type)
+    ),
+  name_cleaning_examples %>%
+    transmute(
+      Example,
+      `Original winner name` = winner_name,
+      Step = "Exact 2",
+      `Name used for matching` = winner_name_no_spaces,
+      `Firm type rule` = paste("Must match", winner_firm_type)
+    ),
+  name_cleaning_examples %>%
+    transmute(
+      Example,
+      `Original winner name` = winner_name,
+      Step = "Exact 3",
+      `Name used for matching` = winner_name_no_spaces,
+      `Firm type rule` = "Ignored"
+    ),
+  name_cleaning_examples %>%
+    transmute(
+      Example,
+      `Original winner name` = winner_name,
+      Step = "Exact 4",
+      `Name used for matching` = winner_name_broad,
+      `Firm type rule` = "Ignored"
+    )
+) %>%
+  mutate(
+    Step = factor(
+      Step,
+      levels = c("Exact 1", "Exact 2", "Exact 3", "Exact 4")
+    )
+  ) %>%
+  arrange(Example, Step) %>%
+  select(-Example)
+
+kable(
+  name_cleaning_examples_long,
+  align = c("l", "l", "l", "l"),
+  caption = "Real examples of names used in the four exact-match steps"
+)
+```
+
+Potential matches must also fit the tender date. The registered name can start
+or end up to two years before or after the tender date. When several matches
+remain, the script prefers:
+
+1. A main registered name over a biname.
+2. A name active on the tender date.
+3. The oldest registered name.
+
+## Simple examples
+
+These examples come from the original matching documentation.
+
+```{r matching-examples}
+matching_examples <- tibble::tribble(
+  ~Winner.name, ~Registered.name, ~Result,
+  "Electro Oil Int", "Electro-Oil International", "Both become 'electrooilint'. They match at Exact 2.",
+  "NGI Holdig", "NGI Holding", "The fuzzy score is 95. This is above the step 5 threshold."
+)
+
+kable(
+  matching_examples,
+  align = c("l", "l", "l"),
+  caption = "Illustrative matching examples"
+)
+```
+
+# KFST
+
+## First CVR cleaning
+
+The KFST source has separate fields for the winner CVR, winner name, and winner country. Some notes on the data:
+
+* _The CVR numbers are generally already pretty clean_. While many rows feature punctuation, those punctuation marks (in particular the ';') are used to separate multiple winners. The script first checks whether a row has one or several valid CVRs. It then removes repeated CVRs and creates one row for each remaining CVR. After separation, `r format(sum(kfst_clean$flag_cvr_standardised, na.rm = TRUE), big.mark = ",")` rows had their CVR number standardised (removing white space, hyphens, alphabetical letters, punctuation). More detail available in the table below.
+
+* A row is treated as a clear single winner when its CVR is exactly eight digits. Spaces can be removed first. Remaining non-missing rows may contain several winners. **For these rows, the script splits the CVR, name, and country fields together.** It then creates one row for each winner. This keeps each CVR beside the correct name and country.
+
+```{r kfst-cleaning-summary}
+
+kfst_clean %>% 
+  summarise(across(starts_with("flag_cvr_"), sum)) %>% 
+  kable(caption = "CVR number standardisation counts after multi-firm separation")
+
+kfst_original_count <- kfst_clean %>%
+  distinct(tender_id, lot_id) %>%
+  summarise(Total = n()) %>%
+  pull(Total)
+
+kfst_clean_count <- kfst_clean %>%
+  summarise(Total = n()) %>%
+  pull(Total)
+
+kfst_cleaning_summary <- bind_rows(
+  kfst_clean %>%
+    filter(source == "single winners") %>%
+    summarise(
+      Measure = "Original rows identified as single winners",
+      Count = n(),
+      Share = Count / kfst_original_count,
+      Share.of = "Original winner rows"
+    ),
+  kfst_clean %>%
+    filter(source == "multiple winners") %>%
+    distinct(tender_id, lot_id) %>%
+    summarise(
+      Measure = "Original rows treated as multiple winners",
+      Count = n(),
+      Share = Count / kfst_original_count,
+      Share.of = "Original winner rows"
+    ),
+  kfst_clean %>%
+    filter(source == "multiple winners") %>%
+    summarise(
+      Measure = "Winner rows after multiple-winner expansion",
+      Count = n(),
+      Share = Count / kfst_clean_count,
+      Share.of = "Final winner rows"
+    ),
+  kfst_clean %>%
+    summarise(
+      Measure = "Winner rows with a valid CVR after cleaning",
+      Count = sum(valid_cvr, na.rm = TRUE),
+      Share = Count / kfst_clean_count,
+      Share.of = "Final winner rows"
+    ),
+  kfst_clean %>%
+    summarise(
+      Measure = "Winner rows with a missing CVR after cleaning",
+      Count = sum(flag_missing_winner_cvr, na.rm = TRUE),
+      Share = Count / kfst_clean_count,
+      Share.of = "Final winner rows"
+    )
+) %>%
+  mutate(
+    Count = format(Count, big.mark = ",", scientific = FALSE, trim = TRUE),
+    Share = sprintf("%.1f%%", 100 * Share)
+  ) %>%
+  rename(`Share of` = Share.of)
+
+kable(
+  kfst_cleaning_summary,
+  align = c("l", "r", "r", "l"),
+  caption = "KFST Cleaning"
+)
+```
+
+## Candidates for name matching
+
+A **matching candidate** is a Danish firm with a winner name but no cleaned CVR. 
+
+```{r kfst-candidates}
+kfst_candidates <- kfst_matched %>%
+  filter(
+    flag_check_fuzzy_match,
+    toupper(trimws(winner_country)) == "DK"
+  )
+
+kfst_candidate_count <- kfst_candidates %>%
+  summarise(Count = n()) %>%
+  pull(Count)
+```
+
+There are **`r format(kfst_candidate_count, big.mark = ",")` KFST matching
+candidates**.
+
+## Matching results
+Most matches are exact. Fuzzy matches are less common, and some rows remain unmatched.
+```{r kfst-matching-results}
+kfst_matching_results <- kfst_candidates %>%
+  mutate(
+    Result = case_when(
+      name_match_method == "exact" ~ "Exact match",
+      name_match_method == "fuzzy" ~ "Fuzzy match",
+      TRUE ~ "No automatic match"
+    ),
+    Result = factor(
+      Result,
+      levels = c("Exact match", "Fuzzy match", "No automatic match")
+    )
+  ) %>%
+  count(Result, .drop = FALSE, name = "Count") %>%
+  mutate(
+    Share = Count / sum(Count),
+    Count = format(Count, big.mark = ",", scientific = FALSE, trim = TRUE),
+    Share = sprintf("%.1f%%", 100 * Share)
+  )
+
+kable(
+  kfst_matching_results,
+  align = c("l", "r", "r"),
+  caption = "KFST matching results"
+)
+```
+
+The next table separates successful matches by the specific matching stage.
+`name_match_method` identifies exact or fuzzy matching.
+`name_match_step_code` identifies the specific step.
+
+```{r kfst-matching-results-by-step}
+kfst_step_results <- kfst_candidates %>%
+  filter(flag_name_match_found) %>%
+  count(
+    name_match_method,
+    name_match_step,
+    name_match_step_code,
+    name = "Count"
+  ) %>%
+  mutate(
+    name_match_method = factor(
+      name_match_method,
+      levels = c("exact", "fuzzy")
+    ),
+    Share = Count / sum(Count)
+  ) %>%
+  arrange(name_match_method, name_match_step, name_match_step_code) %>%
+  transmute(
+    Method = tools::toTitleCase(as.character(name_match_method)),
+    Step = name_match_step,
+    `Matching stage` = name_match_step_code,
+    Count = format(Count, big.mark = ",", scientific = FALSE, trim = TRUE),
+    `Share of matches` = sprintf("%.1f%%", 100 * Share)
+  ) 
+
+kable(
+  kfst_step_results,
+  align = c("l", "r", "l", "r", "r"),
+  caption = "KFST successful matches by matching step"
+)
+```
+
+```{r kfst-review-summary}
+kfst_review_summary <- bind_rows(
+  kfst_candidates %>%
+    filter(name_match_method == "fuzzy") %>%
+    summarise(
+      Review.reason = "Fuzzy match",
+      Count = n(),
+      Share = Count / kfst_candidate_count
+    ),
+  kfst_candidates %>%
+    filter(name_match_method == "exact", flag_name_match_ambiguous) %>%
+    summarise(
+      Review.reason = "Ambiguous exact match",
+      Count = n(),
+      Share = Count / kfst_candidate_count
+    ),
+  kfst_candidates %>%
+    filter(!flag_name_match_found) %>%
+    summarise(
+      Review.reason = "No automatic match",
+      Count = n(),
+      Share = Count / kfst_candidate_count
+    )
+) %>%
+  mutate(
+    Count = format(Count, big.mark = ",", scientific = FALSE, trim = TRUE),
+    Share = sprintf("%.1f%%", 100 * Share)
+  )
+
+kable(
+  kfst_review_summary,
+  align = c("l", "r", "r"),
+  caption = "KFST rows that need name-match review"
+)
+```
+
+<div class="warning-note">
+<strong>A fuzzy match is not treated as fully confirmed.</strong> Fuzzy matches,
+ambiguous exact matches, and unmatched rows remain in the manual-review file.
+</div>
+
+# OpenTender
+
+## First CVR cleaning
+
+OpenTender has more variation in the winner CVR field. It can contain country
+prefixes, spaces, repeated CVRs, and longer non-Danish identifiers.
+
+The script first extracts distinct eight-digit CVRs. It only standardises
+delimiters when a row has more than one distinct valid CVR. It then removes
+repeated CVRs and creates one row for each remaining CVR.
+
+Before name matching, the script can also fill a missing CVR when the same
+winner name has exactly one valid CVR elsewhere in OpenTender. The source row is
+kept for audit.
+
+```{r ot-cleaning-summary}
+ot_original_count <- ot_clean %>%
+  distinct(row_id) %>%
+  summarise(Total = n()) %>%
+  pull(Total)
+
+ot_clean_count <- ot_clean %>%
+  summarise(Total = n()) %>%
+  pull(Total)
+
+ot_cleaning_summary <- bind_rows(
+  ot_clean %>%
+    filter(source == "single winner") %>%
+    distinct(row_id) %>%
+    summarise(
+      Measure = "Original rows with zero or one valid CVR",
+      Count = n(),
+      Share = Count / ot_original_count,
+      Share.of = "Original source rows"
+    ),
+  ot_clean %>%
+    filter(source == "multiple confirmed winners") %>%
+    distinct(row_id) %>%
+    summarise(
+      Measure = "Original rows with several valid CVRs",
+      Count = n(),
+      Share = Count / ot_original_count,
+      Share.of = "Original source rows"
+    ),
+  ot_clean %>%
+    filter(source == "multiple confirmed winners") %>%
+    summarise(
+      Measure = "Winner rows after multiple-CVR expansion",
+      Count = n(),
+      Share = Count / ot_clean_count,
+      Share.of = "Final winner rows"
+    ),
+  ot_clean %>%
+    summarise(
+      Measure = "Missing CVRs filled from the same winner name",
+      Count = sum(flag_fill_missing_cvr, na.rm = TRUE),
+      Share = Count / ot_clean_count,
+      Share.of = "Final winner rows"
+    ),
+  ot_clean %>%
+    summarise(
+      Measure = "Winner rows with a valid CVR before name matching",
+      Count = sum(valid_cvr, na.rm = TRUE),
+      Share = Count / ot_clean_count,
+      Share.of = "Final winner rows"
+    ),
+  ot_clean %>%
+    summarise(
+      Measure = "Winner rows with a missing CVR before name matching",
+      Count = sum(flag_missing_winner_cvr, na.rm = TRUE),
+      Share = Count / ot_clean_count,
+      Share.of = "Final winner rows"
+    )
+) %>%
+  mutate(
+    Count = format(Count, big.mark = ",", scientific = FALSE, trim = TRUE),
+    Share = sprintf("%.1f%%", 100 * Share)
+  ) %>%
+  rename(`Share of` = Share.of)
+
+kable(
+  ot_cleaning_summary,
+  align = c("l", "r", "r", "l"),
+  caption = "OpenTender first-pass cleaning"
+)
+```
+
+## Candidates for name matching
+
+The OpenTender definition is the same as the KFST definition. A candidate is a
+Danish winner with a name but no cleaned CVR.
+
+OpenTender can later split one source row into several firms. Candidate counts
+therefore use distinct source `row_id` values.
+
+```{r ot-candidates}
+ot_candidates <- ot_matched %>%
+  filter(
+    flag_check_fuzzy_match,
+    toupper(trimws(winner_country)) == "DK"
+  )
+
+ot_candidate_count <- ot_candidates %>%
+  distinct(row_id) %>%
+  summarise(Count = n()) %>%
+  pull(Count)
+```
+
+There are **`r format(ot_candidate_count, big.mark = ",")` OpenTender matching
+candidates**.
+
+## OpenTender multiple-firm checks
+
+OpenTender first uses the same four whole-name exact stages as KFST. It then
+does two extra checks before fuzzy matching.
+
+### Remove consortium language
+
+Some rows contain words such as *consortium*, *joint venture*, or *JV*. The
+script removes this wording from a temporary copy of the full name. It then
+repeats the four exact matching stages on this cleaned name.
+
+### Test possible name splits
+
+The OpenTender data are ambiguous as to whether and how multiple firm names are separated. Identifying precisely whether a row contains multiple firm names is challenging, since by visual inspection of the data the separators between firms are inconsistent and aren't obviously not part of a single firm name. For example, the firm name "Stenner & Sons" could plausibly be one firm "Stenner & Sons" or two firms "Stenner" and "Sons". 
+
+Being too generous with identifying possible multi-firm rows is a major risk, since we could have many false positives in the final analysis dataset. **To minimise the risk of false positives**, I opted for a conservative flag for potential multiple firm status. A row is eligible for multi-firm separation ONLY when:
+
+- It contains collaboration language (e.g. `consortium`, `joint venture`, and other variants); OR
+- It contains at least two legal forms (e.g. `A/S` and  `ApS` both present in the row). 
+
+After identifying candidate rows, I then create all possible splits of the provided firm name at plausible boundaries. The table below illustrates how this process works for the example "Firm A, Firm B & Firm C".  
+
+```{r eg-splitting-process}
+partition_example <- make_winner_name_partitions("Firm A, Firm B & Firm C")
+partition_example$partitions %>% 
+  kable(caption = "Partition Example")
+```
+
+The script tests possible splits at plausible boundaries (e.g. ampersand, comma, semi-colon, `og`, etc). It ONLY accepts a split when:
+
+1. every segment has exactly ONE exact match
+2. every segment maps to a different CVR
+3. only one `partition_id` satisfies requirements (1) and (2).
+
+For tractability, I make two assumptions. Firstly, firm names appear sequentially from left to right. This means I don't test the partition "Firm A & Firm C; Firm B" for the example above. Secondly, only rows with at most 5 identified delimiters are tested. This keeps the number of partitions capped at 31. 
+
+Unclear rows stay unchanged and go to review.
+
+```{r ot-segmentation-summary}
+ot_eligible_count <- ot_candidates %>%
+  filter(flag_name_partition_eligible) %>%
+  distinct(row_id) %>%
+  summarise(Total = n()) %>%
+  pull(Total)
+
+ot_candidate_output_count <- ot_candidates %>%
+  summarise(Total = n()) %>%
+  pull(Total)
+
+ot_segmentation_summary <- bind_rows(
+  ot_candidates %>%
+    filter(flag_name_partition_eligible) %>%
+    distinct(row_id) %>%
+    summarise(
+      Measure = "Source rows eligible for the split test",
+      Count = n(),
+      Share = Count / ot_candidate_count,
+      Share.of = "Matching candidates"
+    ),
+  ot_candidates %>%
+    filter(flag_name_partition_expanded) %>%
+    distinct(row_id) %>%
+    summarise(
+      Measure = "Source rows with one accepted split",
+      Count = n(),
+      Share = Count / ot_eligible_count,
+      Share.of = "Rows eligible for the split test"
+    ),
+  ot_candidates %>%
+    filter(flag_name_partition_expanded) %>%
+    summarise(
+      Measure = "Firm rows produced by accepted splits",
+      Count = n(),
+      Share = Count / ot_candidate_output_count,
+      Share.of = "Winner rows after name matching"
+    ),
+  ot_candidates %>%
+    filter(
+      name_partition_status ==
+        "not accepted: multiple complete partitions"
+    ) %>%
+    distinct(row_id) %>%
+    summarise(
+      Measure = "Source rows with several possible complete splits",
+      Count = n(),
+      Share = Count / ot_eligible_count,
+      Share.of = "Rows eligible for the split test"
+    )
+) %>%
+  mutate(
+    Count = format(Count, big.mark = ",", scientific = FALSE, trim = TRUE),
+    Share = sprintf("%.1f%%", 100 * Share)
+  ) %>%
+  rename(`Share of` = Share.of)
+
+kable(
+  ot_segmentation_summary,
+  align = c("l", "r", "r", "l"),
+  caption = "OpenTender multiple-firm split results"
+)
+```
+
+### Examples of accepted splits
+
+The examples below are selected directly from the current accepted results.
+One example is shown for each available eligibility reason.
+
+```{r ot-segmentation-examples}
+ot_segmentation_examples <- ot_candidates %>%
+  filter(flag_name_partition_expanded) %>%
+  group_by(
+    row_id,
+    winner_name_original,
+    name_partition_eligibility_reason,
+    proposed_name_partition
+  ) %>%
+  summarise(
+    Separated.firms = paste(winner_name, collapse = "; "),
+    Matched.CVRs = paste(winner_cvr_name_match, collapse = "; "),
+    .groups = "drop"
+  ) %>%
+  arrange(
+    name_partition_eligibility_reason,
+    nchar(winner_name_original),
+    row_id
+  ) %>%
+  group_by(name_partition_eligibility_reason) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  transmute(
+    `Why tested` = name_partition_eligibility_reason,
+    `Original winner name` = winner_name_original,
+    `Accepted split` = proposed_name_partition,
+    `Matched CVRs` = Matched.CVRs
+  )
+
+kable(
+  ot_segmentation_examples,
+  align = c("l", "l", "l", "l"),
+  caption = "Examples of OpenTender winner-name splitting"
+)
+```
+
+## Matching results
+
+An accepted split creates several firm rows. The results below count the
+original source row once. This prevents the split from increasing the matching
+rate.
+
+```{r ot-matching-results}
+ot_candidate_results <- ot_candidates %>%
+  group_by(row_id) %>%
+  summarise(
+    Result = case_when(
+      any(flag_name_partition_expanded, na.rm = TRUE) ~ "Exact match",
+      any(name_match_method == "exact", na.rm = TRUE) ~ "Exact match",
+      any(name_match_method == "fuzzy", na.rm = TRUE) ~ "Fuzzy match",
+      TRUE ~ "No automatic match"
+    ),
+    Ambiguous.exact = any(
+      name_match_method == "exact" & flag_name_match_ambiguous,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  )
+
+ot_matching_results <- ot_candidate_results %>%
+  mutate(
+    Result = factor(
+      Result,
+      levels = c("Exact match", "Fuzzy match", "No automatic match")
+    )
+  ) %>%
+  count(Result, .drop = FALSE, name = "Count") %>%
+  mutate(
+    Share = Count / sum(Count),
+    Count = format(Count, big.mark = ",", scientific = FALSE, trim = TRUE),
+    Share = sprintf("%.1f%%", 100 * Share)
+  )
+
+kable(
+  ot_matching_results,
+  align = c("l", "r", "r"),
+  caption = "OpenTender matching results"
+)
+```
+
+The next table separates successful matches by the specific matching stage. It
+counts matched winner rows. When an accepted OpenTender partition creates
+several firms, each separated firm contributes one row.
+
+```{r ot-matching-results-by-step}
+ot_step_results <- ot_candidates %>%
+  filter(flag_name_match_found) %>%
+  count(
+    name_match_method,
+    name_match_step,
+    name_match_step_code,
+    name = "Count"
+  ) %>%
+  mutate(
+    name_match_method = factor(
+      name_match_method,
+      levels = c("exact", "fuzzy")
+    ),
+    Share = Count / sum(Count)
+  ) %>%
+  arrange(name_match_method, name_match_step, name_match_step_code) %>%
+  transmute(
+    Method = tools::toTitleCase(as.character(name_match_method)),
+    Step = name_match_step,
+    `Matching stage` = name_match_step_code,
+    Count = format(Count, big.mark = ",", scientific = FALSE, trim = TRUE),
+    `Share of matches` = sprintf("%.1f%%", 100 * Share)
+  )
+
+kable(
+  ot_step_results,
+  align = c("l", "r", "l", "r", "r"),
+  caption = "OpenTender successful matches by matching step"
+)
+```
+
+```{r ot-review-summary}
+ot_review_summary <- bind_rows(
+  ot_candidate_results %>%
+    filter(Result == "Fuzzy match") %>%
+    summarise(
+      Review.reason = "Fuzzy match",
+      Count = n(),
+      Share = Count / ot_candidate_count
+    ),
+  ot_candidate_results %>%
+    filter(Ambiguous.exact) %>%
+    summarise(
+      Review.reason = "Ambiguous exact match",
+      Count = n(),
+      Share = Count / ot_candidate_count
+    ),
+  ot_candidate_results %>%
+    filter(Result == "No automatic match") %>%
+    summarise(
+      Review.reason = "No automatic match",
+      Count = n(),
+      Share = Count / ot_candidate_count
+    )
+) %>%
+  mutate(
+    Count = format(Count, big.mark = ",", scientific = FALSE, trim = TRUE),
+    Share = sprintf("%.1f%%", 100 * Share)
+  )
+
+kable(
+  ot_review_summary,
+  align = c("l", "r", "r"),
+  caption = "OpenTender rows that need name-match review"
+)
+```
+
+<div class="warning-note">
+<strong>The same review rule applies to OpenTender.</strong> Fuzzy matches,
+ambiguous exact matches, and unresolved multiple-firm names still need review.
+</div>
