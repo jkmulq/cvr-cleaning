@@ -7,3 +7,4 @@
 # Folders to ignore
 data/*
 documents/*
+output/*
