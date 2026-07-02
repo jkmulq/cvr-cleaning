@@ -28,14 +28,16 @@ This file tracks development work against the current codebase and the project b
 
 - [x] Finish buyer cleaning.
   - Current gap: KFST buyer names are split and flagged for multiple buyers, but buyer entities are not yet linked to CVR numbers.
-- [ ] CVR name to CVR matching from virk.dk
+- [x] CVR name to CVR matching from virk.dk
   - Add a reproducible matching workflow using virk.dk or another documented reference.
-- [ ] Add missing-CVR name matching.
+  - Conclusion: Uses the replication material provided keys; will update with new keys once access is approved. 
+- [x] Add missing-CVR name matching.
   - The brief expects observations with missing CVR numbers but non-missing firm names to be assessed for unambiguous Danish firm matches.
-  - Current gap: this is not yet implemented for winners, bidders, or buyers.
-- [ ] Add ambiguity flags for name matching.
+  - Conclusion: exact matching and fuzzy matching process copies the process provided in the replication materials. Most of the matches come from exact matches; counts/proportions documented in diagnostic note. 
+- [x] Add ambiguity flags for name matching.
   - Target: flag cases where a name could map to several CVR numbers or where the match confidence is too low.
 - [ ] Make sure winner/buyer names are expanded alongside the relevant CVR numbers.
+  - matching process not implemented for buyers
 
 ## OpenTender Cleaning
 
