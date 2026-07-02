@@ -742,11 +742,9 @@ gc()
 # A winner can have candidates from more than one fuzzy step or key. Rank them
 # together, remove repeated CVRs, and retain the best five in wide columns.
 if (nrow(fuzzy_candidates) > 0) {
-  fuzzy_candidates[, source_order := fifelse(
-    fuzzy_candidate_source == "name",
-    1L,
-    2L
-  )]
+  fuzzy_candidates[, source_order := fifelse(fuzzy_candidate_source == "name", 1L, 2L)]
+
+  # Arrange to take top candidate scores
   setorder(
     fuzzy_candidates,
     match_row_id,
@@ -755,20 +753,11 @@ if (nrow(fuzzy_candidates) > 0) {
     source_order,
     fuzzy_candidate_rank
   )
-  fuzzy_candidates <- unique(
-    fuzzy_candidates,
-    by = c("match_row_id", "fuzzy_candidate_cvr")
-  )
-  fuzzy_candidates <- fuzzy_candidates[
-    ,
-    head(.SD, 5),
-    by = match_row_id
-  ]
-  fuzzy_candidates[
-    ,
-    fuzzy_candidate_rank := seq_len(.N),
-    by = match_row_id
-  ]
+
+  # Make distinct and take top five candidates for each row
+  fuzzy_candidates <- unique(fuzzy_candidates, by = c("match_row_id", "fuzzy_candidate_cvr"))
+  fuzzy_candidates <- fuzzy_candidates[, head(.SD, 5), by = match_row_id]
+  fuzzy_candidates[, fuzzy_candidate_rank := seq_len(.N), by = match_row_id]
   
   fuzzy_candidates_wide <- dcast(
     fuzzy_candidates,
