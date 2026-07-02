@@ -55,9 +55,10 @@ This file tracks development work against the current codebase and the project b
   - Calculate the first-ranked score minus the second-ranked score for each winner name.
   - Treat small score gaps as less convincing because two CVRs fit the winner name almost equally well; large gaps provide stronger evidence for the top candidate.
   - Test whether requiring both a minimum top score and a minimum score gap reduces false positives without discarding too many useful matches.
-- [ ] Inspect raw OpenTender schemas across years.
+- [x] Inspect raw OpenTender schemas across years.
   - Raw files are present for 2006-2026.
   - The brief focuses on the full available period up to 2026, while noting analysis had previously covered 2009-2023.
+  - Conclusion: Script automatically detects whether column names agree across the source data files. Ignores loaded variable type (e.g. logical/integer/character) since whatever R detects can be fragile.  
 - [ ] Clean OpenTender bidder CVRs.
   - Target: clean `bidder bodyid id` into valid eight-digit CVR numbers where possible.
 - [x] Investigate row-level single-valid-CVR overwrite edge cases.
