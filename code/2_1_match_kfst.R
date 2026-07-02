@@ -410,6 +410,7 @@ manual_name_review <- winner_data[
     pub_date,
     winner_cvr_name_match,
     registered_name_match,
+    starts_with("fuzzy_candidate_cvr"),
     starts_with("fuzzy_candidate_name"),
     starts_with("fuzzy_candidate_score"),
     name_match_step,
