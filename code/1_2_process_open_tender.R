@@ -509,7 +509,7 @@ buyer_data <- buyer_data %>%
       flag_row_multiple_valid_cvr,
       str_replace_all(
         buyer_cvr,
-        regex("\\s*(,|;|\\||/|&|\\bog\\b|(?<=[\\d\\)])og(?=[[:alnum:]]))\\s*", ignore_case = TRUE),
+        regex("\\s*(,|;|\\||/|&|\\bog\\b|\\bsamt\\b|\\band\\b|(?<=[\\d\\)])og(?=[[:alnum:]])|(?<=\\d)and(?=\\d))\\s*", ignore_case = TRUE),
         ";"
       ),
       buyer_cvr
