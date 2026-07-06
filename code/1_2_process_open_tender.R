@@ -710,7 +710,7 @@ clean_buyer_data <- clean_buyer_data %>%
   )
 
 ## 3.9 Check carried CVR standardisation flags
-## The actual CVR standardisation happens inside each winner dataframe before
+## The actual CVR standardisation happens inside each buyer dataframe before
 ## binding. This section only makes the carried flags complete after bind_rows().
 clean_buyer_data <- clean_buyer_data %>%
   mutate(
