@@ -3,7 +3,8 @@
 extract_multiple_cvr <- function(
     data,
     row_id,
-    cvr_cols = c("winner_cvr", "winner_name", "winner_country")
+    entity_cols,
+    cvr_column
 ) {
 
   # Extract row
@@ -11,14 +12,14 @@ extract_multiple_cvr <- function(
 
   # Keep identifiers + originals only once
   out <- data_row %>%
-    select(tender_id, lot_id, dplyr::all_of(cvr_cols))
+    select(tender_id, lot_id, dplyr::all_of(entity_cols))
   
   # Container for expanded values (DO NOT include IDs here)
   out_list <- list()
   max_detected <- 0
   
   # Loop over each column separately
-  for (col in cvr_cols) {
+  for (col in entity_cols) {
     
     x <- data_row[[col]]
     
@@ -29,7 +30,7 @@ extract_multiple_cvr <- function(
     x <- gsub("\\s*;\\s*", ";", x)
     
     # CVR-specific dot handling
-    if (col == "winner_cvr") {
+    if (col == cvr_column) {
       x <- gsub("\\.\\s*(?=[A-Z0-9])", ";", x, perl = TRUE)
     }
     
@@ -46,7 +47,7 @@ extract_multiple_cvr <- function(
     }
   }
   
-  # Find the number of winning firms detected during extraction
+  # Find the number of entities detected during extraction
   if (length(out_list) == 0) {
     n_detected <- 0
   } else {
@@ -288,10 +289,10 @@ prepare_cvr_name <- function(x) {
 # Multiple-firm name detection
 # ========================================
 
-# Create every possible partition of a winner name at plausible firm-name
+# Create every possible partition of an entity name at plausible firm-name
 # delimiters. Legal forms are masked only while finding delimiters, so the slash
 # in A/S is ignored while a slash between two firms is retained.
-make_winner_name_partitions <- function(value, max_boundaries = 5L) {
+make_name_partitions <- function(value, max_boundaries = 5L) {
   value <- as.character(value)[1]
 
   # Empty data.table to store results
@@ -346,7 +347,7 @@ make_winner_name_partitions <- function(value, max_boundaries = 5L) {
   # Collaboration vocabulary is used only for flagging. First replace phrases
   # that connect two firms with an explicit boundary. Then remove consortium,
   # joint-venture, and association labels from the name that will be tested.
-  # The original winner name is retained separately for auditing.
+  # The original entity name is retained separately for auditing.
   working_name <- trimws(value)
   working_name <- gsub(
     paste0(
@@ -596,7 +597,7 @@ keep_valid_dates <- function(candidates) {
   ]
 }
 
-# Exact joins can return several CVRs for one winner name. Prefer:
+# Exact joins can return several CVRs for one entity name. Prefer:
 #   1. a main CVR name rather than a biname;
 #   2. a name active on the exact publication date;
 #   3. the oldest registered name.
@@ -617,7 +618,7 @@ select_preferred_exact_match <- function(candidates, step) {
       (is.na(gyldigtil) | is.na(match_date) | match_date <= gyldigtil)
   )]
   
-  # Count the distinct CVRs available for each KFST winner
+  # Count the distinct CVRs available for each source entity
   candidates[
     ,
     name_match_n_candidates := uniqueN(cvr),
@@ -639,13 +640,13 @@ select_preferred_exact_match <- function(candidates, step) {
     )
   ]
   
-  # Keep the first candidate for each KFST winner
+  # Keep the first candidate for each source entity
   selected <- candidates[, .SD[1], by = match_row_id]
   
   # Return only the fields needed later
   selected[, .(
     match_row_id,
-    winner_cvr_name_match = cvr,
+    cvr_name_match = cvr,
     registered_name_match = registered_name,
     name_match_source = name_source,
     name_match_step = step,
@@ -662,7 +663,7 @@ levenshtein_ratio <- function(value, candidates) {
   100 * (total_length - distance) / total_length
 }
 
-# Fuzzy matching happens only after the exact steps. For each remaining winner:
+# Fuzzy matching happens only after the exact steps. For each remaining entity:
 #   1. keep CVR names with the same firm type and first letter;
 #   2. remove names outside the two-year date allowance;
 #   3. calculate similarity scores;
@@ -670,18 +671,18 @@ levenshtein_ratio <- function(value, candidates) {
 find_fuzzy_matches <- function(
     rows,
     key,
-    winner_name_column,
+    entity_name_column,
     key_name_column,
     first_letter_column,
-    step,
-    firm_type_column = "winner_firm_type"
+    firm_type_column,
+    step
 ) {
   if (nrow(rows) == 0) return(data.table())
   
   required_row_columns <- c(
     "match_row_id",
     "match_date",
-    winner_name_column,
+    entity_name_column,
     firm_type_column
   )
   missing_row_columns <- setdiff(required_row_columns, names(rows))
@@ -697,7 +698,7 @@ find_fuzzy_matches <- function(
   
   for (row_number in seq_len(nrow(rows))) {
     row <- rows[row_number]
-    row_name <- row[[winner_name_column]]
+    row_name <- row[[entity_name_column]]
     
     if (is.na(row_name) || row_name == "") next
     
@@ -789,7 +790,7 @@ accept_fuzzy_match <- function(candidates, threshold) {
       n_top_score_candidates == 1L,
     .(
       match_row_id,
-      winner_cvr_name_match = fuzzy_candidate_cvr,
+      cvr_name_match = fuzzy_candidate_cvr,
       registered_name_match = fuzzy_candidate_name,
       name_match_source = fuzzy_candidate_source,
       name_match_step = fuzzy_candidate_step,
