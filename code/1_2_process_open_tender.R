@@ -651,7 +651,8 @@ valid_invalid_cvr_buyer_key <- clean_buyer_data %>%
 valid_cvr_sources <- clean_buyer_data %>%
   filter(valid_cvr, !is.na(buyer_name), buyer_name != "") %>%
   summarise(
-    row_id_borrowed_from = paste(sort(unique(row_id)), collapse = ";"),
+    # One source row is enough to trace where the borrowed CVR came from.
+    row_id_borrowed_from = min(row_id),
     .by = c(buyer_name, buyer_cvr_clean)
   )
 
