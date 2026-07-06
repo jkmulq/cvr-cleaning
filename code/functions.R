@@ -5,10 +5,10 @@ extract_multiple_cvr <- function(
     row_id,
     cvr_cols = c("winner_cvr", "winner_name", "winner_country")
 ) {
-  
+
   # Extract row
   data_row <- data[row_id, ]
-  
+
   # Keep identifiers + originals only once
   out <- data_row %>%
     select(tender_id, lot_id, dplyr::all_of(cvr_cols))
