@@ -196,7 +196,7 @@ prepare_cvr_name <- function(x) {
   name_clean <- gsub("v/", " ", name_clean, fixed = TRUE)
   name_clean <- gsub("/", "", name_clean, fixed = TRUE)
   name_clean <- gsub("[-()]", " ", name_clean)
-  name_clean <- gsub("[,.:\"'´`]", "", name_clean)
+  name_clean <- gsub("[,.:\"'´`«»]", "", name_clean)
   name_clean <- gsub("\\s+", " ", trimws(name_clean))
 
   # Standardize selected whole words. Splitting the name first makes it clear
