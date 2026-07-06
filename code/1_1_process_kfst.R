@@ -203,7 +203,8 @@ cvr_cols_to_sep <- c("winner_cvr", "winner_name", "winner_country")
 multi_winner_data_sep <- map(1:nrow(multi_winner_data), 
                              .f = extract_multiple_cvr,
                              data = multi_winner_data,
-                             cvr_cols = cvr_cols_to_sep) %>% 
+                             entity_cols = cvr_cols_to_sep,
+                             cvr_column = "winner_cvr") %>%
   bind_rows()
 
 # Order columns
