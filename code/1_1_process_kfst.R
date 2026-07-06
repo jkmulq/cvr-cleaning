@@ -468,6 +468,19 @@ clean_buyer_data <- left_join(clean_buyer_data, original_buyer_data,
                                suffix = c("", "_original"))
 
 
+## 3.6 Standardise buyer names for matching
+buyer_name_prepared <- prepare_cvr_name(clean_buyer_data$buyer_name)
+
+clean_buyer_data <- clean_buyer_data %>%
+  mutate(
+    buyer_name_basic = buyer_name_prepared$name_basic,
+    buyer_name_match = buyer_name_prepared$name_clean,
+    buyer_name_no_spaces = buyer_name_prepared$name_no_spaces,
+    buyer_name_broad = buyer_name_prepared$name_broad,
+    buyer_firm_type = buyer_name_prepared$firm_type,
+    buyer_name_first_letter = buyer_name_prepared$first_letter
+  )
+
 ## 3.7 Quality/processing flags
 
 ## Flag joint tenders with unlisted buyers 
@@ -505,6 +518,10 @@ clean_buyer_data <- clean_buyer_data %>%
     n_buyers_listed_original = str_count(buyer_name_original, ";") + 1,
     flag_buyer_count_agree = coalesce(n_buyers_extracted == n_buyers_listed_original, FALSE)
   )
+
+# Flag fuzzy match check (only requires non-missing buyer name; no CVR numbers available)
+clean_buyer_data <- clean_buyer_data %>% 
+  mutate(flag_check_fuzzy_match = coalesce(!flag_missing_buyer_name, FALSE))
 
 # 4 Save 
 saveRDS(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_kfst.rds"))
