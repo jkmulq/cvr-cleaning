@@ -762,13 +762,15 @@ find_fuzzy_matches <- function(
   rbindlist(found, use.names = TRUE, fill = TRUE)
 }
 
-# Accept candidate 1 only when it exceeds the threshold for that fuzzy step.
+# Accept candidate 1 only when it exceeds the threshold and no other CVR has
+# the same top score. Tied top candidates cannot be distinguished reliably.
 accept_fuzzy_match <- function(candidates, threshold) {
   if (nrow(candidates) == 0) return(data.table())
   
   candidates[
     fuzzy_candidate_rank == 1 &
-      fuzzy_candidate_score > threshold,
+      fuzzy_candidate_score > threshold &
+      n_top_score_candidates == 1L,
     .(
       match_row_id,
       winner_cvr_name_match = fuzzy_candidate_cvr,
