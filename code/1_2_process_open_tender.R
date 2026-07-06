@@ -101,7 +101,8 @@ original_tender_data <- data %>%
     winner_cvr_original = bidder_bodyIds,
     winner_name_original = bidder_name,
     winner_country_original = bidder_country,
-    buyer_cvr_original = buyer_bodyIds
+    buyer_cvr_original = buyer_bodyIds,
+    buyer_name_original = buyer_name,
   ) %>%
   mutate(
     tender_cancelled = coalesce(
