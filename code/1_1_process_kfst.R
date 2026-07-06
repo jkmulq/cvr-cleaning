@@ -482,7 +482,6 @@ clean_buyer_data <- clean_buyer_data %>%
   )
 
 ## 3.7 Quality/processing flags
-
 ## Flag joint tenders with unlisted buyers 
 ## (i.e. joint tenders that do not have multiple buyers 
 ## listed in the buyer_name field)
