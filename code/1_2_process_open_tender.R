@@ -539,6 +539,50 @@ if (nrow(multi_buyer_data) +
 }
 
 
+## 3.4 Multi-winner data with confirmed multiple firms
+### 3.4.1 Split by CVR number
+# These are separated by a standardised delimiter ';', so easy to separate out.
+multi_buyer_data_long <- multi_buyer_data %>% 
+  separate_longer_delim(cols = buyer_cvr, delim = ";")
+
+# Rename and create copy
+multi_buyer_data_long <- multi_buyer_data_long %>% 
+  rename(buyer_cvr_candidate = buyer_cvr)
+
+multi_buyer_data_long$buyer_cvr_clean <- map_chr(multi_buyer_data_long$buyer_cvr_candidate,
+                                                   extract_valid_cvr_candidates)
+
+# Flag the cleaning steps
+multi_buyer_data_long <- multi_buyer_data_long %>% 
+  mutate(
+    # Remove white space
+    flag_cvr_ws = coalesce(str_detect(buyer_cvr_candidate, "\\s"), FALSE),
+    
+    # Remove alphabetical letters
+    flag_cvr_alphabet = coalesce(str_detect(buyer_cvr_candidate, "[[:alpha:]]"), FALSE),
+    
+    # Remove all punctuation
+    flag_cvr_punct = coalesce(str_detect(buyer_cvr_candidate, "[[:punct:]]"), FALSE),
+    
+    # Flag if any standardisation performed
+    flag_cvr_standardised = coalesce(
+      flag_cvr_ws | flag_cvr_alphabet | flag_cvr_punct,
+      FALSE
+    )
+  )
+
+### 3.4.3 Make distinct (sometimes CVR numbers are repeated within a row)
+multi_buyer_data_long <- multi_buyer_data_long %>% 
+  distinct(row_id, tender_id, buyer_cvr_clean, .keep_all = TRUE)
+
+### 3.4.4 Add metadata
+multi_buyer_data_long <- multi_buyer_data_long %>%
+  mutate(buyer_cvr_clean = as.character(buyer_cvr_clean),
+         buyer_number = row_number(),
+         source = "multiple confirmed winners",
+         .by = c(row_id, tender_id))
+
+
 # 4 Save 
 saveRDS(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_ot.rds"))
 haven::write_dta(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_ot.dta"))
