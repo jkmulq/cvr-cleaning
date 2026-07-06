@@ -629,8 +629,16 @@ clean_buyer_data <- bind_rows(single_buyer_data, multi_buyer_data_long) %>%
 clean_buyer_data <- left_join(clean_buyer_data, original_tender_data,
                                by = c("row_id", "tender_id"))
 
+# Rearrange columns 
+clean_buyer_data <- clean_buyer_data %>%
+  select(row_id, tender_id, buyer_number, buyer_name, 
+         buyer_cvr_clean, buyer_cvr_candidate, buyer_cvr_original,
+         buyer_country,
+         source, everything())
 
-
+# Create valid CVR flag
+clean_buyer_data <- clean_buyer_data %>% 
+  mutate(valid_cvr = coalesce(str_detect(buyer_cvr_clean, "^\\d{8}$"), FALSE))
 
 # 4 Save 
 saveRDS(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_ot.rds"))
