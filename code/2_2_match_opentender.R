@@ -631,7 +631,8 @@ step_candidates <- find_fuzzy_matches(
   winner_name_column = "winner_name_match",
   key_name_column = "name_match",
   first_letter_column = "first_letter",
-  step = 5L
+  step = 5L,
+  firm_type_column = "winner_firm_type"
 )
 
 # Append new match candidates the fuzzy_candidates
