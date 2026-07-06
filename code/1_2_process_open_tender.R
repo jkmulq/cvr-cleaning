@@ -541,7 +541,7 @@ if (nrow(multi_buyer_data) +
 }
 
 
-## 3.4 Multi-winner data with confirmed multiple firms
+## 3.4 Multi-buyer data with confirmed multiple firms
 ### 3.4.1 Split by CVR number
 # These are separated by a standardised delimiter ';', so easy to separate out.
 multi_buyer_data_long <- multi_buyer_data %>% 
