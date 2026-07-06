@@ -696,7 +696,7 @@ clean_buyer_data <- clean_buyer_data %>%
 clean_buyer_data <- clean_buyer_data %>% 
   mutate(valid_cvr = coalesce(str_detect(buyer_cvr_clean, "^\\d{8}$"), FALSE))
 
-### 3.8.5 Standardise winner_name (prepare for fuzzy match)
+### 3.8.5 Standardise buyer_name (prepare for fuzzy match)
 buyer_name_prepared <- prepare_cvr_name(clean_buyer_data$buyer_name)
 
 clean_buyer_data <- clean_buyer_data %>%
