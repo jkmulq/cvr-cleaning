@@ -725,7 +725,7 @@ clean_buyer_data <- clean_buyer_data %>%
     )
   )
 
-## 3.10 Other winner quality flags
+## 3.10 Other buyer quality flags
 ## Quality flags treat NAs as FALSE: missing values are captured by explicit
 ## missingness flags, not by propagating NA through boolean indicators.
 # Flag valid CVR numbers (exactly 8 digits, no letters or special characters)
