@@ -712,3 +712,87 @@ clean_buyer_data <- clean_buyer_data %>%
       FALSE
     )
   )
+
+## 3.10 Other winner quality flags
+## Quality flags treat NAs as FALSE: missing values are captured by explicit
+## missingness flags, not by propagating NA through boolean indicators.
+# Flag valid CVR numbers (exactly 8 digits, no letters or special characters)
+# missing/invalid = FALSE, valid = TRUE
+clean_buyer_data <- clean_buyer_data %>%
+  mutate(valid_cvr = coalesce(str_detect(buyer_cvr_clean, "^\\d{8}$"), FALSE))
+
+# Flag missing CVR number
+clean_buyer_data <- clean_buyer_data %>%
+  mutate(flag_missing_buyer_cvr =
+           coalesce(
+             is.na(buyer_cvr_clean) | buyer_cvr_clean == "",
+             FALSE
+           )
+  )
+
+# Flag missing buyer name
+clean_buyer_data <- clean_buyer_data %>%
+  mutate(flag_missing_buyer_name =
+           coalesce(
+             is.na(buyer_name) | buyer_name == "",
+             FALSE
+           )
+  )
+
+# Foreign buyer
+clean_buyer_data <- clean_buyer_data %>%
+  mutate(
+    flag_foreign_buyer = coalesce(
+      !is.na(buyer_country) & buyer_country != "" & buyer_country != "DK",
+      FALSE
+    )
+  )
+
+# Missing country
+clean_buyer_data <- clean_buyer_data %>%
+  mutate(flag_missing_buyer_country = coalesce(is.na(buyer_country) | buyer_country == "", FALSE))
+
+# Multi-lot tender
+clean_buyer_data <- clean_buyer_data %>%
+  mutate(
+    flag_multilot = coalesce(parse_number(n_lots) > 1, FALSE)
+  )
+
+# Cancelled procurement
+clean_buyer_data <- clean_buyer_data %>%
+  mutate(flag_cancelled = coalesce(tender_cancelled, FALSE))
+
+# Observation review
+clean_buyer_data <- clean_buyer_data %>%
+  mutate(
+    flag_missing_cvr_with_name = coalesce(
+      flag_missing_buyer_cvr & !flag_missing_buyer_name,
+      FALSE
+    ),
+    flag_review_cvr = coalesce(!flag_missing_buyer_cvr & !valid_cvr, FALSE),
+    flag_no_buyer_info = coalesce(
+      flag_missing_buyer_cvr &
+        flag_missing_buyer_name &
+        flag_missing_buyer_country,
+      FALSE
+    ),
+    flag_verify_cvr_external = coalesce(
+      case_when(
+        flag_missing_cvr_with_name ~ TRUE,
+        flag_review_cvr ~ TRUE,
+        flag_no_buyer_info ~ FALSE, # Cannot verify without information.
+        valid_cvr ~ FALSE,
+        TRUE ~ FALSE
+      ),
+      FALSE
+    )
+  )
+
+# Flag if observation will need CVR fuzzy match 
+clean_buyer_data <- clean_buyer_data %>% 
+  mutate(flag_check_fuzzy_match = coalesce(buyer_name != "" & is.na(buyer_cvr_clean), FALSE))
+
+
+# 4 Save 
+saveRDS(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_ot.rds"))
+haven::write_dta(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_ot.dta"))
