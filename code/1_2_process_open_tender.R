@@ -696,3 +696,19 @@ clean_buyer_data <- clean_buyer_data %>%
     buyer_firm_type = buyer_name_prepared$firm_type,
     buyer_name_first_letter = buyer_name_prepared$first_letter
   )
+
+## 3.9 Check carried CVR standardisation flags
+## The actual CVR standardisation happens inside each winner dataframe before
+## binding. This section only makes the carried flags complete after bind_rows().
+clean_buyer_data <- clean_buyer_data %>%
+  mutate(
+    flag_cvr_ws = coalesce(flag_cvr_ws, FALSE),
+    flag_cvr_alphabet = coalesce(flag_cvr_alphabet, FALSE),
+    flag_cvr_punct = coalesce(flag_cvr_punct, FALSE),
+    flag_cvr_standardised = coalesce(
+      flag_cvr_ws |
+        flag_cvr_alphabet |
+        flag_cvr_punct,
+      FALSE
+    )
+  )
