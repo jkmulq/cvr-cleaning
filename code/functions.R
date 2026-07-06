@@ -284,6 +284,301 @@ prepare_cvr_name <- function(x) {
 }
 
 
+# ========================================
+# Multiple-firm name detection
+# ========================================
+
+# Create every possible partition of a winner name at plausible firm-name
+# delimiters. Legal forms are masked only while finding delimiters, so the slash
+# in A/S is ignored while a slash between two firms is retained.
+make_winner_name_partitions <- function(value, max_boundaries = 5L) {
+  value <- as.character(value)[1]
+
+  # Empty data.table to store results
+  empty_partitions <- data.table::data.table(
+    partition_id = integer(),
+    partition_code = integer(),
+    partition_text = character(),
+    segment_number = integer(),
+    segment_text = character()
+  )
+
+  # Return an empty result if the input is missing or blank
+  if (is.na(value) || trimws(value) == "") {
+    return(list(
+      original_name = value,
+      working_name = value,
+      n_boundaries = 0L,
+      n_legal_forms = 0L,
+      too_many_delimiters = FALSE,
+      flag_joint_venture_text = FALSE,
+      flag_consortium_text = FALSE,
+      flag_collaboration_text = FALSE,
+      partitions = empty_partitions
+    ))
+  }
+
+  # These words flag possible collaborative bids. 
+  # They are not delimiters by themselves: "Konsortiet 1508 A/S" may be a registered firm name.
+  flag_joint_venture_text <- grepl(
+    "joint[ -]?venture|jointventure|(?<![[:alnum:]])j[.]?\\s*v[.]?(?![[:alnum:]])",
+    value,
+    ignore.case = TRUE,
+    perl = TRUE
+  )
+  flag_consortium_text <- grepl(
+    "konsorti|consorti",
+    value,
+    ignore.case = TRUE,
+    perl = TRUE
+  )
+  flag_collaboration_text <- (
+    flag_joint_venture_text |
+      flag_consortium_text |
+      grepl(
+        "sammenslutningen|i\\s+samarbejde\\s+med|sammen\\s+med",
+        value,
+        ignore.case = TRUE,
+        perl = TRUE
+      )
+  )
+
+  # Collaboration vocabulary is used only for flagging. First replace phrases
+  # that connect two firms with an explicit boundary. Then remove consortium,
+  # joint-venture, and association labels from the name that will be tested.
+  # The original winner name is retained separately for auditing.
+  working_name <- trimws(value)
+  working_name <- gsub(
+    paste0(
+      "(?:",
+      "i\\s+konsorti(?:um|e)\\s+med",
+      "|i\\s+joint[ -]?venture\\s+med",
+      "|joint[ -]?venture\\s+med",
+      "|in\\s+joint[ -]?venture\\s+with",
+      "|in\\s+j[.]?\\s*v[.]?\\s+with",
+      "|i\\s+samarbejde\\s+med",
+      "|sammen\\s+med",
+      ")"
+    ),
+    ";",
+    working_name,
+    ignore.case = TRUE,
+    perl = TRUE
+  )
+
+  # Remove the consortium term itself. In a compound such as ARC-Konsortiet,
+  # this keeps the informative "ARC" portion available for matching.
+  consortium_word_pattern <- paste0(
+    "-?(?:konsortiet|konsortium|konsortie|consortium)"
+  )
+  working_name <- gsub(
+    paste0(
+      consortium_word_pattern,
+      "(?:\\s+(?:(?:bestående|bestaaende)\\s+af|mellem|af))?"
+    ),
+    " ",
+    working_name,
+    ignore.case = TRUE,
+    perl = TRUE
+  )
+  working_name <- gsub(
+    "joint[ -]?venture|jointventure|(?<![[:alnum:]])j[.]?\\s*v[.]?(?![[:alnum:]])",
+    " ",
+    working_name,
+    ignore.case = TRUE,
+    perl = TRUE
+  )
+  working_name <- gsub(
+    "(?<![[:alnum:]])sammenslutningen(?:\\s+af)?(?![[:alnum:]])",
+    " ",
+    working_name,
+    ignore.case = TRUE,
+    perl = TRUE
+  )
+
+  # Remove punctuation left behind by labels such as "(som konsortium)" or
+  # "Joint Venture:". Delimiters between actual names remain in place.
+  working_name <- gsub(
+    "\\(\\s*(?:som|as)?\\s*\\)",
+    " ",
+    working_name,
+    ignore.case = TRUE,
+    perl = TRUE
+  )
+  working_name <- gsub("^[[:space:],;: -]+", "", working_name)
+  working_name <- gsub("[[:space:],;: -]+$", "", working_name)
+  working_name <- gsub("\\s+", " ", working_name)
+  working_name <- trimws(working_name)
+
+  # Replace legal forms with an equal number of spaces. Equal-length
+  # replacements preserve character positions in the original working name.
+  delimiter_search_name <- working_name
+  n_legal_forms <- 0L
+  for (pattern in names(cvr_firm_type_patterns())) {
+    standalone_pattern <- paste0(
+      "(?<![[:alnum:]])",
+      pattern,
+      "(?![[:alnum:]])"
+    )
+    locations <- gregexpr(
+      standalone_pattern,
+      delimiter_search_name,
+      ignore.case = TRUE,
+      perl = TRUE
+    )
+    found <- regmatches(delimiter_search_name, locations)[[1]]
+
+    if (length(found) > 0) {
+      n_legal_forms <- n_legal_forms + length(found)
+      replacement <- strrep(" ", nchar(found))
+      regmatches(delimiter_search_name, locations) <- list(replacement)
+    }
+  }
+
+  # "v/" means "represented by" in these names, not a boundary between two
+  # winning firms. Mask it after legal forms and before looking for slashes.
+  locations <- gregexpr(
+    "(?<![[:alnum:]])v/",
+    delimiter_search_name,
+    ignore.case = TRUE,
+    perl = TRUE
+  )
+  found <- regmatches(delimiter_search_name, locations)[[1]]
+  if (length(found) > 0) {
+    replacement <- strrep(" ", nchar(found))
+    regmatches(delimiter_search_name, locations) <- list(replacement)
+  }
+
+  # A comma followed by and/og/samt is deliberately treated as one boundary.
+  # A literal plus sign can also separate two firm names.
+  delimiter_pattern <- paste0(
+    ",\\s*(?:(?:and|og|samt)\\s+)?",
+    "|;",
+    "|/",
+    "|(?<![[:alnum:]])(?:og|and|samt)(?![[:alnum:]])",
+    "|&",
+    "|\\+"
+  )
+
+  locations <- gregexpr(
+    delimiter_pattern,
+    delimiter_search_name,
+    ignore.case = TRUE,
+    perl = TRUE
+  )[[1]]
+
+  if (locations[1] == -1L) {
+    return(list(
+      original_name = value,
+      working_name = working_name,
+      n_boundaries = 0L,
+      n_legal_forms = n_legal_forms,
+      too_many_delimiters = FALSE,
+      flag_joint_venture_text = flag_joint_venture_text,
+      flag_consortium_text = flag_consortium_text,
+      flag_collaboration_text = flag_collaboration_text,
+      partitions = empty_partitions
+    ))
+  }
+
+  boundary_lengths <- attr(locations, "match.length")
+  n_boundaries <- length(locations)
+
+  if (n_boundaries > max_boundaries) {
+    return(list(
+      original_name = value,
+      working_name = working_name,
+      n_boundaries = as.integer(n_boundaries),
+      n_legal_forms = n_legal_forms,
+      too_many_delimiters = TRUE,
+      flag_joint_venture_text = flag_joint_venture_text,
+      flag_consortium_text = flag_consortium_text,
+      flag_collaboration_text = flag_collaboration_text,
+      partitions = empty_partitions
+    ))
+  }
+
+  # Separate the name into its smallest pieces while retaining the exact text
+  # of every delimiter. A later split/keep choice rebuilds larger segments.
+  piece_starts <- c(1L, locations + boundary_lengths)
+  piece_ends <- c(locations - 1L, nchar(working_name))
+  pieces <- substring(working_name, piece_starts, piece_ends)
+  delimiters <- substring(
+    working_name,
+    locations,
+    locations + boundary_lengths - 1L
+  )
+
+  # Create empty vector of 2^n_boundaries - 1 partitions. 
+  # Each partition is a data.table with one row per segment.
+  # (At each boundary choose whether to split or not, but remove no split case)
+  n_partitions <- 2 ^ n_boundaries - 1L
+  partition_rows <- vector("list", n_partitions)
+  partition_number <- 0L
+
+  # Descending codes put the version that splits at every boundary first.
+  for (partition_code in rev(seq_len(n_partitions))) {
+    
+    # Code split types as a binary number. Each bit corresponds to a boundary.
+    split_here <- as.logical(
+      intToBits(partition_code)[seq_len(n_boundaries)]
+    )
+    
+    # Create segments
+    segments <- character()
+    current_segment <- pieces[1] # Initialise segment
+
+    for (boundary_number in seq_len(n_boundaries)) {
+      # If partition requires split at boundary, store current segment and start a new one. 
+      if (split_here[boundary_number]) {
+        segments <- c(segments, current_segment)
+        current_segment <- pieces[boundary_number + 1L]
+      } else { # Else, paste current and next segment together with original delimiter.
+        current_segment <- paste0(
+          current_segment,
+          delimiters[boundary_number],
+          pieces[boundary_number + 1L]
+        )
+      }
+    }
+    segments <- trimws(c(segments, current_segment))
+
+    # Do not test partitions that would create an empty firm name.
+    if (any(segments == "")) next
+
+    partition_number <- partition_number + 1L
+    partition_text <- paste(segments, collapse = "; ")
+    partition_rows[[partition_number]] <- data.table::data.table(
+      partition_id = partition_number,
+      partition_code = partition_code,
+      partition_text = partition_text,
+      segment_number = seq_along(segments),
+      segment_text = segments
+    )
+  }
+
+  # Bind
+  partitions <- data.table::rbindlist(
+    partition_rows[seq_len(partition_number)],
+    use.names = TRUE,
+    fill = TRUE
+  )
+
+  # Return
+  list(
+    original_name = value,
+    working_name = working_name,
+    n_boundaries = as.integer(n_boundaries),
+    n_legal_forms = n_legal_forms,
+    too_many_delimiters = FALSE,
+    flag_joint_venture_text = flag_joint_venture_text,
+    flag_consortium_text = flag_consortium_text,
+    flag_collaboration_text = flag_collaboration_text,
+    partitions = partitions
+  )
+}
+
+
 
 # ===============================
 # Fuzzy matching helper functions
