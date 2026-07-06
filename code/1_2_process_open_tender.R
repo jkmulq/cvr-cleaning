@@ -559,9 +559,40 @@ if (nrow(whitespace_separated_cvr_rows) > 0) {
 ## 3.1 Count distinct CVR numbers by row
 buyer_data <- buyer_data %>% 
   mutate(
-    n_valid_cvr = compute_distinct_valid_cvr(buyer_cvr),
+    # First pass: count CVRs that already appear as distinct eight-digit runs.
+    n_valid_cvr_raw = compute_distinct_valid_cvr(buyer_cvr),
+    
+    # Second pass: only for Danish rows where the first pass found nothing,
+    # recover one CVR if punctuation or prefixes were the only problem.
+    buyer_cvr_recovered_from_formatting = recover_formatted_danish_cvr(
+      cvr_candidate = buyer_cvr,
+      country = buyer_country,
+      n_valid_cvr_raw = n_valid_cvr_raw
+    ),
+    flag_cvr_recovered_from_formatting = coalesce(
+      !is.na(buyer_cvr_recovered_from_formatting),
+      FALSE
+    ),
+    
+    # Third pass: count again using the recovered CVR where one was found. This
+    # is the count used to decide whether the row should be split.
+    buyer_cvr_for_count = ifelse(
+      flag_cvr_recovered_from_formatting,
+      buyer_cvr_recovered_from_formatting,
+      buyer_cvr
+    ),
+    n_valid_cvr = compute_distinct_valid_cvr(buyer_cvr_for_count),
     flag_row_multiple_valid_cvr = (n_valid_cvr > 1)
+  ) %>%
+  select(
+    -buyer_cvr_for_count
   )
+
+n_formatted_buyer_cvrs_recovered <- sum(
+  buyer_data$flag_cvr_recovered_from_formatting
+)
+cat("Number of formatted buyer CVRs recovered:",
+    n_formatted_buyer_cvrs_recovered, "\n")
 
 
 ## 3.2 Standardise CVR number delimiters
@@ -616,6 +647,16 @@ multi_buyer_data_long$buyer_cvr_clean <- map_chr(multi_buyer_data_long$buyer_cvr
 # Flag the cleaning steps
 multi_buyer_data_long <- multi_buyer_data_long %>% 
   mutate(
+    flag_cvr_placeholder = coalesce(
+      buyer_cvr_clean %in% known_invalid_cvr_numbers(),
+      FALSE
+    ),
+    buyer_cvr_clean = ifelse(
+      flag_cvr_placeholder,
+      NA_character_,
+      buyer_cvr_clean
+    ),
+    
     # Remove white space
     flag_cvr_ws = coalesce(str_detect(buyer_cvr_candidate, "\\s"), FALSE),
     
@@ -657,7 +698,24 @@ single_buyer_data$buyer_cvr_clean <- map_chr(
 
 ### 3.5.2 Adding the CVR standardisation flags
 single_buyer_data <- single_buyer_data %>%
-  mutate(# Remove white space
+  mutate(
+    buyer_cvr_clean = ifelse(
+      flag_cvr_recovered_from_formatting,
+      buyer_cvr_recovered_from_formatting,
+      buyer_cvr_clean
+    ),
+    
+    flag_cvr_placeholder = coalesce(
+      buyer_cvr_clean %in% known_invalid_cvr_numbers(),
+      FALSE
+    ),
+    buyer_cvr_clean = ifelse(
+      flag_cvr_placeholder,
+      NA_character_,
+      buyer_cvr_clean
+    ),
+    
+    # Remove white space
     flag_cvr_ws = coalesce(str_detect(buyer_cvr_candidate, "\\s"), FALSE),
     
     # Remove alphabetical letters
@@ -695,19 +753,68 @@ clean_buyer_data <- clean_buyer_data %>%
          buyer_country,
          source, everything())
 
+## 3.8 Remove non-CVR tokens from multi-CVR buyer rows
+## A multi-CVR source row can also contain foreign or alternative identifiers.
+## If that source row already supplied valid Danish CVRs, do not turn its
+## remaining invalid tokens into additional missing buyers for name matching.
+clean_buyer_data <- clean_buyer_data %>%
+  mutate(
+    buyer_cvr_is_valid = coalesce(
+      str_detect(buyer_cvr_clean, "^[0-9]{8}$"),
+      FALSE
+    ),
+    row_has_valid_buyer_cvr = any(buyer_cvr_is_valid),
+    .by = c(row_id, tender_id)
+  )
+
+invalid_multi_buyer_cvr_tokens <- clean_buyer_data %>%
+  filter(
+    source == "multiple CVRs",
+    row_has_valid_buyer_cvr,
+    !buyer_cvr_is_valid
+  )
+
+cat("Number of non-CVR tokens removed from multi-CVR rows:",
+    nrow(invalid_multi_buyer_cvr_tokens), "\n")
+
+clean_buyer_data <- clean_buyer_data %>%
+  filter(
+    !(
+      source == "multiple CVRs" &
+        row_has_valid_buyer_cvr &
+        !buyer_cvr_is_valid
+    )
+  ) %>%
+  mutate(
+    buyer_number = row_number(),
+    .by = c(row_id, tender_id)
+  ) %>%
+  mutate(
+    flag_non_cvr_identifier = coalesce(
+      !is.na(buyer_cvr_candidate) &
+        str_trim(buyer_cvr_candidate) != "" &
+        is.na(buyer_cvr_clean),
+      FALSE
+    )
+  ) %>%
+  select(
+    -buyer_cvr_is_valid,
+    -row_has_valid_buyer_cvr
+  )
+
 # Create valid CVR flag
 clean_buyer_data <- clean_buyer_data %>% 
   mutate(valid_cvr = coalesce(str_detect(buyer_cvr_clean, "^\\d{8}$"), FALSE))
 
-## 3.8 Fill missing CVRs when present elsewhere in data
-### 3.8.1 Create key of CVR to firm names present in the data
+## 3.9 Fill missing CVRs when present elsewhere in data
+### 3.9.1 Create key of CVR to firm names present in the data
 valid_invalid_cvr_buyer_key <- clean_buyer_data %>%
   distinct(buyer_name, buyer_cvr_clean, valid_cvr) %>%
   mutate(n_valid_cvr = sum(valid_cvr), 
          n_total_cvr = n(), # Counts missings
          .by = buyer_name) 
 
-### 3.8.2 Identify a reproducible source row for each valid firm-name/CVR pairing
+### 3.9.2 Identify a reproducible source row for each valid firm-name/CVR pairing
 valid_cvr_sources <- clean_buyer_data %>%
   filter(valid_cvr, !is.na(buyer_name), buyer_name != "") %>%
   summarise(
@@ -716,7 +823,7 @@ valid_cvr_sources <- clean_buyer_data %>%
     .by = c(buyer_name, buyer_cvr_clean)
   )
 
-### 3.8.3 Create subset of firms with 1 valid CVR, but more than 1 CVR entry (including missings)
+### 3.9.3 Create subset of firms with 1 valid CVR, but more than 1 CVR entry (including missings)
 single_valid_cvr_key <- valid_invalid_cvr_buyer_key %>% 
   filter(n_valid_cvr == 1, n_total_cvr > 1, valid_cvr) %>% 
   rename(buyer_cvr_valid_from_same_name = buyer_cvr_clean) %>%
@@ -732,7 +839,7 @@ clean_buyer_data <- left_join(clean_buyer_data, single_valid_cvr_key,
                                by = "buyer_name",
                                na_matches = "never")
 
-### 3.8.4 Overwrite missing CVR when valid alternative available 
+### 3.9.4 Overwrite missing CVR when valid alternative available 
 clean_buyer_data <- clean_buyer_data %>% 
   mutate(flag_fill_missing_cvr = coalesce((buyer_cvr_original == "" | is.na(buyer_cvr_original)) &
                                             !is.na(buyer_cvr_valid_from_same_name) &
@@ -757,7 +864,7 @@ clean_buyer_data <- clean_buyer_data %>%
 clean_buyer_data <- clean_buyer_data %>% 
   mutate(valid_cvr = coalesce(str_detect(buyer_cvr_clean, "^\\d{8}$"), FALSE))
 
-### 3.8.5 Standardise buyer_name (prepare for fuzzy match)
+### 3.9.5 Standardise buyer_name (prepare for fuzzy match)
 buyer_name_prepared <- prepare_cvr_name(clean_buyer_data$buyer_name)
 
 clean_buyer_data <- clean_buyer_data %>%
@@ -770,7 +877,7 @@ clean_buyer_data <- clean_buyer_data %>%
     buyer_name_first_letter = buyer_name_prepared$first_letter
   )
 
-## 3.9 Check carried CVR standardisation flags
+## 3.10 Check carried CVR standardisation flags
 ## The actual CVR standardisation happens inside each buyer dataframe before
 ## binding. This section only makes the carried flags complete after bind_rows().
 clean_buyer_data <- clean_buyer_data %>%
@@ -786,7 +893,7 @@ clean_buyer_data <- clean_buyer_data %>%
     )
   )
 
-## 3.10 Other buyer quality flags
+## 3.11 Other buyer quality flags
 ## Quality flags treat NAs as FALSE: missing values are captured by explicit
 ## missingness flags, not by propagating NA through boolean indicators.
 # Flag valid CVR numbers (exactly 8 digits, no letters or special characters)
