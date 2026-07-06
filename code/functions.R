@@ -673,33 +673,49 @@ find_fuzzy_matches <- function(
     winner_name_column,
     key_name_column,
     first_letter_column,
-    step
+    step,
+    firm_type_column = "winner_firm_type"
 ) {
   if (nrow(rows) == 0) return(data.table())
   
+  required_row_columns <- c(
+    "match_row_id",
+    "match_date",
+    winner_name_column,
+    firm_type_column
+  )
+  missing_row_columns <- setdiff(required_row_columns, names(rows))
+
+  if (length(missing_row_columns) > 0) {
+    stop(
+      "find_fuzzy_matches(): rows is missing required columns: ",
+      paste(missing_row_columns, collapse = ", ")
+    )
+  }
+
   found <- vector("list", nrow(rows))
   
   for (row_number in seq_len(nrow(rows))) {
-    winner <- rows[row_number]
-    winner_name <- winner[[winner_name_column]]
+    row <- rows[row_number]
+    row_name <- row[[winner_name_column]]
     
-    if (is.na(winner_name) || winner_name == "") next
+    if (is.na(row_name) || row_name == "") next
     
-    winner_firm_type_value <- winner$winner_firm_type
-    winner_first_letter_value <- substr(winner_name, 1, 1)
+    row_firm_type_value <- row[[firm_type_column]]
+    row_first_letter_value <- substr(row_name, 1, 1)
     
     # Create candidate matches
     # - same firm type
     # - either first letter or first broad letter
     if (first_letter_column == "first_letter") {
       candidates <- key[
-        list(winner_firm_type_value, winner_first_letter_value),
+        list(row_firm_type_value, row_first_letter_value),
         on = .(firm_type, first_letter),
         nomatch = 0
       ]
     } else {
       candidates <- key[
-        list(winner_firm_type_value, winner_first_letter_value),
+        list(row_firm_type_value, row_first_letter_value),
         on = .(firm_type, broad_first_letter),
         nomatch = 0
       ]
@@ -708,7 +724,7 @@ find_fuzzy_matches <- function(
     if (nrow(candidates) == 0) next
     
     # Keep candidate matches with valid registration dates
-    candidates[, match_date := winner$match_date]
+    candidates[, match_date := row$match_date]
     candidates <- keep_valid_dates(candidates)
     
     # Extract candidate names and keep only non-missings
@@ -720,7 +736,7 @@ find_fuzzy_matches <- function(
     if (nrow(candidates) == 0) next
     
     candidates[, score := levenshtein_ratio(
-      winner_name,
+      row_name,
       candidate_names
     )]
     
@@ -748,7 +764,7 @@ find_fuzzy_matches <- function(
     candidates[, fuzzy_candidate_rank := seq_len(.N)]
     
     found[[row_number]] <- candidates[, .(
-      match_row_id = winner$match_row_id,
+      match_row_id = row$match_row_id,
       fuzzy_candidate_cvr = cvr,
       fuzzy_candidate_name = registered_name,
       fuzzy_candidate_source = name_source,
