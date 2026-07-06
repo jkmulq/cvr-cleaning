@@ -144,9 +144,40 @@ if (nrow(whitespace_separated_cvr_rows) > 0) {
 ## 2.1 Count distinct CVR numbers by row
 winner_data <- winner_data %>% 
   mutate(
-    n_valid_cvr = compute_distinct_valid_cvr(winner_cvr),
+    # First pass: count CVRs that already appear as distinct eight-digit runs.
+    n_valid_cvr_raw = compute_distinct_valid_cvr(winner_cvr),
+    
+    # Second pass: only for Danish rows where the first pass found nothing,
+    # recover one CVR if punctuation or prefixes were the only problem.
+    winner_cvr_recovered_from_formatting = recover_formatted_danish_cvr(
+      cvr_candidate = winner_cvr,
+      country = winner_country,
+      n_valid_cvr_raw = n_valid_cvr_raw
+    ),
+    flag_cvr_recovered_from_formatting = coalesce(
+      !is.na(winner_cvr_recovered_from_formatting),
+      FALSE
+    ),
+    
+    # Third pass: count again using the recovered CVR where one was found. This
+    # is the count used to decide whether the row should be split.
+    winner_cvr_for_count = ifelse(
+      flag_cvr_recovered_from_formatting,
+      winner_cvr_recovered_from_formatting,
+      winner_cvr
+    ),
+    n_valid_cvr = compute_distinct_valid_cvr(winner_cvr_for_count),
     flag_row_multiple_valid_cvr = (n_valid_cvr > 1)
+  ) %>%
+  select(
+    -winner_cvr_for_count
   )
+
+n_formatted_winner_cvrs_recovered <- sum(
+  winner_data$flag_cvr_recovered_from_formatting
+)
+cat("Number of formatted winner CVRs recovered:",
+    n_formatted_winner_cvrs_recovered, "\n")
 
 ## 2.2 Standardise CVR number delimiters
 winner_data <- winner_data %>%
@@ -204,6 +235,16 @@ multi_winner_data_long$winner_cvr_clean <- map_chr(multi_winner_data_long$winner
 # Flag the cleaning steps
 multi_winner_data_long <- multi_winner_data_long %>% 
   mutate(
+    flag_cvr_placeholder = coalesce(
+      winner_cvr_clean %in% known_invalid_cvr_numbers(),
+      FALSE
+    ),
+    winner_cvr_clean = ifelse(
+      flag_cvr_placeholder,
+      NA_character_,
+      winner_cvr_clean
+    ),
+    
     # Remove white space
     flag_cvr_ws = coalesce(str_detect(winner_cvr_candidate, "\\s"), FALSE),
 
@@ -245,7 +286,24 @@ single_winner_data$winner_cvr_clean <- map_chr(
 
 ### 2.5.2 Adding the CVR standardisation flags
 single_winner_data <- single_winner_data %>%
-  mutate(# Remove white space
+  mutate(
+         winner_cvr_clean = ifelse(
+           flag_cvr_recovered_from_formatting,
+           winner_cvr_recovered_from_formatting,
+           winner_cvr_clean
+         ),
+         
+         flag_cvr_placeholder = coalesce(
+           winner_cvr_clean %in% known_invalid_cvr_numbers(),
+           FALSE
+         ),
+         winner_cvr_clean = ifelse(
+           flag_cvr_placeholder,
+           NA_character_,
+           winner_cvr_clean
+         ),
+         
+         # Remove white space
          flag_cvr_ws = coalesce(str_detect(winner_cvr_candidate, "\\s"), FALSE),
 
          # Remove alphabetical letters
