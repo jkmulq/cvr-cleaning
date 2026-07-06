@@ -107,6 +107,36 @@ compute_distinct_valid_cvr <- function(x) {
   )
 }
 
+# Legal-form spellings used when preparing CVR names. Keeping this dictionary
+# in one place means name preparation and multiple-firm detection use the same
+# definition of terms such as A/S, ApS, and I/S.
+cvr_firm_type_patterns <- function() {
+  c(
+    "aktieselskabet" = "a/s",
+    "aktieselskab" = "a/s",
+    "anpartsselskabet" = "aps",
+    "anpartsselskab" = "aps",
+    "a[.]m[.]b[.]a[.]?" = "amba",
+    "a\\s+m\\s+b\\s+a" = "amba",
+    "s[.]m[.]b[.]a[.]?" = "smba",
+    "f[.]m[.]b[.]a[.]?" = "fmba",
+    "a/s[.]?" = "a/s",
+    "gmbh" = "a/s",
+    "aps" = "aps",
+    "i/s" = "i/s",
+    "k/s" = "k/s",
+    "ks" = "k/s",
+    "ivs" = "ivs",
+    "p/s" = "p/s",
+    "amba[.]?" = "amba",
+    "smba" = "smba",
+    "fmba" = "fmba",
+    "as" = "a/s",
+    "ab" = "aps",
+    "a/" = "a/s"
+  )
+}
+
 # This is an R version of the main fuzzy-matching preparation used in
 # Bisnode matching documentation_V7.docx and the referenced Python notebooks.
 # It keeps spaces between words because the notebooks use this version for
