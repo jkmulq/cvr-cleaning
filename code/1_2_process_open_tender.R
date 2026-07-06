@@ -640,6 +640,47 @@ clean_buyer_data <- clean_buyer_data %>%
 clean_buyer_data <- clean_buyer_data %>% 
   mutate(valid_cvr = coalesce(str_detect(buyer_cvr_clean, "^\\d{8}$"), FALSE))
 
-# 4 Save 
-saveRDS(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_ot.rds"))
-haven::write_dta(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_ot.dta"))
+## 3.8 Fill missing CVRs when present elsewhere in data
+### 3.8.1 Create key of CVR to firm names present in the data
+valid_invalid_cvr_buyer_key <- clean_buyer_data %>%
+  distinct(buyer_name, buyer_cvr_clean, valid_cvr) %>%
+  mutate(n_valid_cvr = sum(valid_cvr), 
+         n_total_cvr = n(), # Counts missings
+         .by = buyer_name) 
+
+### 3.8.2 Identify a reproducible source row for each valid firm-name/CVR pairing
+valid_cvr_sources <- clean_buyer_data %>%
+  filter(valid_cvr, !is.na(buyer_name), buyer_name != "") %>%
+  summarise(
+    row_id_borrowed_from = paste(sort(unique(row_id)), collapse = ";"),
+    .by = c(buyer_name, buyer_cvr_clean)
+  )
+
+### 3.8.3 Create subset of firms with 1 valid CVR, but more than 1 CVR entry (including missings)
+single_valid_cvr_key <- valid_invalid_cvr_buyer_key %>% 
+  filter(n_valid_cvr == 1, n_total_cvr > 1, valid_cvr) %>% 
+  rename(buyer_cvr_valid_from_same_name = buyer_cvr_clean) %>%
+  select(-valid_cvr, -n_valid_cvr, -n_total_cvr) %>% 
+  distinct()
+
+# Join sources
+single_valid_cvr_key <- single_valid_cvr_key %>%
+  left_join(valid_cvr_sources, by = c("buyer_name", "buyer_cvr_valid_from_same_name" = "buyer_cvr_clean"))
+
+# Join key
+clean_buyer_data <- left_join(clean_buyer_data, single_valid_cvr_key, 
+                               by = "buyer_name",
+                               na_matches = "never")
+
+### 3.8.4 Overwrite missing CVR when valid alternative available 
+clean_buyer_data <- clean_buyer_data %>% 
+  mutate(flag_fill_missing_cvr = coalesce((buyer_cvr_original == "" | is.na(buyer_cvr_original)) &
+                                            !is.na(buyer_cvr_valid_from_same_name) &
+                                            buyer_cvr_valid_from_same_name != "", 
+                                          FALSE))
+clean_buyer_data <- clean_buyer_data %>% 
+  mutate(buyer_cvr_clean = ifelse(flag_fill_missing_cvr, buyer_cvr_valid_from_same_name, buyer_cvr_clean))
+
+# Update valid CVR flag
+clean_buyer_data <- clean_buyer_data %>% 
+  mutate(valid_cvr = coalesce(str_detect(buyer_cvr_clean, "^\\d{8}$"), FALSE))
