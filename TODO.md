@@ -36,6 +36,13 @@ This file tracks development work against the current codebase and the project b
   - Conclusion: exact matching and fuzzy matching process copies the process provided in the replication materials. Most of the matches come from exact matches; counts/proportions documented in diagnostic note. 
 - [x] Add ambiguity flags for name matching.
   - Target: flag cases where a name could map to several CVR numbers or where the match confidence is too low.
+- [ ] Validate existing cleaned CVR-name pairs against the provided CVR keys.
+  - Check winner rows that already had a valid cleaned CVR and therefore did not need missing-CVR name matching.
+  - Start with the KFST multiple-winner rows. For each expanded row, compare the cleaned CVR and winner name with the main-name and biname records for that CVR.
+  - Use the same prepared name fields and tender-date rules as the name-matching process.
+  - Report counts and proportions for exact agreement, fuzzy agreement, a CVR found with a different name, and a CVR not found in the provided keys.
+  - Report results separately by dataset and cleaning source, and keep `tender_id`, `lot_id`, `winner_number`, the original values, and the cleaned values for review.
+  - Add the results and representative disagreements to the quality analysis report.
 - [ ] Make sure winner/buyer names are expanded alongside the relevant CVR numbers.
   - matching process not implemented for buyers
 
