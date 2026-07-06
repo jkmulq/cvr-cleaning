@@ -540,7 +540,7 @@ if (nrow(multi_buyer_data) +
 }
 
 
-## 3.4 Multi-buyer data with confirmed multiple firms
+## 3.4 Rows with multiple valid buyer CVRs
 ### 3.4.1 Split by CVR number
 # These are separated by a standardised delimiter ';', so easy to separate out.
 multi_buyer_data_long <- multi_buyer_data %>% 
@@ -580,7 +580,7 @@ multi_buyer_data_long <- multi_buyer_data_long %>%
 multi_buyer_data_long <- multi_buyer_data_long %>%
   mutate(buyer_cvr_clean = as.character(buyer_cvr_clean),
          buyer_number = row_number(),
-         source = "multiple confirmed winners",
+         source = "multiple CVRs",
          .by = c(row_id, tender_id))
 
 
@@ -613,17 +613,17 @@ single_buyer_data <- single_buyer_data %>%
 
 # Create metadata
 single_buyer_data <- single_buyer_data %>% 
-  mutate(winner_number = 1,
+  mutate(buyer_number = 1,
          source = "single buyer")
 
-## 3.6 Bind winner data
+## 3.6 Bind buyer data
 ## Goal: Create one OpenTender buyer table with cleaned CVR candidates and
 ## keep the OpenTender-specific review flags created above.
 clean_buyer_data <- bind_rows(single_buyer_data, multi_buyer_data_long) %>%
   arrange(row_id, buyer_number) 
 
 ## 3.7 Join original tender data
-## This keeps the full OpenTender row attached to the cleaned winner rows, so
+## This keeps the full OpenTender row attached to the cleaned buyer rows, so
 ## replication checks can always go back to the source fields.
 clean_buyer_data <- left_join(clean_buyer_data, original_tender_data,
                                by = c("row_id", "tender_id"))
