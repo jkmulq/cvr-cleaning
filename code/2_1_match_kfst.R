@@ -155,7 +155,7 @@ fuzzy_candidates <- data.table()
 step_candidates <- find_fuzzy_matches(
   remaining,
   name_key,
-  winner_name_column = "winner_name_match",
+  entity_name_column = "winner_name_match",
   key_name_column = "name_match",
   first_letter_column = "first_letter",
   step = 5L,
@@ -178,7 +178,7 @@ cat("Number of new fuzzy matches:", nrow(new_matches))
 step_candidates <- find_fuzzy_matches(
   remaining,
   biname_key,
-  winner_name_column = "winner_name_match",
+  entity_name_column = "winner_name_match",
   key_name_column = "name_match",
   first_letter_column = "first_letter",
   step = 5L,
@@ -202,7 +202,7 @@ cat("Number of new fuzzy matches:", nrow(new_matches))
 step_candidates <- find_fuzzy_matches(
   remaining,
   name_key,
-  winner_name_column = "winner_name_broad",
+  entity_name_column = "winner_name_broad",
   key_name_column = "name_broad",
   first_letter_column = "broad_first_letter",
   step = 6L,
@@ -225,7 +225,7 @@ cat("Number of fuzzy matches:", nrow(new_matches))
 step_candidates <- find_fuzzy_matches(
   remaining,
   biname_key,
-  winner_name_column = "winner_name_broad",
+  entity_name_column = "winner_name_broad",
   key_name_column = "name_broad",
   first_letter_column = "broad_first_letter",
   step = 6L,
@@ -305,7 +305,7 @@ winner_data[
   matched,
   on = "match_row_id",
   `:=`(
-    winner_cvr_name_match = i.winner_cvr_name_match,
+    winner_cvr_name_match = i.cvr_name_match,
     registered_name_match = i.registered_name_match,
     name_match_source = i.name_match_source,
     name_match_step = i.name_match_step,
