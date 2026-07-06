@@ -583,6 +583,39 @@ multi_buyer_data_long <- multi_buyer_data_long %>%
          .by = c(row_id, tender_id))
 
 
+## 3.5 Clean single CVR data
+# Rename and copy
+single_buyer_data <- single_buyer_data %>% 
+  rename(buyer_cvr_candidate = buyer_cvr)
+
+### 3.5.1 Extract and clean CVR
+single_buyer_data$buyer_cvr_clean <- map_chr(
+  single_buyer_data$buyer_cvr_candidate,
+  ~unique(extract_valid_cvr_candidates(.x))
+)
+
+### 3.5.2 Adding the CVR standardisation flags
+single_buyer_data <- single_buyer_data %>%
+  mutate(# Remove white space
+    flag_cvr_ws = coalesce(str_detect(buyer_cvr_candidate, "\\s"), FALSE),
+    
+    # Remove alphabetical letters
+    flag_cvr_alphabet = coalesce(str_detect(buyer_cvr_candidate, "[[:alpha:]]"), FALSE),
+    
+    # Remove all punctuation
+    flag_cvr_punct = coalesce(str_detect(buyer_cvr_candidate, "[[:punct:]]"), FALSE),
+    
+    # Flag if any standardisation performed
+    flag_cvr_standardised = coalesce(
+      flag_cvr_ws | flag_cvr_alphabet | flag_cvr_punct, FALSE
+    ))
+
+# Create metadata
+single_buyer_data <- single_buyer_data %>% 
+  mutate(winner_number = 1,
+         source = "single buyer")
+
+
 # 4 Save 
 saveRDS(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_ot.rds"))
 haven::write_dta(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_ot.dta"))
