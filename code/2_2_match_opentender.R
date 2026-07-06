@@ -198,7 +198,6 @@ consortium_name_rows[
   )
 ]
 consortium_remaining <- copy(consortium_name_rows)
-consortium_name_results <- data.table()
 
 ## 4.1 Lightly prepared whole name and firm type
 consortium_candidates <- cvr_key[
@@ -213,11 +212,6 @@ consortium_candidates <- cvr_key[
 new_consortium_matches <- select_preferred_exact_match(
   consortium_candidates,
   step = 5L
-)
-consortium_name_results <- rbindlist(
-  list(consortium_name_results, new_consortium_matches),
-  use.names = TRUE,
-  fill = TRUE
 )
 keep_step_matches(new_consortium_matches)
 consortium_remaining <- consortium_remaining[
@@ -236,11 +230,6 @@ consortium_candidates <- cvr_key[
   allow.cartesian = TRUE
 ]
 new_consortium_matches <- select_preferred_exact_match(consortium_candidates, step = 6L)
-consortium_name_results <- rbindlist(
-  list(consortium_name_results, new_consortium_matches),
-  use.names = TRUE,
-  fill = TRUE
-)
 keep_step_matches(new_consortium_matches)
 consortium_remaining <- consortium_remaining[
   !new_consortium_matches,
@@ -255,11 +244,6 @@ consortium_candidates <- cvr_key[
   allow.cartesian = TRUE
 ]
 new_consortium_matches <- select_preferred_exact_match(consortium_candidates, step = 7L)
-consortium_name_results <- rbindlist(
-  list(consortium_name_results, new_consortium_matches),
-  use.names = TRUE,
-  fill = TRUE
-)
 keep_step_matches(new_consortium_matches)
 consortium_remaining <- consortium_remaining[!new_consortium_matches, on = "match_row_id"]
 
@@ -272,11 +256,6 @@ consortium_candidates <- cvr_key[
 ]
 new_consortium_matches <- select_preferred_exact_match(consortium_candidates, step = 8L)
 keep_step_matches(new_consortium_matches)
-consortium_name_results <- rbindlist(
-  list(consortium_name_results, new_consortium_matches),
-  use.names = TRUE,
-  fill = TRUE
-)
 
 
 # 5 Deduplication
@@ -297,7 +276,7 @@ for (row_number in seq_len(nrow(remaining))) {
     winner$winner_name,
     max_boundaries = 5L
   )
-  
+
   # Only test partitions when there is positive evidence of several firms:
   # collaboration vocabulary or at least two legal forms. This protects
   # geography, divisions, generic fragments, and single legal-form names from
@@ -313,7 +292,7 @@ for (row_number in seq_len(nrow(remaining))) {
     "multiple legal forms",
     default = "excluded - insufficient multiple-firm evidence"
   )
-  
+
   # Create data.table of paritions
   partition_summaries[[row_number]] <- data.table(
     match_row_id = winner$match_row_id,
@@ -326,7 +305,7 @@ for (row_number in seq_len(nrow(remaining))) {
     flag_collaboration_text = result$flag_collaboration_text,
     too_many_delimiters = result$too_many_delimiters
   )
-  
+
   if (partition_eligible && nrow(result$partitions) > 0) {
     partition_tables[[row_number]] <- copy(result$partitions)[
       ,
