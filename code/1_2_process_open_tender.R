@@ -615,6 +615,20 @@ single_buyer_data <- single_buyer_data %>%
   mutate(winner_number = 1,
          source = "single buyer")
 
+## 3.6 Bind winner data
+## Goal: Create one OpenTender buyer table with cleaned CVR candidates and
+## keep the OpenTender-specific review flags created above.
+clean_buyer_data <- bind_rows(single_buyer_data, multi_buyer_data_long) %>%
+  arrange(row_id, buyer_number) 
+
+## 3.7 Join original tender data
+## This keeps the full OpenTender row attached to the cleaned winner rows, so
+## replication checks can always go back to the source fields.
+clean_buyer_data <- left_join(clean_buyer_data, original_tender_data,
+                               by = c("row_id", "tender_id"))
+
+
+
 
 # 4 Save 
 saveRDS(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_ot.rds"))
