@@ -519,7 +519,6 @@ buyer_data <- buyer_data %>%
     buyer_cvr = str_replace_all(buyer_cvr, ";+", ";")
   )
 
-
 # Print number of true multi CVR numbers.
 n_true_multi_cvrs <- sum(buyer_data$flag_row_multiple_valid_cvr, na.rm = TRUE)
 cat("Number of true multi CVR numbers detected:", n_true_multi_cvrs, "\n")
@@ -684,3 +683,16 @@ clean_buyer_data <- clean_buyer_data %>%
 # Update valid CVR flag
 clean_buyer_data <- clean_buyer_data %>% 
   mutate(valid_cvr = coalesce(str_detect(buyer_cvr_clean, "^\\d{8}$"), FALSE))
+
+### 3.8.5 Standardise winner_name (prepare for fuzzy match)
+buyer_name_prepared <- prepare_cvr_name(clean_buyer_data$buyer_name)
+
+clean_buyer_data <- clean_buyer_data %>%
+  mutate(
+    buyer_name_basic = buyer_name_prepared$name_basic,
+    buyer_name_match = buyer_name_prepared$name_clean,
+    buyer_name_no_spaces = buyer_name_prepared$name_no_spaces,
+    buyer_name_broad = buyer_name_prepared$name_broad,
+    buyer_firm_type = buyer_name_prepared$firm_type,
+    buyer_name_first_letter = buyer_name_prepared$first_letter
+  )
