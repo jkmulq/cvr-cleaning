@@ -659,7 +659,7 @@ select_preferred_exact_match <- function(candidates, step) {
 levenshtein_ratio <- function(value, candidates) {
   distance <- as.numeric(adist(value, candidates))
   total_length <- nchar(value) + nchar(candidates)
-  round(100 * (total_length - distance) / total_length)
+  100 * (total_length - distance) / total_length
 }
 
 # Fuzzy matching happens only after the exact steps. For each remaining winner:
