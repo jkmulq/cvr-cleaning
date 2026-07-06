@@ -678,7 +678,19 @@ clean_buyer_data <- clean_buyer_data %>%
                                             buyer_cvr_valid_from_same_name != "", 
                                           FALSE))
 clean_buyer_data <- clean_buyer_data %>% 
-  mutate(buyer_cvr_clean = ifelse(flag_fill_missing_cvr, buyer_cvr_valid_from_same_name, buyer_cvr_clean))
+  mutate(
+    buyer_cvr_clean = ifelse(
+      flag_fill_missing_cvr,
+      buyer_cvr_valid_from_same_name,
+      buyer_cvr_clean
+    ),
+    # Keep source provenance only on rows whose CVR was actually filled.
+    row_id_borrowed_from = ifelse(
+      flag_fill_missing_cvr,
+      row_id_borrowed_from,
+      NA_integer_
+    )
+  )
 
 # Update valid CVR flag
 clean_buyer_data <- clean_buyer_data %>% 
