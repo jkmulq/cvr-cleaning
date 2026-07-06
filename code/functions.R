@@ -170,30 +170,7 @@ prepare_cvr_name <- function(x) {
 
   # Detect legal form only when it is a standalone term, then remove it from
   # the name. Longer expressions come first to avoid partial matches.
-  firm_type_patterns <- c(
-    "aktieselskabet" = "a/s",
-    "aktieselskab" = "a/s",
-    "anpartsselskabet" = "aps",
-    "anpartsselskab" = "aps",
-    "a[.]m[.]b[.]a[.]?" = "amba",
-    "a\\s+m\\s+b\\s+a" = "amba",
-    "s[.]m[.]b[.]a[.]?" = "smba",
-    "f[.]m[.]b[.]a[.]?" = "fmba",
-    "a/s[.]?" = "a/s",
-    "gmbh" = "a/s",
-    "aps" = "aps",
-    "i/s" = "i/s",
-    "k/s" = "k/s",
-    "ks" = "k/s",
-    "ivs" = "ivs",
-    "p/s" = "p/s",
-    "amba[.]?" = "amba",
-    "smba" = "smba",
-    "fmba" = "fmba",
-    "as" = "a/s",
-    "ab" = "aps",
-    "a/" = "a/s"
-  )
+  firm_type_patterns <- cvr_firm_type_patterns()
 
   firm_type <- rep("Undetermined", length(name_clean))
 
