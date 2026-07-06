@@ -475,6 +475,68 @@ clean_winner_data <- clean_winner_data %>%
     everything()
   )
 
+# 3 Clean up buyer data
+## Buyers do not have CVR numbers, but they have names.
+buyer_data <- buyer_data_original
+
+# Guard against whitespace acting as an unhandled delimiter between two CVRs.
+# The helper removes whitespace to repair spaced CVRs, so these rows would become
+# one 16-digit string and incorrectly bypass the multiple-CVR cleaning workflow.
+whitespace_separated_cvr_rows <- buyer_data %>%
+  filter(str_detect(
+    buyer_cvr,
+    "(?<![0-9])[0-9]{8}[[:space:]]+[0-9]{8}(?![0-9])"
+  )) %>%
+  select(row_id, tender_id, buyer_cvr)
+
+if (nrow(whitespace_separated_cvr_rows) > 0) {
+  print(whitespace_separated_cvr_rows)
+  stop("Some buyer rows contain two CVRs separated only by whitespace.")
+}
+
+## 3.1 Count distinct CVR numbers by row
+buyer_data <- buyer_data %>% 
+  mutate(
+    n_valid_cvr = compute_distinct_valid_cvr(buyer_cvr),
+    flag_row_multiple_valid_cvr = (n_valid_cvr > 1)
+  )
+
+
+## 3.2 Standardise CVR number delimiters
+buyer_data <- buyer_data %>%
+  mutate(
+    buyer_cvr = ifelse(
+      flag_row_multiple_valid_cvr,
+      str_replace_all(
+        buyer_cvr,
+        regex("\\s*(,|;|\\||/|&|\\bog\\b|(?<=[\\d\\)])og(?=[[:alnum:]]))\\s*", ignore_case = TRUE),
+        ";"
+      ),
+      buyer_cvr
+    ),
+    buyer_cvr = str_replace_all(buyer_cvr, ";+", ";")
+  )
+
+
+# Print number of true multi CVR numbers.
+n_true_multi_cvrs <- sum(buyer_data$flag_row_multiple_valid_cvr, na.rm = TRUE)
+cat("Number of true multi CVR numbers detected:", n_true_multi_cvrs, "\n")
+
+## 3.3 Separate into single and multiple CVRs
+# Multiple distinct CVR numbers
+multi_buyer_data <- buyer_data %>% 
+  filter(flag_row_multiple_valid_cvr)
+
+# Only one valid CVR
+single_buyer_data <- buyer_data %>% 
+  filter(!flag_row_multiple_valid_cvr)
+
+# Check these datasets cover complete data dataset
+if (nrow(multi_buyer_data) + 
+    nrow(single_buyer_data) - 
+    nrow(buyer_data) != 0) {
+  stop("subsetted datasets do not have the same number of rows as the full winner dataset")
+}
 
 
 # 4 Save 
