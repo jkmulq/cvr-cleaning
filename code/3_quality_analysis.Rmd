@@ -57,6 +57,11 @@ kfst_clean <- readRDS(input_files[1])
 kfst_matched <- readRDS(input_files[2])
 ot_clean <- readRDS(input_files[3])
 ot_matched <- readRDS(input_files[4])
+
+# Graph settings
+theme_set(theme_light())
+theme_update(plot.title = element_text(hjust = 0.5, face = "bold"))
+theme_update(plot.subtitle = element_text(hjust = 0.5))
 ```
 
 <style>
