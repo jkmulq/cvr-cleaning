@@ -94,6 +94,7 @@ candidate_matches <- cvr_key[
 # select_preferred_exact_match() prioritises matches from the main firm name, 
 # and removes invalid matches based on registration/tender dates.
 new_matches <- select_preferred_exact_match(candidate_matches, step = 1L)
+new_matches <- add_buyer_context_to_matches(new_matches)
 keep_step_matches(new_matches) # Remove successful matches from remaining
 cat("Step 1 matches:", nrow(new_matches), "\n")
 
@@ -108,6 +109,7 @@ candidate_matches <- cvr_key[
   allow.cartesian = TRUE
 ]
 new_matches <- select_preferred_exact_match(candidate_matches, step = 2L)
+new_matches <- add_buyer_context_to_matches(new_matches)
 keep_step_matches(new_matches)
 cat("Step 2 matches:", nrow(new_matches), "\n")
 
@@ -119,6 +121,7 @@ candidate_matches <- cvr_key[
   allow.cartesian = TRUE
 ]
 new_matches <- select_preferred_exact_match(candidate_matches, step = 3L)
+new_matches <- add_buyer_context_to_matches(new_matches)
 keep_step_matches(new_matches)
 cat("Step 3 matches:", nrow(new_matches), "\n")
 
@@ -130,6 +133,7 @@ candidate_matches <- cvr_key[
   allow.cartesian = TRUE
 ]
 new_matches <- select_preferred_exact_match(candidate_matches, step = 4L)
+new_matches <- add_buyer_context_to_matches(new_matches)
 keep_step_matches(new_matches)
 cat("Step 4 matches:", nrow(new_matches), "\n")
 
@@ -162,6 +166,7 @@ fuzzy_candidates <- rbindlist(
 
 # Accept only if match score exceeds 85
 new_matches <- accept_fuzzy_match(step_candidates, threshold = 85)
+new_matches <- add_buyer_context_to_matches(new_matches)
 keep_step_matches(new_matches) # Append to larger matched dataset
 cat("Number of new fuzzy matches:", nrow(new_matches))
 
@@ -185,6 +190,7 @@ fuzzy_candidates <- rbindlist(
 
 # Accept only if match score exceeds 85
 new_matches <- accept_fuzzy_match(step_candidates, threshold = 85)
+new_matches <- add_buyer_context_to_matches(new_matches)
 keep_step_matches(new_matches) # Append to larger matched dataset
 cat("Number of new fuzzy matches:", nrow(new_matches))
 
@@ -209,6 +215,7 @@ fuzzy_candidates <- rbindlist(
 
 # Accept only if match score exceeds 86
 new_matches <- accept_fuzzy_match(step_candidates, threshold = 86)
+new_matches <- add_buyer_context_to_matches(new_matches)
 keep_step_matches(new_matches) # Append to new matched dataset
 cat("Number of fuzzy matches:", nrow(new_matches))
 
@@ -232,6 +239,7 @@ fuzzy_candidates <- rbindlist(
 
 # Accept if threshold exceeds 89
 new_matches <- accept_fuzzy_match(step_candidates, threshold = 89)
+new_matches <- add_buyer_context_to_matches(new_matches)
 keep_step_matches(new_matches) # Append to matched dataset
 cat("Number of fuzzy matches", nrow(new_matches))
 
