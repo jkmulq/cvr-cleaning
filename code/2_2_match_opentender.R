@@ -61,6 +61,7 @@ cvr_key[, source_order := fifelse(name_source == "name", 1L, 2L)]
 
 ## 2.1 Row id for later joining
 winner_data[, match_row_id := .I]
+winner_data[, winner_name_in_data := winner_name]
 
 # The CVR key contains Danish firms, so only rows marked DK are automatically
 remaining <- winner_data[
