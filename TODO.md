@@ -83,5 +83,10 @@ This file tracks development work against the current codebase and the project b
 - [ ] Clean OpenTender tender- and lot-level variables.
   - Target: review and standardize dates, counts, amounts, indicators, and other tender fields while retaining the original source variables.
 - [ ] Add reproducible OpenTender outputs and diagnostics.
-  - RDS is the preferred output format. The current `write_dta()` error is not a blocker; Stata export can remain optional.
-
+  - RDS is the preferred output format.
+  - Fix optional `.dta` export for OpenTender outputs. The current blocker is
+    that some tender-level column names inherited from OpenTender are too long
+    for Stata variable-name limits.
+  - Target: add a readable, documented short-name mapping for tender-level
+    columns before calling `haven::write_dta()`, while keeping the full column
+    names in the `.rds` outputs.
