@@ -1653,11 +1653,6 @@ ggplot(
   )
 ```
 
-The dashed line separates tenders covered by the key period from tenders in
-2021 and later. A clear and sustained increase after this line would be
-consistent with newer firms being absent from the key. It would not prove this
-explanation because the types of firms and tenders may also change over time.
-
 ```{r unmatched-candidates-by-key-period}
 unmatched_by_key_period <- tender_age_candidates %>%
   mutate(
