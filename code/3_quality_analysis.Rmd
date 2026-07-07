@@ -1050,3 +1050,381 @@ kable(
 <strong>The same review rule applies to OpenTender.</strong> Fuzzy matches,
 ambiguous exact matches, and unresolved multiple-firm names still need review.
 </div>
+
+# Overall quality review
+For a final analysis, I would only fully trust the first three steps of the exact matching procedure. Exact matching recovers many missing CVRs, but the match quality varies substantially by step. Early exact matches that retain firm type look relatively reliable, while later “exact” matches based on broad/generalised names can produce clear false positives, especially for buyers and OpenTender records. Ambiguous and fuzzy matches are correctly flagged for manual review, but they still populate the final CVR columns, so downstream analysis should not use `*_cvr_final` without filtering or separately handling `flag_manual_name_review == TRUE`. 
+
+# Other quality analyses
+
+## Potential typoes in CVR names
+I’ve noticed that some firm names appear with multiple CVR numbers. In some cases these look like typos, since only one CVR number exists in virk.dk and the two differ by only one digit. In other cases, all the different CVR numbers exist in virk.dk and the numbers are completely different. I think these correspond to different arms of some larger firm (e.g. the investment arm versus the consulting arm; both listed under the same name in OpenTender but have different CVR numbers).
+
+```{r multiple-cvr-number-by-name}
+
+# KFST and OT typo analysis datasets
+kfst_typo <- kfst_clean %>% 
+  filter((!is.na(winner_cvr_clean) & winner_cvr_clean != "" & !is.na(winner_name) & winner_name != "") & valid_cvr)
+ot_typo <- ot_clean %>% 
+    filter((!is.na(winner_cvr_clean) & winner_cvr_clean != "" & !is.na(winner_name) & winner_name != "") & valid_cvr)
+
+# For KFST
+kfst_hist_data <- kfst_typo %>%
+  summarise(n_cvr = n_distinct(winner_cvr_clean), 
+            .by = winner_name) %>% 
+  count(n_cvr, name = "Count") %>% 
+  mutate(Share = round(Count / sum(Count), 4))
+
+# For OpenTender
+ot_hist_data <- ot_typo %>%
+    summarise(n_cvr = n_distinct(winner_cvr_clean), 
+              .by = winner_name) %>% 
+    count(n_cvr, name = "Count") %>% 
+    mutate(Share = round(Count / sum(Count), 4))
+
+```
+
+Of these, I test how many differ within-firm by only 1 digit. This suggests a typo.
+
+```{r typo-count, fig.align='center'}
+make_cvr_pairs <- function(data) {
+  
+  # Keep distinct name-CVR combinations and names linked to multiple CVRs
+  cvr_name_key <- data %>%
+    distinct(winner_name, winner_cvr_clean) %>%
+    mutate(
+      n_cvr = n_distinct(winner_cvr_clean),
+      pair_id = row_number(),
+      .by = winner_name
+    ) %>%
+    filter(n_cvr > 1) %>%
+    arrange(desc(n_cvr), winner_name)
+  
+  # Create every unique CVR pair within each winner name
+  cvr_pairs <- inner_join(
+    cvr_name_key,
+    cvr_name_key,
+    by = "winner_name",
+    suffix = c("_1", "_2"),
+    relationship = "many-to-many"
+  ) %>%
+    filter(pair_id_1 < pair_id_2) %>%
+    mutate(
+      l_dist = stringdist::stringdist(
+        winner_cvr_clean_1,
+        winner_cvr_clean_2,
+        method = "lv"
+      )
+    )
+  
+  return(cvr_pairs)
+}
+
+
+# Map over both datasets.
+cvr_pairs <- map(list(kfst_typo, ot_typo),
+                 make_cvr_pairs) %>%
+  setNames(c("kfst", "ot")) %>% 
+  bind_rows(., .id = "source")
+
+# Convert to proportions
+cvr_pair_hist <- cvr_pairs %>%
+  count(source, l_dist, name = "count") %>%
+  mutate(
+    proportion = count / sum(count),
+    .by = source
+  )
+
+# Create firm count label
+firm_count_label <- cvr_pairs %>%
+  distinct(source, winner_name) %>%
+  count(source, name = "n_firms") %>%
+  mutate(
+    label = paste0(
+      toupper(source),
+      ": ",
+      scales::comma(n_firms),
+      " firms"
+    )
+  ) %>%
+  summarise(label = paste(label, collapse = "\n")) %>%
+  pull(label)
+
+# Produce bar plot
+ggplot(
+  cvr_pair_hist,
+  aes(x = l_dist, y = proportion, fill = source)
+) +
+  geom_col(position = "dodge") +
+  annotate(
+    "label",
+    x = Inf,
+    y = Inf,
+    label = firm_count_label,
+    hjust = 1.05,
+    vjust = 1.1,
+    size = 3.5
+  ) +
+  scale_x_continuous(
+    breaks = sort(unique(cvr_pair_hist$l_dist))
+  ) +
+  scale_y_continuous(
+    labels = scales::label_percent()
+  ) +
+  labs(
+    title = "Levenshtein distance between CVRs for the same firm name",
+    x = "Levenshtein distance",
+    y = "Proportion",
+    fill = "Dataset"
+  ) +
+  theme(
+    legend.position = "bottom"
+  )
+
+```
+
+## Improved fuzzy matching
+We could improve the fuzzy matching by requiring that the second best candidate name is much worse than the first best candidate. This prevents fragile differences from being detected as highly likely matches.
+
+```{r elbow-fuzzy-matching, fig.align='center', fig.width=11, fig.height=7}
+elbow_examples <- kfst_matched %>%
+  filter(winner_name %in% c(
+    "Skovbon Consulting",
+    "William Cook Europw Aps"
+  )) %>%
+  select(
+    winner_name,
+    starts_with("fuzzy_candidate_name_"),
+    starts_with("fuzzy_candidate_score_")
+  ) %>%
+  distinct() %>%
+  mutate(
+    example = case_when(
+      winner_name == "Skovbon Consulting" ~
+        "Fragile match\nOriginal name: Skovbon Consulting",
+      winner_name == "William Cook Europw Aps" ~
+        "Strong elbow\nOriginal name: William Cook Europw Aps"
+    )
+  ) %>%
+  tidyr::pivot_longer(
+    starts_with("fuzzy_candidate_"),
+    names_to = c(".value", "candidate_rank"),
+    names_pattern = "fuzzy_candidate_(name|score)_(\\d)"
+  ) %>%
+  mutate(candidate_rank = as.integer(candidate_rank))
+
+ggplot(
+  elbow_examples,
+  aes(x = candidate_rank, y = score)
+) +
+  geom_line(linewidth = 1, colour = "#36648B") +
+  geom_point(size = 3, colour = "#36648B") +
+  ggrepel::geom_label_repel(
+    data = elbow_examples %>% filter(candidate_rank <= 2),
+    aes(
+      label = paste0(
+        "Rank ", candidate_rank, ": ",
+        stringr::str_wrap(name, width = 24),
+        "\nScore: ", round(score, 1)
+      )
+    ),
+    size = 3,
+    lineheight = 1,
+    seed = 123,
+    nudge_x = 0.35,
+    box.padding = 0.6,
+    point.padding = 0.3,
+    force = 2,
+    min.segment.length = 0,
+    max.overlaps = Inf,
+    segment.colour = "#7a8791",
+    fill = scales::alpha("white", 0.95)
+  ) +
+  facet_wrap(~example) +
+  scale_x_continuous(breaks = 1:5) +
+  scale_y_continuous(
+    breaks = seq(70, 100, 10),
+    limits = c(65, 103)
+  ) +
+  labs(
+    title = "A high match score is not enough",
+    subtitle = paste(
+      "A reliable match should have a clear drop",
+      "between the first and second candidates"
+    ),
+    x = "Candidate rank",
+    y = "Name similarity score"
+  ) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    panel.spacing = unit(1, "lines"),
+    plot.margin = margin(10, 10, 10, 10)
+  )
+```
+
+## Updating firm-cvr number key
+
+The matching process relies on a key of firm names and CVR numbers that ends in
+2020. I test whether this limits matching by comparing the unmatched rate across
+tender years. The unmatched rate is the number of candidates without an
+automatic match divided by all matching candidates in that year. This is more
+useful than the unmatched count because the number of tenders changes over time.
+
+For KFST, I use the tender publication year. For OpenTender, I use the year of
+the first contract award publication. This is also the date used in the matching
+process. OpenTender source rows are counted once, including rows that were later
+split into several firms. Each panel shows its observed year range. The KFST
+series begins in 2017 because there are no KFST matching candidates with an
+earlier publication year.
+
+```{r unmatched-candidates-by-year}
+key_end_year <- 2020
+
+kfst_tender_age <- kfst_candidates %>%
+  transmute(
+    Dataset = "KFST",
+    Tender.year = as.integer(format(pub_date, "%Y")),
+    Unmatched = !flag_name_match_found
+  )
+
+ot_tender_age <- ot_candidates %>%
+  group_by(row_id) %>%
+  summarise(
+    Dataset = "OpenTender",
+    Tender.year = as.integer(substr(
+      first(tender_publications_firstdContractAwardDate),
+      1,
+      4
+    )),
+    Unmatched = !any(flag_name_match_found, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+tender_age_candidates <- bind_rows(
+  kfst_tender_age,
+  ot_tender_age
+) %>%
+  filter(!is.na(Tender.year))
+
+unmatched_by_year <- tender_age_candidates %>%
+  group_by(Dataset, Tender.year) %>%
+  summarise(
+    Candidates = n(),
+    Unmatched.count = sum(Unmatched),
+    Unmatched.rate = mean(Unmatched),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Key.period = if_else(
+      Tender.year <= key_end_year,
+      "Key covers this year",
+      "After key coverage (2021+)"
+    )
+  )
+
+ggplot(
+  unmatched_by_year,
+  aes(x = Tender.year, y = Unmatched.rate)
+) +
+  geom_vline(
+    xintercept = key_end_year + 0.5,
+    linetype = "dashed",
+    colour = "#d88916"
+  ) +
+  geom_line(aes(group = 1), colour = "#7a8791", linewidth = 0.8) +
+  geom_point(
+    aes(fill = Key.period),
+    shape = 21,
+    size = 3,
+    colour = "white",
+    stroke = 0.5
+  ) +
+  facet_wrap(
+    ~Dataset,
+    ncol = 1,
+    scales = "free_x"
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Key covers this year" = "#2f6f9f",
+      "After key coverage (2021+)" = "#d88916"
+    )
+  ) +
+  scale_x_continuous(
+    breaks = function(year_range) {
+      if (diff(range(year_range)) <= 10) {
+        seq(
+          ceiling(min(year_range)),
+          floor(max(year_range)),
+          by = 1
+        )
+      } else {
+        scales::breaks_width(2)(year_range)
+      }
+    }
+  ) +
+  scale_y_continuous(labels = scales::label_percent()) +
+  labs(
+    title = "Unmatched candidate rate by tender year",
+    subtitle = "The firm-CVR key ends in 2020",
+    x = "Tender year",
+    y = "Share of candidates without an automatic match",
+    fill = NULL
+  ) +
+  theme(
+    legend.position = "bottom"
+  )
+```
+
+The dashed line separates tenders covered by the key period from tenders in
+2021 and later. A clear and sustained increase after this line would be
+consistent with newer firms being absent from the key. It would not prove this
+explanation because the types of firms and tenders may also change over time.
+
+```{r unmatched-candidates-by-key-period}
+unmatched_by_key_period <- tender_age_candidates %>%
+  mutate(
+    Period = if_else(
+      Tender.year <= key_end_year,
+      "Up to 2020",
+      "2021 onwards"
+    ),
+    Period = factor(
+      Period,
+      levels = c("Up to 2020", "2021 onwards")
+    )
+  ) %>%
+  group_by(Dataset, Period) %>%
+  summarise(
+    Candidates = n(),
+    Unmatched.count = sum(Unmatched),
+    `Unmatched rate` = mean(Unmatched),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Candidates = format(
+      Candidates,
+      big.mark = ",",
+      scientific = FALSE,
+      trim = TRUE
+    ),
+    Unmatched.count = format(
+      Unmatched.count,
+      big.mark = ",",
+      scientific = FALSE,
+      trim = TRUE
+    ),
+    `Unmatched rate` = sprintf("%.1f%%", 100 * `Unmatched rate`)
+  ) %>%
+  rename(
+    Unmatched = Unmatched.count
+  )
+
+kable(
+  unmatched_by_key_period,
+  align = c("l", "l", "r", "r", "r"),
+  caption = "Unmatched candidates before and after the end of the key"
+)
+```
+
+## Verifying data
+We could also use the CVR number to name key to verify that the name in the source data is correct. This would help validate the data splitting process I've undertaken, for example.
