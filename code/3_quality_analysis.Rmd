@@ -34,16 +34,19 @@ library(knitr)
 library(tidyverse)
 library(ggplot2)
 
-source(here::here("config.R"))
-source(file.path(dirs$code, "functions.R"))
+report_project_dir <- here::here()
+report_clean_data_dir <- file.path(report_project_dir, "data", "clean")
+
+source(file.path(report_project_dir, "config.R"))
+source(file.path(report_project_dir, "code", "functions.R"))
 
 input_files <- c(
-  file.path(dirs$clean_data, "clean_winner_data_kfst.rds"),
-  file.path(dirs$clean_data, "clean_winner_data_kfst_name_matched.rds"),
-  file.path(dirs$clean_data, "clean_buyer_data_kfst_name_matched.rds"),
-  file.path(dirs$clean_data, "clean_winner_data_ot.rds"),
-  file.path(dirs$clean_data, "clean_winner_data_ot_name_matched.rds"),
-  file.path(dirs$clean_data, "clean_buyer_data_ot_name_matched.rds")
+  file.path(report_clean_data_dir, "clean_winner_data_kfst.rds"),
+  file.path(report_clean_data_dir, "clean_winner_data_kfst_name_matched.rds"),
+  file.path(report_clean_data_dir, "clean_buyer_data_kfst_name_matched.rds"),
+  file.path(report_clean_data_dir, "clean_winner_data_ot.rds"),
+  file.path(report_clean_data_dir, "clean_winner_data_ot_name_matched.rds"),
+  file.path(report_clean_data_dir, "clean_buyer_data_ot_name_matched.rds")
 )
 
 missing_files <- input_files[!file.exists(input_files)]
@@ -258,8 +261,7 @@ If no legal form is found, the firm type is stored as `Undetermined`.
 
 ## Steps 2, 3, and 5: `winner_name_match` and `winner_name_no_spaces`
 
-The next stage follows step 2 of the original documentation. It makes the
-following character changes:
+The next stage follows step 2 of the original documentation. It makes the following character changes:
 
 - `oe` becomes `o`, and `aa` becomes `a`.
 - `&` becomes `og`.
@@ -268,8 +270,7 @@ following character changes:
 - Commas, periods, colons, and quotation marks are removed.
 - Repeated spaces are collapsed.
 
-The script also standardises selected whole words. It only replaces complete
-words. It does not replace text found inside a longer word.
+The script also standardises selected whole words. It only replaces complete words. It does not replace text found inside a longer word.
 
 ```{r word-standardisation}
 word_standardisation <- tibble::tribble(
@@ -378,11 +379,9 @@ kable(
 
 ## Real examples of name cleaning
 
-The table below uses two winner names from the KFST matching candidates.
-OpenTender uses the same four name fields before its extra multiple-firm checks.
+The table below uses two winner names from the KFST matching candidates. OpenTender uses the same four name fields before its extra multiple-firm checks.
 
-Exact steps 2 and 3 use the same cleaned name. Step 2 also requires the firm
-type to match. Step 3 ignores the firm type.
+Exact steps 2 and 3 use the same cleaned name. Step 2 also requires the firm type to match. Step 3 ignores the firm type.
 
 ```{r real-name-cleaning-examples}
 name_cleaning_example_names <- c(
@@ -562,7 +561,7 @@ kable(
 
 ## Candidates for name matching
 
-A **matching candidate** is a Danish firm with a winner name but no cleaned CVR. 
+A **matching candidate** is a Danish firm with a winner name but no cleaned CVR. There are **`r format(kfst_candidate_count, big.mark = ",")` KFST matching candidates**.
 
 ```{r kfst-candidates}
 kfst_candidates <- kfst_matched %>%
@@ -576,8 +575,6 @@ kfst_candidate_count <- kfst_candidates %>%
   pull(Count)
 ```
 
-There are **`r format(kfst_candidate_count, big.mark = ",")` KFST matching
-candidates**.
 
 ## Matching results
 Most matches are exact. Fuzzy matches are less common, and some rows remain unmatched.
@@ -608,9 +605,7 @@ kable(
 )
 ```
 
-The next table separates successful matches by the specific matching stage.
-`name_match_method` identifies exact or fuzzy matching.
-`name_match_step_code` identifies the specific step.
+The next table separates successful matches by the specific matching stage. `name_match_method` identifies exact or fuzzy matching. `name_match_step_code` identifies the specific step.
 
 ```{r kfst-matching-results-by-step}
 kfst_step_results <- kfst_candidates %>%
@@ -687,10 +682,7 @@ ambiguous exact matches, and unmatched rows remain in the manual-review file.
 
 ## KFST buyer match quality
 
-KFST buyer data do not contain buyer CVRs in the raw source. The buyer matching
-workflow therefore tries to recover buyer CVRs from the CVR-name key. The tables
-below only describe match quality; they do not revisit the earlier buyer-name
-cleaning decisions.
+KFST buyer data do not contain buyer CVRs in the raw source. The buyer matching workflow therefore tries to recover buyer CVRs from the CVR-name key.
 
 ```{r kfst-buyer-match-quality}
 kfst_buyer_candidates <- kfst_buyer_matched %>%
@@ -721,6 +713,7 @@ kable(
 
 There are **`r format(kfst_buyer_candidate_count, big.mark = ",")` KFST buyer
 matching candidates**.
+
 
 ```{r kfst-buyer-match-type}
 kfst_buyer_type_results <- kfst_buyer_candidates %>%
@@ -928,6 +921,7 @@ ot_candidate_count <- ot_candidates %>%
 There are **`r format(ot_candidate_count, big.mark = ",")` OpenTender matching
 candidates**.
 
+
 ## OpenTender multiple-firm checks
 
 OpenTender first uses the same four whole-name exact stages as KFST. It then
@@ -935,9 +929,7 @@ does two extra checks before fuzzy matching.
 
 ### Remove consortium language
 
-Some rows contain words such as *consortium*, *joint venture*, or *JV*. The
-script removes this wording from a temporary copy of the full name. It then
-repeats the four exact matching stages on this cleaned name.
+Some rows contain words such as *consortium*, *joint venture*, or *JV*. The script removes this wording from a temporary copy of the full name. It then repeats the four exact matching stages above on this cleaned name.
 
 ### Test possible name splits
 
@@ -964,7 +956,7 @@ The script tests possible splits at plausible boundaries (e.g. ampersand, comma,
 
 For tractability, I make two assumptions. Firstly, firm names appear sequentially from left to right. This means I don't test the partition "Firm A & Firm C; Firm B" for the example above. Secondly, only rows with at most 5 identified delimiters are tested. This keeps the number of partitions capped at 31. 
 
-Unclear rows stay unchanged and go to review.
+Unclear rows stay unchanged and are sent off for review.
 
 ```{r ot-segmentation-summary}
 ot_eligible_count <- ot_candidates %>%
@@ -1032,8 +1024,7 @@ kable(
 
 ### Examples of accepted splits
 
-The examples below are selected directly from the current accepted results.
-One example is shown for each available eligibility reason.
+The examples below are selected directly from the current accepted results. One example is shown for each available eligibility reason.
 
 ```{r ot-segmentation-examples}
 ot_segmentation_examples <- ot_candidates %>%
@@ -1073,9 +1064,7 @@ kable(
 
 ## Matching results
 
-An accepted split creates several firm rows. The results below count the
-original source row once. This prevents the split from increasing the matching
-rate.
+An accepted split creates several firm rows. The results below count the original source row once.
 
 ```{r ot-matching-results}
 ot_candidate_results <- ot_candidates %>%
@@ -1115,9 +1104,7 @@ kable(
 )
 ```
 
-The next table separates successful matches by the specific matching stage. It
-counts matched winner rows. When an accepted OpenTender partition creates
-several firms, each separated firm contributes one row.
+The next table separates successful matches by the specific matching stage. It counts matched winner rows. When an accepted OpenTender partition creates several firms, each separated firm contributes one row.
 
 ```{r ot-matching-results-by-step}
 ot_step_results <- ot_candidates %>%
@@ -1194,9 +1181,7 @@ ambiguous exact matches, and unresolved multiple-firm names still need review.
 
 ## OpenTender buyer match quality
 
-OpenTender buyer data often already contain a cleaned buyer CVR. The matching
-workflow is only used for rows where the buyer CVR is missing but a buyer name is
-available. The tables below focus on those buyer name-matching candidates.
+OpenTender buyer data often already contain a cleaned buyer CVR. The matching workflow is only used for rows where the buyer CVR is missing but a buyer name is available. The tables below focus on those buyer name-matching candidates.
 
 ```{r ot-buyer-match-quality}
 ot_buyer_candidates <- ot_buyer_matched %>%
@@ -1225,8 +1210,7 @@ kable(
 )
 ```
 
-There are **`r format(ot_buyer_candidate_count, big.mark = ",")` OpenTender
-buyer matching candidates**.
+There are **`r format(ot_buyer_candidate_count, big.mark = ",")` OpenTender buyer matching candidates**.
 
 ```{r ot-buyer-match-type}
 ot_buyer_type_results <- ot_buyer_candidates %>%
@@ -1255,9 +1239,7 @@ kable(
 )
 ```
 
-The OpenTender buyer matching script can split accepted multiple-buyer names
-into several final buyer rows. The table below counts final matched buyer rows,
-so accepted splits can contribute more than one row.
+The OpenTender buyer matching script can split accepted multiple-buyer names into several final buyer rows. The table below counts final matched buyer rows, so accepted splits can contribute more than one row.
 
 ```{r ot-buyer-match-step}
 ot_buyer_step_results <- ot_buyer_candidates %>%
