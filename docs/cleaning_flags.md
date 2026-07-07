@@ -1,147 +1,157 @@
 # Cleaning Flag Data Dictionary
 
-This file documents the cleaning, review, delimiter, and quality flags created
-by `code/1_process_kfst.R` and `code/2_process_open_tender.R`.
+This file documents the flags in the final objects we normally inspect:
+
+- `clean_winner_data_kfst.rds` and `clean_winner_data_ot.rds`
+- `clean_buyer_data_kfst.rds` and `clean_buyer_data_ot.rds`
+- `clean_winner_data_kfst_name_matched.rds` and
+  `clean_winner_data_ot_name_matched.rds`
+- `clean_buyer_data_kfst_name_matched.rds` and
+  `clean_buyer_data_ot_name_matched.rds`
+
+The focus is on final flags, not temporary processing variables. The structure
+is:
+
+1. clean data flags;
+2. matching flags;
+3. other flags, including source-specific and OpenTender partitioning flags.
 
 The flags are intended for audit and review, not for mutually exclusive
-classification. A row can have several flags at once. Boolean flags are stored
-as `TRUE` or `FALSE`, with explicit missingness flags used where missing source
-values matter. Original source values are kept beside cleaned values so a human
-reviewer can inspect how each cleaned value was produced.
+classification. A row can have several flags at once.
 
-## KFST Winner Data
+## Clean Data Flags
 
-These variables are created while building `clean_winner_data` in
-`code/1_process_kfst.R`. The final KFST winner files are written to
-`data/clean/clean_winner_data_kfst.rds` and
-`data/clean/clean_winner_data_kfst.dta`.
+These are the main flags created in the processing scripts and saved in the
+final clean winner and buyer objects.
 
-| Name | Dataset/object | Level | Values | Derivation and example |
-|---|---|---|---|---|
-| `missing_winner_cvr` | `winner_data` | KFST tender-lot source row | `TRUE` when the raw `winner_cvr` is missing; otherwise `FALSE` or `NA` before later filtering | Early processing indicator used before winner expansion. Example: a tender-lot row with no listed winner CVR is marked before the script decides whether the row can be treated as a single-CVR row. |
-| `single_cvr` | `winner_data` | KFST tender-lot source row | `TRUE` for a reliably single raw CVR; `NA` otherwise | Set when the raw CVR is exactly eight digits with no delimiter, or exactly eight digits after removing spaces. Example: `12 34 56 78` is treated as a single CVR candidate. |
-| `flag_cvr_ws` | `clean_winner_data` | Expanded KFST winner row | `TRUE` if whitespace was detected in `winner_cvr_clean` before whitespace removal; otherwise `FALSE` | Flags a syntactic standardisation step. Example: `12 34 56 78` becomes `12345678`. |
-| `flag_cvr_hyphen` | `clean_winner_data` | Expanded KFST winner row | `TRUE` if a hyphen was detected before hyphen removal; otherwise `FALSE` | Flags CVRs such as `12-34-56-78` before standardisation. |
-| `flag_cvr_alphabet` | `clean_winner_data` | Expanded KFST winner row | `TRUE` if letters were detected before letter removal; otherwise `FALSE` | Flags source strings such as `DK12345678`, where the cleaned candidate keeps the numeric part. |
-| `flag_cvr_punct` | `clean_winner_data` | Expanded KFST winner row | `TRUE` if punctuation was detected before punctuation removal; otherwise `FALSE` | Flags source strings with punctuation other than the earlier hyphen handling. |
-| `flag_cvr_standardised` | `clean_winner_data` | Expanded KFST winner row | `TRUE` if any CVR standardisation flag is `TRUE`; otherwise `FALSE` | Summarises whether whitespace, hyphen, letters, or punctuation were removed from the CVR candidate. |
-| `valid_cvr` | `clean_winner_data` | Expanded KFST winner row | `TRUE` if `winner_cvr_clean` is exactly eight digits; otherwise `FALSE` | Validity is syntactic only. Example: `12345678` is valid; `123456789` and missing values are not. |
-| `flag_winner_cvr_changed` | `clean_winner_data` | Expanded KFST winner row | `TRUE` if `winner_cvr_clean` differs from `winner_cvr_candidate_original`; otherwise `FALSE` | Shows where the displayed CVR candidate changed during cleaning. Example: `DK12345678` is changed to `12345678`. |
-| `flag_missing_winner_cvr` | `clean_winner_data` | Expanded KFST winner row | `TRUE` if the cleaned CVR is missing or blank; otherwise `FALSE` | Explicit missingness flag for CVR values after cleaning. |
-| `flag_missing_winner_name` | `clean_winner_data` | Expanded KFST winner row | `TRUE` if the cleaned winner name is missing or blank; otherwise `FALSE` | Explicit missingness flag for winner names after expansion. |
-| `flag_foreign_winner` | `clean_winner_data` | Expanded KFST winner row | `TRUE` if `winner_country` is not `DK`; otherwise `FALSE` | Flags non-Danish winners because a Danish CVR may not be expected. |
-| `flag_missing_winner_country` | `clean_winner_data` | Expanded KFST winner row | `TRUE` if `winner_country` is missing; otherwise `FALSE` | Explicit missingness flag for winner country. |
-| `n_winners_extracted` | `clean_winner_data` | KFST tender-lot group | Integer count | Counts expanded winner rows within each `tender_id` and `lot_id`. Example: a lot split into three winner rows has `n_winners_extracted = 3` on each of those rows. |
-| `flag_mismatch_winner_count` | `clean_winner_data` | KFST tender-lot group | `TRUE` if extracted winners differ from the original listed count; otherwise `FALSE` | Compares `n_winners_extracted` with `n_lot_winners_original`. |
-| `flag_single_bidder` | `clean_winner_data` | Expanded KFST winner row with tender-lot context | `TRUE` when `n_bids_received == 1`; otherwise `FALSE` | Context flag for awards where only one bid was received. |
-| `flag_multilot` | `clean_winner_data` | Expanded KFST winner row with tender-lot context | `TRUE` when the procurement has more than one lot; otherwise `FALSE` | Context flag based on `n_lots`. |
-| `flag_cancelled` | `clean_winner_data` | Expanded KFST winner row with tender-lot context | `TRUE` when `tender_cancelled` is not `Nej`; otherwise `FALSE` | Context flag for cancelled procurement records retained in the source. |
-| `flag_missing_cvr_with_name` | `clean_winner_data` | Expanded KFST winner row | `TRUE` when CVR is missing but winner name is present; otherwise `FALSE` | Review cue for cases where an external register lookup may recover the CVR. |
-| `flag_review_cvr` | `clean_winner_data` | Expanded KFST winner row | `TRUE` when a non-missing cleaned CVR is not syntactically valid; otherwise `FALSE` | Review cue for malformed CVR candidates. |
-| `flag_review_n_winners` | `clean_winner_data` | KFST tender-lot group | `TRUE` when `flag_mismatch_winner_count` is `TRUE`; otherwise `FALSE` | Review cue for lots where the extraction count disagrees with the original winner count. |
-| `flag_no_winner_info` | `clean_winner_data` | Expanded KFST winner row | `TRUE` when cleaned winner CVR, name, and country are all missing; otherwise `FALSE` | Marks rows where there is no winner information to verify. |
-| `flag_verify_cvr_external` | `clean_winner_data` | Expanded KFST winner row | `TRUE` for rows that should be checked against an external CVR register; otherwise `FALSE` | Set for missing-CVR-with-name and invalid-CVR cases. Not set for rows with no winner information or already valid CVRs. |
+### Clean winner data
 
-## KFST Buyer Data
+These flags appear in both final winner cleaning outputs:
 
-These variables are created while building `clean_buyer_data` in
-`code/1_process_kfst.R`. KFST buyer data do not include buyer CVR numbers in
-the current cleaning script; these flags concern buyer names and buyer counts.
+- `data/clean/clean_winner_data_kfst.rds`
+- `data/clean/clean_winner_data_ot.rds`
 
-| Name | Dataset/object | Level | Values | Derivation and example |
-|---|---|---|---|---|
-| `flag_joint_unlisted_buyers` | `clean_buyer_data` | KFST buyer row | `TRUE` for joint tenders kept as one buyer row because additional buyers are not listed in `buyer_name`; otherwise `FALSE` | Flags joint tenders where the source says the procurement is joint but the buyer-name field does not list multiple separable buyers. |
-| `flag_single_buyer_name_changed` | `clean_buyer_data` | KFST buyer row | `TRUE` if a single-buyer row's cleaned `buyer_name` differs from `buyer_name_original`; otherwise `FALSE` | Review cue for single-buyer name transformations. |
-| `flag_missing_buyer_name` | `clean_buyer_data` | KFST buyer row | `TRUE` if `buyer_name` is missing or blank; otherwise `FALSE` | Explicit missingness flag for buyer names. |
-| `n_buyers_extracted` | `clean_buyer_data` | KFST tender-lot group | Integer count | Counts buyer rows extracted for each `tender_id` and `lot_id`. |
-| `n_buyers_listed_original` | `clean_buyer_data` | KFST tender-lot source row | Integer count | Counts semicolon-separated buyer names in `buyer_name_original`. Example: `A;B` gives `2`. |
-| `flag_buyer_count_agree` | `clean_buyer_data` | KFST tender-lot group | `TRUE` if extracted and original buyer counts agree; otherwise `FALSE` | Compares `n_buyers_extracted` with `n_buyers_listed_original`. |
+| Flag | Meaning | How to read it |
+|---|---|---|
+| `flag_cvr_ws` | The winner CVR candidate contained whitespace before cleaning. | Useful for checking simple formatting cleanup, for example `12 34 56 78`. |
+| `flag_cvr_alphabet` | The winner CVR candidate contained letters before cleaning. | Often catches country prefixes such as `DK12345678`. |
+| `flag_cvr_punct` | The winner CVR candidate contained punctuation before cleaning. | Useful for checking whether punctuation removal affected the CVR. |
+| `flag_cvr_standardised` | At least one CVR formatting cleanup flag is `TRUE`. | Summary flag for rows where the CVR candidate was changed syntactically. |
+| `flag_fill_missing_cvr` | A missing winner CVR was filled from another row with the same winner name. | This is same-name borrowing. It should not overwrite an existing CVR. |
+| `flag_missing_winner_cvr` | The cleaned winner CVR is missing or blank. | Main flag for rows that still need CVR recovery or matching. |
+| `flag_missing_winner_name` | The cleaned winner name is missing or blank. | Useful for separating rows that cannot be name matched. |
+| `flag_foreign_winner` | The winner is marked as non-Danish. | A Danish CVR may not be expected. |
+| `flag_missing_winner_country` | Winner country is missing. | Useful when deciding whether missing CVR is actually suspicious. |
+| `flag_single_bidder` | The tender/lot received one bid. | Context flag, not a CVR quality problem by itself. |
+| `flag_multilot` | The procurement has more than one lot. | Context flag for later analysis. |
+| `flag_cancelled` | The source indicates the tender or lot was cancelled. | Context flag for interpreting missing or unusual award data. |
+| `flag_missing_cvr_with_name` | Winner CVR is missing, but winner name is present. | These are natural candidates for name matching or external CVR lookup. |
+| `flag_check_fuzzy_match` | The row should be sent to the name-matching workflow. | For winners, this means winner name is present and winner CVR is missing. |
+| `flag_review_cvr` | A non-missing cleaned winner CVR is not syntactically valid. | Review cue for malformed CVRs. |
+| `flag_no_winner_info` | Winner CVR, name, and country are all missing. | Nothing useful is available for CVR verification. |
+| `flag_verify_cvr_external` | The row should be checked against an external CVR register. | Set for missing-CVR-with-name and invalid-CVR rows, but not for rows with no winner information. |
 
-## OpenTender Delimiter And Source-Row Flags
+### Clean buyer data
 
-These variables are created on `winner_data` in `code/2_process_open_tender.R`
-before OpenTender winner rows are split or cleaned. They are source-row flags:
-the level is the original OpenTender bidder row identified by `row_id` and
-`tender_id`.
+KFST buyer data and OpenTender buyer data are less symmetric than the winner
+data. KFST buyer data do not contain buyer CVR numbers in the processing script,
+while OpenTender buyer data do. The shared buyer flags are therefore mostly
+about buyer names and matching eligibility.
 
-| Name | Dataset/object | Level | Values | Derivation and example |
-|---|---|---|---|---|
-| `delim_flag_missing` | `winner_data` | OpenTender source row | `TRUE` if raw `winner_cvr` is missing or blank; otherwise `FALSE` | Identifies rows with no bidder body identifier before delimiter handling. |
-| `delim_flag_comma` | `winner_data` | OpenTender source row | `TRUE` if raw `winner_cvr` contains `,`; otherwise `FALSE` | Detects comma-separated candidate strings. Commas are treated as valid delimiters. |
-| `delim_flag_semicolon` | `winner_data` | OpenTender source row | `TRUE` if raw `winner_cvr` contains `;`; otherwise `FALSE` | Records semicolon presence in the raw source string. |
-| `delim_flag_period` | `winner_data` | OpenTender source row | `TRUE` if raw `winner_cvr` contains `.`; otherwise `FALSE` | Audit flag only; periods are not accepted as winner delimiters in the current script. |
-| `delim_flag_pipe` | `winner_data` | OpenTender source row | `TRUE` if raw `winner_cvr` contains `|`; otherwise `FALSE` | Detects pipe-separated candidate strings. Pipes are treated as valid delimiters. |
-| `delim_flag_slash` | `winner_data` | OpenTender source row | `TRUE` if raw `winner_cvr` contains `/`; otherwise `FALSE` | Slash can mean either a delimiter or part of a name-like identifier, so accepted slash rows are manually listed. |
-| `delim_flag_space` | `winner_data` | OpenTender source row | `TRUE` if raw `winner_cvr` contains whitespace; otherwise `FALSE` | Audit flag for spaced identifiers such as `DK21 47 96 83`. |
-| `delim_flag_hyphen` | `winner_data` | OpenTender source row | `TRUE` if raw `winner_cvr` contains `-`; otherwise `FALSE` | Audit flag; many hyphen cases are non-Danish body identifiers rather than multi-winner delimiters. |
-| `delim_flag_no_punct` | `winner_data` | OpenTender source row | `TRUE` if raw `winner_cvr` is non-missing and has no punctuation; otherwise `FALSE` | Helps describe the delimiter landscape before manual review. |
-| `delim_flag_ampersand` | `winner_data` | OpenTender source row | `TRUE` if raw `winner_cvr` contains `&`; otherwise `FALSE` | Ampersand can mark multiple winners in a few manually accepted cases. |
-| `delim_flag_colon` | `winner_data` | OpenTender source row | `TRUE` if raw `winner_cvr` contains `:`; otherwise `FALSE` | Audit flag for colon-containing identifiers. |
-| `delim_flag_og` | `winner_data` | OpenTender source row | `TRUE` if raw `winner_cvr` contains `og`; otherwise `FALSE` | Detects Danish "and" strings that may separate multiple winners. Example: manually accepted row_id `59588` is one reviewed multi-winner-name case. |
-| `delim_flag_valid_comma` | `winner_data` | OpenTender source row | `TRUE` when comma is accepted as a delimiter; otherwise `FALSE` | Currently mirrors `delim_flag_comma`; accepted commas are converted to semicolons before splitting. |
-| `delim_flag_valid_pipe` | `winner_data` | OpenTender source row | `TRUE` when pipe is accepted as a delimiter; otherwise `FALSE` | Currently mirrors `delim_flag_pipe`; accepted pipes are converted to semicolons before splitting. |
-| `delim_flag_valid_slash` | `winner_data` | OpenTender source row | `TRUE` for manually accepted slash-delimiter `row_id`s; otherwise `FALSE` | Example accepted rows include `73374`, `140635`, `141894`, `146029`, and `157184`. |
-| `delim_flag_valid_ampersand` | `winner_data` | OpenTender source row | `TRUE` for manually accepted ampersand-delimiter `row_id`s; otherwise `FALSE` | Example accepted rows include `62215`, `65494`, and `148062`. |
-| `delim_flag_valid_og` | `winner_data` | OpenTender source row | `TRUE` for manually accepted `og` delimiter `row_id`s; otherwise `FALSE` | Example accepted rows include `59588`, `78505`, `105116`, `144636`, `146512`, and `156134`. |
-| `flag_review_slash` | `winner_data` | OpenTender source row | `TRUE` when slash is present but the row is not manually accepted as a delimiter case; otherwise `FALSE` | Manual-review cue for ambiguous slash usage. |
-| `flag_review_ampersand` | `winner_data` | OpenTender source row | `TRUE` when ampersand is present but the row is not manually accepted as a delimiter case; otherwise `FALSE` | Manual-review cue for ambiguous ampersand usage. |
-| `flag_review_og` | `winner_data` | OpenTender source row | `TRUE` when `og` is present but the row is not manually accepted as a delimiter case; otherwise `FALSE` | Manual-review cue for ambiguous `og` usage. |
-| `flag_manual_review` | `winner_data`, later `clean_winner_data` | OpenTender source row carried to expanded winner rows | `TRUE` when any delimiter-review flag is `TRUE`; otherwise `FALSE` | Example: a row with an unaccepted slash in `winner_cvr` is marked for manual review before any CVR standardisation. |
-| `manual_review_reason` | `winner_data`, later `clean_winner_data` | OpenTender source row carried to expanded winner rows | Text reason or `NA` | Currently records `check whether bidder ID contains multiple winning firms` when delimiter usage needs manual review. |
-| `flag_multi_winner` | `winner_data`, later `clean_winner_data` | OpenTender source row carried to expanded winner rows | `TRUE` when the source string has an accepted multi-value delimiter; otherwise `FALSE` | This means the row has an accepted delimiter, not necessarily several distinct valid CVRs. |
-| `single_cvr` | `winner_data` | OpenTender source row | `TRUE` when raw `winner_cvr` is non-missing and not an accepted multi-winner string; otherwise `FALSE` | Processing indicator for rows routed to the single-winner branch. It does not itself mean the CVR is syntactically valid. |
-| `flag_multiple_distinct_valid_cvrs` | `winner_data`, later `clean_winner_data` | OpenTender source row carried to expanded winner rows | `TRUE` when the accepted-delimited source string contains more than one distinct eight-digit CVR; otherwise `FALSE` | Example: a source row with two different valid Danish CVRs is flagged even before deciding whether the winner name represents multiple firms. |
-| `flag_multiple_distinct_winner_names` | `winner_data`, later `clean_winner_data` | OpenTender source row carried to expanded winner rows | `TRUE` for manually confirmed rows where multiple distinct valid CVRs correspond to multiple firm names; otherwise `FALSE` | Example: row_id `59588` is in the manually reviewed list and is split into separate winner-name rows. |
+These flags appear in both final buyer cleaning outputs:
 
-## OpenTender Winner/Bidder CVR And Quality Flags
+- `data/clean/clean_buyer_data_kfst.rds`
+- `data/clean/clean_buyer_data_ot.rds`
 
-These variables are created in `code/2_process_open_tender.R` while building
-the in-memory OpenTender `clean_winner_data` object. The table preserves the
-cleaned candidate beside the original OpenTender values joined from
-`original_tender_data`.
+| Flag | Meaning | How to read it |
+|---|---|---|
+| `flag_missing_buyer_name` | The cleaned buyer name is missing or blank. | Rows with missing buyer names cannot be name matched. |
+| `flag_check_fuzzy_match` | The row should be sent to the name-matching workflow. | In KFST this means buyer name is present. In OpenTender this means buyer name is present and buyer CVR is missing. |
 
-| Name | Dataset/object | Level | Values | Derivation and example |
-|---|---|---|---|---|
-| `valid_cvr` | `multi_cvr_nondistinct_names_data_long`, `clean_winner_data` | OpenTender firm-name candidate row, then expanded winner row | `TRUE` if the cleaned CVR candidate is exactly eight digits; otherwise `FALSE` | In the final table this is recalculated from `winner_cvr_clean`. Example: `21479683` is valid; `111562071` is not. |
-| `n_valid_cvr` | `valid_invalid_cvr_winner_key` | OpenTender firm-name candidate group | Integer count | Counts distinct valid CVR candidates observed for a given `winner_name` in the multi-CVR, non-distinct-name branch. |
-| `n_total_cvr` | `valid_invalid_cvr_winner_key`, joined to multi-CVR branch rows | OpenTender firm-name candidate group | Integer count | Counts all distinct CVR candidates observed for a given `winner_name` in the multi-CVR, non-distinct-name branch. |
-| `n_valid_cvr_in_row` | `multi_cvr_nondistinct_names_data_long`, later `clean_winner_data` | OpenTender source row and winner-name group | Integer count | Counts distinct valid CVR candidates in the original `(row_id, tender_id, winner_name)` after token cleaning. Example: row_id `79` has one valid cleaned CVR for `Dako Norden A/S` even though the source string also contains invalid or repeated identifiers. |
-| `winner_cvr_clean_row` | `multi_cvr_nondistinct_names_data_long`, later `clean_winner_data` | OpenTender source row and winner-name group | Eight-digit CVR or `NA` | Stores the row's own single valid cleaned CVR when `(row_id, tender_id, winner_name)` has exactly one valid CVR. It is used to collapse invalid sibling tokens from the same source row before any cross-row borrowing. |
-| `winner_cvr_clean_real` | `single_valid_cvr_key`, joined to multi-CVR branch rows | OpenTender winner-name candidate group | Eight-digit CVR or `NA` | Stores the single valid CVR observed across the same `winner_name` when that name has exactly one valid candidate and more than one total candidate in the multi-CVR branch. It is the possible cross-row borrowing reference. |
-| `winner_cvr_clean_reference` | `multi_cvr_nondistinct_names_data_long`, later `clean_winner_data` | OpenTender expanded winner row | Eight-digit CVR or `NA` | Shows the reference CVR used to overwrite invalid sibling tokens. It prefers `winner_cvr_clean_row` and falls back to `winner_cvr_clean_real` only when the row itself has no valid CVR. |
-| `flag_row_has_single_valid_cvr` | `multi_cvr_nondistinct_names_data_long`, later `clean_winner_data` | OpenTender source row and winner-name group | `TRUE` when `(row_id, tender_id, winner_name)` has exactly one distinct valid cleaned CVR; otherwise `FALSE` | Separates row-level evidence from cross-row inference. Example: row_id `79` is `TRUE` because the original row already contains a detectable valid CVR for `Dako Norden A/S`. |
-| `flag_cvr_borrowed_from_winner_name` | `multi_cvr_nondistinct_names_data_long`, later `clean_winner_data` | OpenTender source row and winner-name group carried to expanded winner rows | `TRUE` when the original row has no valid CVR and the script fills the cleaned CVR from the single valid CVR observed elsewhere for the same `winner_name`; otherwise `FALSE` | This is narrower than simply finding one valid CVR for the firm name. Example: a row with only an invalid identifier for a winner name can borrow the valid CVR if another row with that exact winner name supplies exactly one valid CVR. Row_id `79` is not borrowed because it already contains a valid CVR. |
-| `flag_winner_has_multi_valid_cvr` | `multi_cvr_nondistinct_names_data_long`, later `clean_winner_data` | OpenTender firm-name candidate group carried to expanded winner rows | `TRUE` when the same `winner_name` has more than one valid CVR candidate in the multi-CVR branch; otherwise `FALSE` | Review cue for names that may contain typos, reused names, or genuine ambiguity. Example: a future analytical report can compare candidate CVR digit distance to distinguish likely one-digit typos from more substantive conflicts. |
-| `flag_cvr_ws` | `clean_winner_data` | OpenTender expanded winner row | `TRUE` if whitespace was detected in the separated raw CVR candidate before whitespace removal; otherwise `FALSE` | Flags syntactic standardisation even when the branch cleaned CVRs before binding. Example: `DK21 47 96 83` has whitespace before cleaning. |
-| `flag_cvr_hyphen` | `clean_winner_data` | OpenTender expanded winner row | `TRUE` if a hyphen was detected in the separated raw CVR candidate; otherwise `FALSE` | Flags hyphenated candidate strings before any branch-level cleanup. |
-| `flag_cvr_alphabet` | `clean_winner_data` | OpenTender expanded winner row | `TRUE` if letters were detected in the separated raw CVR candidate; otherwise `FALSE` | Flags country prefixes and other alphabetic characters. Example: `DK21479683` becomes `21479683`. |
-| `flag_cvr_punct` | `clean_winner_data` | OpenTender expanded winner row | `TRUE` if punctuation remains after whitespace, hyphen, and letter removal; otherwise `FALSE` | Flags candidate strings where punctuation was removed during standardisation. Delimiters introduced only to display collapsed candidate sets are not counted as cleaning evidence. |
-| `flag_cvr_standardised` | `clean_winner_data` | OpenTender expanded winner row | `TRUE` if any CVR standardisation flag is `TRUE`; otherwise `FALSE` | Summarises whether the separated raw candidate token behind the final row required syntactic cleanup. |
-| `flag_winner_cvr_changed` | `clean_winner_data` | OpenTender expanded winner row | `TRUE` if `winner_cvr_clean` differs from `winner_cvr_candidate_original`; otherwise `FALSE` | Example: `DK21479683` changes to `21479683`. The full OpenTender source string remains available in `winner_cvr_original` after the original tender row is joined back on. |
-| `flag_missing_winner_cvr` | `clean_winner_data` | OpenTender expanded winner row | `TRUE` if `winner_cvr_clean` is missing or blank; otherwise `FALSE` | Explicit missingness flag after OpenTender CVR cleaning. |
-| `flag_missing_winner_name` | `clean_winner_data` | OpenTender expanded winner row | `TRUE` if `winner_name` is missing or blank; otherwise `FALSE` | Explicit missingness flag for winner names after expansion. |
-| `flag_foreign_winner` | `clean_winner_data` | OpenTender expanded winner row | `TRUE` when `winner_country` is present and not `DK`; otherwise `FALSE` | Flags non-Danish winners because a Danish CVR may not be expected. Missing country is handled separately. |
-| `flag_missing_winner_country` | `clean_winner_data` | OpenTender expanded winner row | `TRUE` if `winner_country` is missing or blank; otherwise `FALSE` | Explicit missingness flag for country. |
-| `n_winners_extracted` | `clean_winner_data` | OpenTender source-row group | Integer count | Counts expanded winner rows within each `row_id` and `tender_id`. Example: a manually confirmed multi-winner row split into two firms has `n_winners_extracted = 2` on both rows. |
-| `flag_single_bidder` | `clean_winner_data` | OpenTender expanded winner row with tender context | `TRUE` when parsed `n_bids_received` equals `1`; otherwise `FALSE` | Context flag based on the original OpenTender tender fields. |
-| `flag_multilot` | `clean_winner_data` | OpenTender expanded winner row with tender context | `TRUE` when parsed `n_lots` is greater than `1`; otherwise `FALSE` | Context flag for multi-lot OpenTender records. |
-| `flag_cancelled` | `clean_winner_data` | OpenTender expanded winner row with tender context | `TRUE` when the original tender or lot has a cancellation date; otherwise `FALSE` | Derived in `original_tender_data` from `tender_cancellationDate` or `lot_cancellationDate`. |
-| `flag_missing_cvr_with_name` | `clean_winner_data` | OpenTender expanded winner row | `TRUE` when CVR is missing but winner name is present; otherwise `FALSE` | Review cue for possible external CVR lookup. |
-| `flag_review_cvr` | `clean_winner_data` | OpenTender expanded winner row | `TRUE` when a non-missing cleaned CVR is not syntactically valid; otherwise `FALSE` | Review cue for malformed CVR candidates after standardisation. |
-| `flag_no_winner_info` | `clean_winner_data` | OpenTender expanded winner row | `TRUE` when cleaned winner CVR, name, and country are all missing; otherwise `FALSE` | Marks rows where there is no useful winner information to verify. |
-| `flag_verify_cvr_external` | `clean_winner_data` | OpenTender expanded winner row | `TRUE` for rows that should be checked against an external CVR register; otherwise `FALSE` | Set for missing-CVR-with-name and invalid-CVR cases. Not set for rows with no winner information or already valid CVRs. |
+## Matching Flags
+
+These flags appear in all four final matched datasets:
+
+- `data/clean/clean_winner_data_kfst_name_matched.rds`
+- `data/clean/clean_winner_data_ot_name_matched.rds`
+- `data/clean/clean_buyer_data_kfst_name_matched.rds`
+- `data/clean/clean_buyer_data_ot_name_matched.rds`
+
+| Flag | Meaning | How to read it |
+|---|---|---|
+| `flag_name_match_found` | The matching workflow found a proposed CVR from the CVR name key. | Check the entity-specific match column: `winner_cvr_name_match` or `buyer_cvr_name_match`. |
+| `flag_name_match_ambiguous` | A match was found, but more than one CVR candidate was possible. | These rows should not be treated as clean automatic matches without review. |
+| `flag_review_name_match` | A found match should still be reviewed. | Usually means the match was fuzzy or ambiguous. In OpenTender it can also mean an unresolved potential multiple-name row. |
+| `flag_manual_name_review` | The row is included in the compact manual-review output. | Includes no-match rows, fuzzy matches, ambiguous matches, and unresolved OpenTender name partitions. |
+
+The matched datasets also contain non-flag matching metadata such as
+`name_match_step`, `name_match_step_code`, `name_match_method`,
+`name_match_score`, `name_match_n_candidates`, and `name_match_status`. Those
+columns explain how the match was produced, but they are not themselves flags.
+
+## Other Flags
+
+These flags are final-object flags, but they are not shared across both KFST and
+OpenTender in the same way as the clean data and matching flags above. They are
+included because they explain important source-specific choices.
+
+### Winner flags unique to one source
+
+| Flag | Final object | Meaning |
+|---|---|---|
+| `flag_winner_cvr_changed` | KFST winner data | The displayed winner CVR changed during cleaning. |
+| `flag_mismatch_winner_count` | KFST winner data | The number of extracted winners differs from the original listed winner count. |
+| `flag_review_n_winners` | KFST winner data | Review cue for the KFST winner-count mismatch. |
+| `flag_cvr_recovered_from_formatting` | OpenTender winner data | A Danish CVR was recovered after cautious formatting cleanup. |
+| `flag_cvr_placeholder` | OpenTender winner data | The cleaned CVR was a known placeholder or dummy value and was set to missing. |
+| `flag_row_multiple_valid_cvr` | OpenTender winner data | The original OpenTender source row contained more than one distinct valid Danish CVR. |
+
+### Buyer flags unique to one source
+
+| Flag | Final object | Meaning |
+|---|---|---|
+| `flag_joint_unlisted_buyers` | KFST buyer data | The source marks the tender as joint, but the buyer-name field does not list separable buyer names. |
+| `flag_single_buyer_name_changed` | KFST buyer data | A single-buyer name changed during cleaning. |
+| `flag_buyer_count_agree` | KFST buyer data | The extracted buyer count agrees with the original listed buyer count. |
+| `flag_cvr_recovered_from_formatting` | OpenTender buyer data | A Danish CVR was recovered after cautious formatting cleanup. |
+| `flag_row_multiple_valid_cvr` | OpenTender buyer data | The original OpenTender source row contained more than one distinct valid Danish CVR. |
+| `flag_fill_missing_cvr` | OpenTender buyer data | A missing buyer CVR was filled from another row with the same buyer name. |
+| `flag_cvr_placeholder` | OpenTender buyer data | The cleaned buyer CVR was a known placeholder or dummy value and was set to missing. |
+| `flag_non_cvr_identifier` | OpenTender buyer data | A multi-CVR buyer row also contained an invalid non-CVR token, which was removed rather than sent to name matching. |
+| `flag_cvr_ws` | OpenTender buyer data | The buyer CVR candidate contained whitespace before cleaning. |
+| `flag_cvr_alphabet` | OpenTender buyer data | The buyer CVR candidate contained letters before cleaning. |
+| `flag_cvr_punct` | OpenTender buyer data | The buyer CVR candidate contained punctuation before cleaning. |
+| `flag_cvr_standardised` | OpenTender buyer data | At least one buyer CVR formatting cleanup flag is `TRUE`. |
+| `flag_missing_buyer_cvr` | OpenTender buyer data | The cleaned buyer CVR is missing or blank. |
+| `flag_foreign_buyer` | OpenTender buyer data | The buyer is marked as non-Danish. |
+| `flag_missing_buyer_country` | OpenTender buyer data | Buyer country is missing. |
+| `flag_multilot` | OpenTender buyer data | The procurement has more than one lot. |
+| `flag_cancelled` | OpenTender buyer data | The source indicates the tender or lot was cancelled. |
+| `flag_missing_cvr_with_name` | OpenTender buyer data | Buyer CVR is missing, but buyer name is present. |
+| `flag_review_cvr` | OpenTender buyer data | A non-missing cleaned buyer CVR is not syntactically valid. |
+| `flag_no_buyer_info` | OpenTender buyer data | Buyer CVR, name, and country are all missing. |
+| `flag_verify_cvr_external` | OpenTender buyer data | The row should be checked against an external CVR register. |
+
+### OpenTender partitioning flags
+
+These flags are only created in the OpenTender matched datasets. They explain
+when a single OpenTender winner or buyer name may actually contain multiple
+firms.
+
+| Flag | Final object | Meaning |
+|---|---|---|
+| `flag_name_partition_eligible` | OpenTender matched winner and buyer data | The original name looked separable enough to test for multiple firms. |
+| `flag_joint_venture_text` | OpenTender matched winner and buyer data | Joint-venture language was detected in the name. |
+| `flag_consortium_text` | OpenTender matched winner and buyer data | Consortium language was detected in the name. |
+| `flag_collaboration_text` | OpenTender matched winner and buyer data | Any collaboration-style language was detected in the name. |
+| `flag_potential_multiple_names` | OpenTender matched winner and buyer data | The row may contain multiple firm names and should not receive a simple one-name-to-one-CVR fill without review or successful partitioning. |
+| `flag_name_partition_expanded` | OpenTender matched winner and buyer data | The original row was successfully expanded into separated firm rows. |
+| `flag_separated_name` | OpenTender matched winner and buyer data | The final row was created from a successful name partition. |
 
 ## Notes For Later Analytical Reporting
 
-This dictionary can be used as the backbone for a markdown or HTML data-quality
-report. The most important OpenTender follow-up is likely
-`flag_winner_has_multi_valid_cvr`: for those rows, compare the candidate CVR
-numbers within each firm-name group. If two valid CVRs differ by only one digit,
-that pattern may suggest a typo; if they differ in several positions, it may
-suggest a genuinely ambiguous firm name, a reused name, or another source-data
-issue.
-
-When producing that report, keep the analysis tied to the original OpenTender
-`row_id`, `winner_name_original`, `winner_cvr_original`, cleaned
-`winner_cvr_clean`, and the source branch recorded in `source`, so reviewers can
-trace every claim back to the raw row.
+For routine checks, start from the final clean and matched objects above rather
+than temporary intermediate tables. If the goal is to diagnose OpenTender rows
+where the same name may map to several CVRs, keep the analysis tied to
+`row_id`, the original name and CVR columns, the cleaned CVR, and `source`, so
+reviewers can trace every claim back to the raw row.
