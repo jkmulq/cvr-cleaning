@@ -1,240 +1,220 @@
 # CVR Cleaning
 
-This repository cleans Danish public procurement data for use in firm-level
-research. The main goal is to identify, where possible, valid Danish CVR numbers
-for winning firms, bidders, and buyers while keeping the original source fields
-available for audit and review.
+This repository cleans Danish public procurement data and prepares CVR-number
+matches for winners and buyers in the KFST and OpenTender data sources.
 
-There are two source-specific cleaning scripts:
+The README is a navigation and replication guide. For substantive data-quality
+details, see:
 
-- `code/1_process_kfst.R` cleans the KFST tender workbook.
-- `code/2_process_open_tender.R` cleans annual OpenTender CSV exports.
+- [Match quality report source](code/3_quality_analysis.Rmd), which renders to
+  `output/docs/3_quality_analysis.html`
+- [Cleaning flag dictionary](docs/cleaning_flags.md)
 
-The two sources have different structures and therefore require different
-cleaning choices. KFST has a more documented tender/lot structure and buyer
-names but no buyer CVRs. OpenTender has bidder and buyer identifier fields, but
-the bidder identifier field contains a mix of valid CVRs, prefixes, spacing,
-alternative IDs, and hand-reviewed delimiter cases.
-
-## Repository Contents
-
-- `README.md` - Project overview, setup, data inputs, cleaning logic, and current status.
-- `TODO.md` - Development roadmap and remaining cleaning/matching tasks.
-- `config.R` - Project root, Stata path, and derived directory settings.
-- `code/functions.R` - Shared helpers for expanding multi-value fields and detecting valid CVR candidates.
-- `code/1_process_kfst.R` - KFST cleaning workflow.
-- `code/2_process_open_tender.R` - OpenTender schema check and bidder CVR cleanup workflow.
-- `renv.lock` and `renv/` - Reproducible R environment files.
-- `cvr-cleaning.Rproj` - RStudio project file.
-- `data/raw/kfst/` - Local raw KFST input files.
-- `data/raw/OpenTender/` - Local raw OpenTender annual CSV files.
-- `data/clean/` - Local output directory created by `config.R`.
-
-The `data/` tree is local project data and is not committed to the repository.
-
-## Setup
-
-Open `cvr-cleaning.Rproj` in RStudio. The project uses `renv`, so restore the
-recorded package environment before running the processing scripts:
-
-```r
-renv::restore()
-```
-
-Review `config.R` before running the workflow. It defines `PROJECT_DIR`,
-`STATA_PATH`, `STATA_VERSION`, and the derived `dirs` list:
-
-- `dirs$raw_data` -> `data/raw`
-- `dirs$clean_data` -> `data/clean`
-- `dirs$code` -> `code`
-
-If scripts are run outside RStudio, update `PROJECT_DIR` in `config.R` so paths
-resolve to this repository.
-
-## Running Scripts
-
-From the project root, run:
-
-```r
-source("code/1_process_kfst.R")
-source("code/2_process_open_tender.R")
-```
-
-Each script starts by clearing the R environment, sourcing `config.R`, and
-loading required packages. The KFST script also writes cleaned output files. The
-OpenTender script currently creates working objects in memory and is still being
-developed before final export steps are added.
-
-## KFST Cleaning
-
-### Input
-
-`code/1_process_kfst.R` reads:
+## Repository structure
 
 ```text
-data/raw/kfst/udbudsdata_kfst.xlsx
+cvr-cleaning/
+├── README.md
+├── TODO.md
+├── config.R
+├── run_replication.sh
+├── code/
+│   ├── functions.R
+│   ├── 1_1_process_kfst.R
+│   ├── 1_2_process_open_tender.R
+│   ├── 1_3_process_keys.R
+│   ├── 2_1_match_kfst.R
+│   ├── 2_2_match_kfst_buyers.R
+│   ├── 2_2_match_opentender.R
+│   ├── 2_3_match_opentender_buyers.R
+│   ├── 3_quality_analysis.Rmd
+│   └── drafts/
+├── docs/
+│   └── cleaning_flags.md
+├── data/
+│   ├── raw/
+│   ├── cvr_matching_data/
+│   └── clean/
+├── output/
+│   └── docs/
+├── renv/
+└── renv.lock
 ```
 
-It uses sheet `2.0 Udbudsdata`. The source includes tender identifiers, lot
-identifiers, buyer names, winner names, winner CVR strings, winner country,
-dates, bid counts, and the reported number of winners per lot.
+The `data/` and `output/` folders are local working folders. They are expected
+to contain inputs and generated outputs, and should not be treated as complete
+repository source code.
 
-### Main Logic
+## What each script does
 
-The KFST script currently:
+The workflow is staged. Scripts beginning with `1_` clean inputs and prepare
+lookup keys. Scripts beginning with `2_` perform name matching. The quality
+report is generated separately.
 
-1. Loads the workbook and renames selected Danish variables to consistent English names.
-2. Orders the data by tender and lot identifiers.
-3. Checks whether `lot_id` values are unique.
-4. Handles duplicate `lot_id` values only when they follow the expected pattern of one cancelled row and one non-cancelled row.
-5. Builds `tender_lot_data`, a tender/lot-level table used later for flags and joins.
-6. Creates `winner_data` with winner CVR, winner name, winner country, and reported winner count.
-7. Separates obvious single-CVR winner rows from rows that require multi-winner parsing.
-8. Uses `extract_multiple_cvr()` to split multi-winner CVR/name/country fields into one row per winner.
-9. Builds `clean_winner_data`.
-10. Keeps original winner fields, including `winner_cvr_original`, next to cleaned fields such as `winner_cvr_clean`.
-11. Standardizes winner CVRs by removing whitespace, hyphens, alphabetic characters, and punctuation.
-12. Adds quality flags for valid CVRs, changed CVRs, missing winner fields, foreign winners, winner-count mismatches, single-bidder lots, multi-lot tenders, cancelled procurements, and rows that should be checked externally.
-13. Splits KFST buyer names on semicolons where multiple buyers are listed.
-14. Keeps joint tenders with unlisted buyers as one row, because the missing buyers cannot be recovered from the buyer-name field.
-15. Builds `clean_buyer_data` with buyer-number and buyer-quality flags.
+| Script | Purpose | Main outputs |
+|---|---|---|
+| [code/functions.R](code/functions.R) | Shared helper functions for CVR extraction, CVR formatting, name preparation, name partitioning, and matching support. | No direct output. |
+| [code/1_1_process_kfst.R](code/1_1_process_kfst.R) | Cleans KFST winner and buyer data. Splits multi-winner and multi-buyer rows where possible, standardises winner CVRs, creates matching-ready name fields, and saves clean KFST objects. | `clean_winner_data_kfst.rds`, `clean_buyer_data_kfst.rds`, plus `.dta` versions. |
+| [code/1_2_process_open_tender.R](code/1_2_process_open_tender.R) | Reads annual OpenTender files, checks schema consistency, cleans winner and buyer CVR fields, handles multi-CVR rows, creates audit identifiers, prepares matching-ready names, and saves clean OpenTender objects. | `clean_winner_data_ot.rds`, `clean_buyer_data_ot.rds`. |
+| [code/1_3_process_keys.R](code/1_3_process_keys.R) | Cleans the CVR register name keys used for later matching. It prepares both official names and alternative names. | `clean_cvr_name_key.rds`, `clean_cvr_biname_key.rds`. |
+| [code/2_1_match_kfst.R](code/2_1_match_kfst.R) | Matches missing KFST winner CVRs against the prepared CVR-name keys. | `clean_winner_data_kfst_name_matched.rds`, `manual_name_review_kfst.rds`. |
+| [code/2_2_match_kfst_buyers.R](code/2_2_match_kfst_buyers.R) | Matches KFST buyer names to CVRs, since KFST buyer CVRs are not supplied in the raw source. | `clean_buyer_data_kfst_name_matched.rds`, `manual_buyer_name_review_kfst.rds`. |
+| [code/2_2_match_opentender.R](code/2_2_match_opentender.R) | Matches missing OpenTender winner CVRs and records ambiguous or fuzzy cases for review. Also writes winner-name partition diagnostics. | `clean_winner_data_ot_name_matched.rds`, `manual_name_review_ot.rds`, `winner_name_partition_diagnostics_ot.rds`. |
+| [code/2_3_match_opentender_buyers.R](code/2_3_match_opentender_buyers.R) | Matches missing OpenTender buyer CVRs and records ambiguous or fuzzy cases for review. Also writes buyer-name partition diagnostics. | `clean_buyer_data_ot_name_matched.rds`, `manual_buyer_name_review_ot.rds`, `buyer_name_partition_diagnostics_ot.rds`. |
+| [code/3_quality_analysis.Rmd](code/3_quality_analysis.Rmd) | Builds the match-quality and data-quality report from the cleaned and matched outputs. | `output/docs/3_quality_analysis.html`. |
 
-### KFST Particularities
+The [code/drafts/](code/drafts) folder contains experimental or benchmark
+scripts. These are useful for development, but they are not part of the default
+replication workflow.
 
-- KFST buyer data contain buyer names but not buyer CVR numbers.
-- Multiple KFST buyers are documented as semicolon-separated in the buyer-name field.
-- Duplicate lot IDs are treated conservatively: unexpected duplicate patterns stop the script.
-- KFST winner CVR cleaning now keeps both the original winner CVR string and the cleaned CVR candidate.
+## Required local inputs
 
-### KFST Outputs
-
-The KFST script writes:
+The repository expects the following local input folders:
 
 ```text
-data/clean/clean_winner_data_kfst.rds
-data/clean/clean_buyer_data_kfst.rds
-data/clean/clean_winner_data_kfst.dta
-data/clean/clean_buyer_data_kfst.dta
-```
-
-Important in-session objects include:
-
-- `data` - Renamed and arranged KFST data after duplicate-lot handling.
-- `cancelled_duplicate_lots` - Cancelled rows dropped from duplicate lot pairs.
-- `tender_lot_data` - Tender/lot context used for joins and flags.
-- `single_winner_data`, `multi_winner_data`, and `multi_winner_long` - Winner parsing helper tables.
-- `clean_winner_data` - Final KFST winner table.
-- `single_buyer_data`, `multi_buyer_data`, and `multiple_buyer_long` - Buyer parsing helper tables.
-- `clean_buyer_data` - Final KFST buyer table.
-
-## OpenTender Cleaning
-
-### Input
-
-`code/2_process_open_tender.R` reads semicolon-separated annual CSV files from:
-
-```text
+data/raw/kfst/
 data/raw/OpenTender/
+data/cvr_matching_data/
 ```
 
-The script currently reads all files present in this folder. This means the
-replication sample is determined by the local OpenTender files supplied under
-`data/raw/OpenTender/`, not by an internal year filter in the script.
+Expected source files:
 
-### Main Logic
+- `data/raw/kfst/udbudsdata_kfst.xlsx`
+- annual OpenTender CSV files under `data/raw/OpenTender/`
+- `data/cvr_matching_data/cvr_names_full.csv`
+- `data/cvr_matching_data/cvr_binavne_full.csv`
 
-The OpenTender script currently:
+The OpenTender script reads all files present in `data/raw/OpenTender/`. The
+replication sample is therefore determined by the files placed in that folder.
 
-1. Lists raw OpenTender CSV files.
-2. Reads column names from every listed file.
-3. Checks all pairwise file combinations with `setequal()` and stops if column schemas differ.
-4. Reads the CSV files with `data.table::fread(..., colClasses = "character")` so identifier-like fields are not altered by automatic numeric type guessing.
-5. Row-binds the annual files into one table and records the source file in `dataset`.
-6. Adds `row_id`, a stable row reference within the combined OpenTender data.
-7. Creates `winner_data_original` from bidder identifier, bidder name, and bidder country fields.
-8. Creates `buyer_data_original` from buyer identifier, buyer name, and buyer country fields.
-9. Investigates delimiter patterns in `bidder_bodyIds`.
-10. Flags delimiter types such as commas, semicolons, periods, pipes, slashes, spaces, hyphens, ampersands, colons, and the Danish word `og`.
-11. Treats commas and the one pipe case as valid delimiters.
-12. Uses manually reviewed `row_id` lists for valid slash, ampersand, and `og` delimiters.
-13. Flags non-reviewed slash, ampersand, and `og` cases for manual review.
-14. Stops if manually reviewed row IDs are missing or no longer contain the expected delimiter, which helps catch row-order drift if the file list changes.
-15. Converts accepted delimiters to semicolons.
-16. Flags likely multi-winner rows based on accepted delimiters.
-17. Separately flags rows with more than one distinct valid eight-digit CVR.
-18. Uses a manually reviewed row-ID list to confirm the small subset where multiple distinct CVRs correspond to multiple winning firms rather than repeated or erroneous identifiers for one firm.
-19. Splits confirmed multi-firm rows into one row per winner after hand-coding the corresponding winner-name delimiters.
-20. Splits the remaining multi-CVR or delimited rows separately, cleans CVR strings by removing spaces, country prefixes, punctuation, and letters, and flags valid eight-digit CVRs.
-21. For firm names that appear with one valid CVR and one or more invalid CVR entries, assumes the single valid CVR is the true CVR, collapses duplicate rows created by that assumption, and records this with `flag_assumed_single_valid_cvr`.
-22. Flags firm names that appear with multiple valid CVRs using `flag_multi_valid_cvr`, because those cases need additional review rather than automatic assumption.
+## Configuration
 
-### OpenTender Particularities
+All scripts source [config.R](config.R). The main setting is `PROJECT_DIR`, the
+root of this repository.
 
-- OpenTender bidder IDs often contain several identifier formats for the same bidder, such as `DK` prefixes, spaced CVRs, repeated CVRs, and non-CVR IDs.
-- Some delimiters are genuine separators between multiple winning firms, while others are part of names or identifier text.
-- The script intentionally separates "valid delimiter" flags from "manual review" flags so hand-reviewed cases remain auditable.
-- The script also separates "multiple distinct valid CVRs" from "multiple winning firms." This matters because some OpenTender rows list several CVR-like values for a single bidder name, while only a small manually confirmed set represents true multi-firm winning groups.
-- For confirmed multi-firm rows, the script manually standardizes a small number of winner-name strings so CVRs and names can be expanded together. Consortium labels are replaced with the firm names corresponding to the CVRs, with the script noting virk.dk as the reference source for those cases.
-- For repeated or partly invalid CVR strings attached to one firm name, the script uses a conservative assumption rule: only firms with exactly one valid CVR and more than one CVR entry get their invalid entries collapsed to that valid CVR, and the change is flagged.
-- The current OpenTender workflow is focused on bidder/winner CVR cleanup. Buyer identifier cleaning has not yet been implemented beyond creating `buyer_data_original`.
-- Because manually reviewed cases are stored as `row_id` lists, the script includes drift checks to prevent those row IDs from silently pointing to the wrong records.
+If you run scripts from the repository root, no changes should be needed. If you
+run from another location or machine, either edit `config.R` or pass
+`PROJECT_DIR` as an environment variable:
 
-### OpenTender Outputs
+```bash
+PROJECT_DIR="/path/to/cvr-cleaning" ./run_replication.sh
+```
 
-The OpenTender script currently creates objects in the R session but does not yet
-write final files to `data/clean/`.
+`config.R` also creates the expected local directories if they are missing.
 
-Important in-session objects include:
+## Replication
 
-- `data_col_names` - Column names by OpenTender source file.
-- `col_name_diffs` - Pairwise schema concordance checks.
-- `data` - Combined OpenTender data for all listed files in `data/raw/OpenTender/`.
-- `winner_data_original` - Original bidder fields used for winner CVR cleaning.
-- `buyer_data_original` - Original buyer fields retained for later buyer CVR cleaning.
-- `winner_data` - Winner/bidder working table with delimiter and manual-review flags.
-- `multi_winner_names_data_long` - Manually confirmed multi-firm winner rows split to one row per winner name and CVR.
-- `multi_cvr_nondistinct_names_data_long` - Delimited or multi-CVR rows that do not represent manually confirmed multi-firm winner-name cases, with CVR cleanup, assumed-single-valid-CVR flags, and multi-valid-CVR flags.
+### 1. Restore the R environment
 
-## Cleaning And Review Flags
+The project uses `renv`. On a new machine, restore the package environment once:
 
-Across both sources, the scripts keep original source values beside cleaned
-values. This is important because rows sent for review should still show the raw
-string that produced the cleaned value.
+```bash
+Rscript --vanilla -e 'renv::restore(prompt = FALSE)'
+```
 
-The flagging convention is deliberately audit-oriented:
+Alternatively, let the replication script do this:
 
-- boolean flags use `TRUE` / `FALSE`, with explicit missingness flags where
-  missing source values matter;
-- flags are not mutually exclusive, so a row can be valid, foreign, multi-lot,
-  or review-relevant in overlapping ways;
-- delimiter and manual-review flags document how source strings were split;
-- CVR quality flags document syntactic standardisation, missingness, validity,
-  and cases that may need external verification.
+```bash
+RESTORE_RENV=true ./run_replication.sh
+```
 
-The detailed flag dictionary is in
-[`docs/cleaning_flags.md`](docs/cleaning_flags.md). The scripts clean CVR
-strings syntactically and flag rows for review. They do not yet match missing
-CVRs or ambiguous names against virk.dk or another external CVR register.
+### 2. Add local input data
 
-## Current Status And Remaining Work
+Place the KFST, OpenTender, and CVR-name-key files in the folders listed above.
+The raw data are local inputs and are not committed to this repository.
 
-- KFST winner and buyer cleaning writes `.rds` and `.dta` files to `data/clean/`.
-- OpenTender bidder/winner delimiter handling, true multi-winner review, and CVR cleanup are in progress.
-- OpenTender buyer CVR cleaning is not yet implemented.
-- OpenTender final cleaned outputs are not yet written to disk.
-- External CVR/name matching is not yet implemented.
-- Missing-CVR name matching and ambiguity flags remain open development tasks.
-- The repository does not currently include job-ad CVR cleaning scripts.
+### 3. Run the full workflow
 
-See `TODO.md` for the active development roadmap and progress tracker.
+From the repository root:
 
-## Suggested Review Workflow
+```bash
+./run_replication.sh
+```
 
-1. Restore the R environment with `renv::restore()`.
-2. Confirm raw files are present under `data/raw/kfst/` and `data/raw/OpenTender/`.
-3. Review and update `config.R` for the local machine.
-4. Run `code/1_process_kfst.R`.
-5. Inspect the KFST diagnostics and saved files in `data/clean/`.
-6. Run `code/2_process_open_tender.R`.
-7. Inspect OpenTender delimiter summaries, manual-review flags, confirmed multi-winner rows, assumed-single-valid-CVR flags, and multi-valid-CVR flags.
-8. Add OpenTender buyer cleaning and export steps once the cleaned output format is finalized.
+The script runs:
+
+```text
+code/1_1_process_kfst.R
+code/1_2_process_open_tender.R
+code/1_3_process_keys.R
+code/2_1_match_kfst.R
+code/2_2_match_kfst_buyers.R
+code/2_2_match_opentender.R
+code/2_3_match_opentender_buyers.R
+```
+
+Outputs are written to `data/clean/`.
+
+### 4. Run cleaning only
+
+To stop after the KFST and OpenTender cleaning scripts, without building the CVR
+name keys or running name matching:
+
+```bash
+RUN_MATCHING=false ./run_replication.sh
+```
+
+### 5. Use a different R executable
+
+If needed, set `RSCRIPT`:
+
+```bash
+RSCRIPT="/path/to/Rscript" ./run_replication.sh
+```
+
+## Main outputs
+
+After a full replication run, the most important files are in `data/clean/`.
+
+Clean data:
+
+```text
+clean_winner_data_kfst.rds
+clean_buyer_data_kfst.rds
+clean_winner_data_ot.rds
+clean_buyer_data_ot.rds
+```
+
+Matched data:
+
+```text
+clean_winner_data_kfst_name_matched.rds
+clean_buyer_data_kfst_name_matched.rds
+clean_winner_data_ot_name_matched.rds
+clean_buyer_data_ot_name_matched.rds
+```
+
+Manual-review files:
+
+```text
+manual_name_review_kfst.rds
+manual_buyer_name_review_kfst.rds
+manual_name_review_ot.rds
+manual_buyer_name_review_ot.rds
+```
+
+OpenTender name-partition diagnostics:
+
+```text
+winner_name_partition_diagnostics_ot.rds
+buyer_name_partition_diagnostics_ot.rds
+```
+
+## Match quality and cleaning flags
+
+The matched files include exact matches, fuzzy matches, ambiguous matches, and
+rows that still require manual review. Do not treat every populated final CVR as
+equally verified without checking the matching flags.
+
+For match-quality statistics by source, entity, match type, and match step, see:
+
+- [code/3_quality_analysis.Rmd](code/3_quality_analysis.Rmd)
+- generated output: `output/docs/3_quality_analysis.html`
+
+For definitions of cleaning and matching flags, see:
+
+- [docs/cleaning_flags.md](docs/cleaning_flags.md)
+
+Those two documents are the best starting points for reviewers who want to know
+which rows were cleaned directly, which rows were matched by name, and which
+rows should be manually inspected before analysis.
