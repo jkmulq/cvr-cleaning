@@ -10,6 +10,7 @@ source(here::here("config.R"))
 
 # Packages
 library(data.table)
+library(tidyverse)
 
 # Source functions
 source(file.path(PROJECT_DIR, "code", "functions.R"))
