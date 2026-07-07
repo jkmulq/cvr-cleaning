@@ -29,19 +29,7 @@ PROJECT_DIR <- normalizePath(
   mustWork = FALSE
 )
 
-# 2. Stata
-#    Set STATA_PATH to the full path of your Stata executable.
-#    Common locations:
-#      StataMP (Mac):  /Applications/StataNow/StataMP.app/Contents/MacOS/stata-mp
-#      Stata 18 (Mac): /Applications/Stata/StataMP.app/Contents/MacOS/stata-mp
-#      Windows:        "C:/Program Files/Stata19/StataMP-64.exe"
-STATA_PATH    <- "/Applications/StataNow/StataMP.app/Contents/MacOS/stata-mp"
-STATA_VERSION <- 19
-
-options("RStata.StataPath"    = STATA_PATH)
-options("RStata.StataVersion" = STATA_VERSION)
-
-# 3. Derived paths (do not edit)
+# 2. Derived paths (do not edit)
 dirs <- list(
   data = file.path(PROJECT_DIR, "data"),
   cvr_key = file.path(PROJECT_DIR, "data", "cvr_matching_data"),
