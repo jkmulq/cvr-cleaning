@@ -367,8 +367,7 @@ winner_data[, name_match_step_code := fcase(
 # Fuzzy matches and matches tied across several CVRs are retained but flagged.
 winner_data[, flag_name_match_found := !is.na(winner_cvr_name_match)]
 winner_data[, flag_name_match_ambiguous := (
-  flag_name_match_found &
-    name_match_n_candidates > 1
+  flag_name_match_found & name_match_n_candidates > 1
 )]
 winner_data[, flag_review_name_match := (
   flag_name_match_found &
