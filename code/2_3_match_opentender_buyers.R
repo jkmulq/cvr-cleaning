@@ -836,9 +836,8 @@ separated_buyer_data <- buyer_data[unique_partition_ids,
 
 # Expand the buyer data with the joined segments
 # Means every separated buyer gets the data from the source row.
-separated_buyer_data <- separated_buyer_data[separated_name_segments,
-                                               on = "match_row_id",
-                                               nomatch = 0]
+separated_buyer_data <- separated_buyer_data[separated_name_segments, 
+                                             on = "match_row_id", nomatch = 0]
 
 # Rename
 separated_buyer_data[,
