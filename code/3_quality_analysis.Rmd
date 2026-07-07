@@ -200,9 +200,7 @@ Both datasets follow the same main process. OpenTender needs one extra check for
 
 # Matching process
 
-The process follows the approach in *Bisnode matching documentation_V7*. It
-starts with strict exact matches. It then makes the names more general. Rows
-that match are removed before the next step.
+The process follows the approach in *Bisnode matching documentation_V7*. It starts with strict exact matches. It then makes the names more general. Rows that match are removed before the next step. The same cleaning is applied to the winner names and to the registered main names and binames in the CVR keys. 
 
 This section illustrates how the matching names are created in the winner data.
 
