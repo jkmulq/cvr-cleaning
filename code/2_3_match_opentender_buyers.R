@@ -89,33 +89,6 @@ drop_matched_rows <- function(rows, matches) {
   rows[!matches, on = "match_row_id"]
 }
 
-# Add source context to each match table. match_row_id is temporary and depends
-# on the row order in this script run; row_id, buyer_number, and the tender IDs
-# trace back to the cleaned OpenTender buyer row, and buyer_name_in_data is the
-# name that was actually sent into the matching step.
-add_buyer_context_to_matches <- function(matches, source_rows = remaining_original) {
-  if (nrow(matches) == 0 || !"match_row_id" %in% names(matches)) {
-    return(matches)
-  }
-  
-  buyer_context <- source_rows[
-    ,
-    .(
-      match_row_id,
-      row_id,
-      tender_id,
-      lot_id,
-      buyer_number,
-      buyer_name_in_data,
-      buyer_name_basic_in_data = buyer_name_basic,
-      buyer_firm_type_in_data = buyer_firm_type
-    )
-  ]
-  
-  buyer_context[matches, on = "match_row_id"]
-}
-
-
 # 3 Exact matching
 ## 3.1 Match on lightly prepared name and firm type
 candidate_matches <- cvr_key[

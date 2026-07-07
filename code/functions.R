@@ -108,6 +108,128 @@ compute_distinct_valid_cvr <- function(x) {
   )
 }
 
+# CVR-like placeholders that should not be treated as real Danish CVRs.
+known_invalid_cvr_numbers <- function() {
+  c(
+    "00000000",
+    "11111111",
+    "12345678",
+    "99999999"
+  )
+}
+
+# Recover one clearly formatted Danish CVR only after the conservative extractor
+# has found no valid CVR. This protects rows such as "12345678-87654321": the
+# normal extractor sees two CVRs there, so this helper leaves the row alone.
+recover_formatted_danish_cvr <- function(cvr_candidate,
+                                         country,
+                                         n_valid_cvr_raw,
+                                         known_invalid_cvrs = known_invalid_cvr_numbers()) {
+  cvr_candidate <- as.character(cvr_candidate)
+  country <- as.character(country)
+  n_valid_cvr_raw <- as.integer(n_valid_cvr_raw)
+  
+  digits_only <- stringr::str_remove_all(cvr_candidate, "[^0-9]")
+  
+  blank_candidate <- is.na(cvr_candidate) |
+    stringr::str_trim(cvr_candidate) == ""
+  danish_candidate <- !is.na(country) & country == "DK"
+  no_raw_cvr_found <- !is.na(n_valid_cvr_raw) & n_valid_cvr_raw == 0
+  one_eight_digit_number <- !is.na(digits_only) &
+    stringr::str_detect(digits_only, "^[0-9]{8}$")
+  invalid_placeholder <- !is.na(digits_only) &
+    digits_only %in% known_invalid_cvrs
+  
+  recovered_cvr <- ifelse(
+    !blank_candidate &
+      danish_candidate &
+      no_raw_cvr_found &
+      one_eight_digit_number &
+      !invalid_placeholder,
+    digits_only,
+    NA_character_
+  )
+  
+  return(recovered_cvr)
+}
+
+# Add source context to a name-match table. match_row_id is temporary and
+# depends on the row order in a single script run. These context columns make
+# exact and fuzzy match tables easy to inspect without rejoining by hand.
+add_entity_context_to_matches <- function(matches,
+                                          source_rows,
+                                          entity) {
+  if (nrow(matches) == 0 || !"match_row_id" %in% names(matches)) {
+    return(matches)
+  }
+  
+  entity_number_column <- paste0(entity, "_number")
+  entity_name_column <- paste0(entity, "_name_in_data")
+  entity_basic_column <- paste0(entity, "_name_basic")
+  entity_firm_type_column <- paste0(entity, "_firm_type")
+  
+  required_context_columns <- c(
+    "match_row_id",
+    "tender_id",
+    "lot_id",
+    entity_number_column,
+    entity_name_column,
+    entity_basic_column,
+    entity_firm_type_column
+  )
+  
+  missing_context_columns <- setdiff(
+    required_context_columns,
+    names(source_rows)
+  )
+  
+  if (length(missing_context_columns) > 0) {
+    stop(
+      "Missing context columns for ", entity, " matches: ",
+      paste(missing_context_columns, collapse = ", ")
+    )
+  }
+  
+  context_columns <- required_context_columns
+  if ("row_id" %in% names(source_rows)) {
+    context_columns <- c("row_id", context_columns)
+  }
+  
+  entity_context <- data.table::copy(source_rows[, ..context_columns])
+  data.table::setnames(
+    entity_context,
+    old = c(entity_basic_column, entity_firm_type_column),
+    new = c(
+      paste0(entity, "_name_basic_in_data"),
+      paste0(entity, "_firm_type_in_data")
+    )
+  )
+  
+  entity_context[matches, on = "match_row_id"]
+}
+
+add_winner_context_to_matches <- function(
+    matches,
+    source_rows = get("remaining_original", envir = parent.frame())
+) {
+  add_entity_context_to_matches(
+    matches = matches,
+    source_rows = source_rows,
+    entity = "winner"
+  )
+}
+
+add_buyer_context_to_matches <- function(
+    matches,
+    source_rows = get("remaining_original", envir = parent.frame())
+) {
+  add_entity_context_to_matches(
+    matches = matches,
+    source_rows = source_rows,
+    entity = "buyer"
+  )
+}
+
 # Legal-form spellings used when preparing CVR names. Keeping this dictionary
 # in one place means name preparation and multiple-firm detection use the same
 # definition of terms such as A/S, ApS, and I/S.
