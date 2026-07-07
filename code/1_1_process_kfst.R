@@ -274,10 +274,6 @@ clean_winner_data <- clean_winner_data %>%
     flag_cvr_ws = coalesce(str_detect(winner_cvr_clean, "\\s"), FALSE),
     winner_cvr_clean = str_remove_all(winner_cvr_clean, "\\s+"),
     
-    # Remove hyphens
-    flag_cvr_hyphen = coalesce(str_detect(winner_cvr_clean, "-"), FALSE),
-    winner_cvr_clean = str_remove_all(winner_cvr_clean, "-"),
-    
     # Remove alphabetical letters
     flag_cvr_alphabet = coalesce(str_detect(winner_cvr_clean, "[[:alpha:]]"), FALSE),
     winner_cvr_clean = str_remove_all(winner_cvr_clean, "[[:alpha:]]"),
@@ -289,7 +285,6 @@ clean_winner_data <- clean_winner_data %>%
     # Flag if any standardisation performed
     flag_cvr_standardised = coalesce(
       flag_cvr_ws | 
-        flag_cvr_hyphen | 
         flag_cvr_alphabet | 
         flag_cvr_punct,
       FALSE
