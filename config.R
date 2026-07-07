@@ -11,10 +11,23 @@ library(here)
 # 1. Project root
 #    When the .Rproj file is open in RStudio, here::here() resolves to the
 #    project root automatically — leave PROJECT_DIR as-is.
-#    If running outside RStudio, comment out the here() line and set the
-#    path manually, e.g.:
-#      PROJECT_DIR <- "/Users/yourname/path/to/cvr-cleaning"
-PROJECT_DIR <- here::here()
+#    If running outside RStudio, either:
+#      - set the PROJECT_DIR environment variable before running the scripts; or
+#      - replace the default below with your local project path.
+config_value <- function(name, default) {
+  value <- Sys.getenv(name, unset = "")
+
+  if (value == "") {
+    return(default)
+  }
+
+  value
+}
+
+PROJECT_DIR <- normalizePath(
+  config_value("PROJECT_DIR", here::here()),
+  mustWork = FALSE
+)
 
 # 2. Stata
 #    Set STATA_PATH to the full path of your Stata executable.
