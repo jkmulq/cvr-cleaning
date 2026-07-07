@@ -349,10 +349,7 @@ buyer_data[, flag_name_match_ambiguous := (
 )]
 buyer_data[, flag_review_name_match := (
   flag_name_match_found &
-    (
-      name_match_method == "fuzzy" |
-        flag_name_match_ambiguous
-    )
+    (name_match_method == "fuzzy" | flag_name_match_ambiguous)
 )]
 
 # Step 7 in the documentation is manual review. This flag includes:
