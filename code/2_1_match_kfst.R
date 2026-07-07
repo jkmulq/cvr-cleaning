@@ -67,6 +67,7 @@ cvr_key[, source_order := fifelse(name_source == "name", 1L, 2L)]
 
 ## 2.1 Row id for later joining
 winner_data[, match_row_id := .I]
+winner_data[, winner_name_in_data := winner_name]
 
 # The CVR key contains Danish firms, so only rows marked DK are automatically
 remaining <- winner_data[
@@ -79,6 +80,7 @@ cat("No. observations to fuzzy match:", nrow(remaining))
 # The CVR key records when a name was valid. 
 # We will use tender publication dates to filter potential matches. 
 remaining[, match_date := as.IDate(pub_date)]
+remaining_original <- remaining
 
 # Table to append matches at each step.
 # Matched rows are removed from remaining (just as in matching.ipynb).
