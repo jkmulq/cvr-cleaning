@@ -329,6 +329,109 @@ clean_winner_data <- clean_winner_data %>%
     )
   )
 
+## 2.8 Fill missing CVRs when the same winner name has one valid CVR elsewhere
+### 2.8.1 Count the distinct valid CVRs observed for each exact winner name
+# This uses the original winner name rather than a standardised name. Exact-name
+# matching is more conservative because it does not combine similar-looking firms.
+valid_invalid_cvr_winner_key <- clean_winner_data %>%
+  filter(!is.na(winner_name), winner_name != "") %>%
+  distinct(winner_name, winner_cvr_clean, valid_cvr) %>%
+  mutate(
+    n_valid_cvr = sum(valid_cvr),
+    n_total_cvr = n(), # Includes missing and invalid cleaned CVR values
+    .by = winner_name
+  )
+
+### 2.8.2 Record which KFST lots supplied each valid winner-name/CVR pair
+# lot_id uniquely identifies the original KFST lot. Keeping every source lot
+# makes each borrowed CVR traceable back to the rows that supplied it.
+valid_cvr_sources <- clean_winner_data %>%
+  filter(valid_cvr, !is.na(winner_name), winner_name != "") %>%
+  summarise(
+    lot_id_borrowed_from = paste(sort(unique(lot_id)), collapse = ";"),
+    .by = c(winner_name, winner_cvr_clean)
+  )
+
+### 2.8.3 Keep only names linked to exactly one distinct valid CVR
+# Names linked to several valid CVRs are ambiguous and are not filled.
+single_valid_cvr_key <- valid_invalid_cvr_winner_key %>%
+  filter(n_valid_cvr == 1, n_total_cvr > 1, valid_cvr) %>%
+  rename(winner_cvr_valid_from_same_name = winner_cvr_clean) %>%
+  select(-valid_cvr, -n_valid_cvr, -n_total_cvr) %>%
+  distinct()
+
+single_valid_cvr_key <- single_valid_cvr_key %>%
+  left_join(
+    valid_cvr_sources,
+    by = c(
+      "winner_name",
+      "winner_cvr_valid_from_same_name" = "winner_cvr_clean"
+    )
+  )
+
+### 2.8.4 Join the same-name CVR onto the full winner data
+# Missing winner names cannot match each other. This prevents unrelated rows
+# with missing names from borrowing a CVR from one another.
+n_winner_rows_before_cvr_fill <- nrow(clean_winner_data)
+
+clean_winner_data <- left_join(
+  clean_winner_data,
+  single_valid_cvr_key,
+  by = "winner_name",
+  na_matches = "never"
+)
+
+if (nrow(clean_winner_data) != n_winner_rows_before_cvr_fill) {
+  stop("Joining same-name CVRs changed the number of KFST winner rows.")
+}
+
+### 2.8.5 Fill only rows whose cleaned CVR is missing
+# Use winner_cvr_clean here rather than winner_cvr_original. A multiple-winner
+# source row can contain CVRs overall while one separated winner still has none.
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    flag_fill_missing_cvr = coalesce(
+      (is.na(winner_cvr_clean) | winner_cvr_clean == "") &
+        !is.na(winner_cvr_valid_from_same_name) &
+        winner_cvr_valid_from_same_name != "",
+      FALSE
+    )
+  )
+
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    winner_cvr_clean = ifelse(
+      flag_fill_missing_cvr,
+      winner_cvr_valid_from_same_name,
+      winner_cvr_clean
+    ),
+    # Source lots are relevant only when a CVR was actually borrowed.
+    lot_id_borrowed_from = ifelse(
+      flag_fill_missing_cvr,
+      lot_id_borrowed_from,
+      NA_character_
+    )
+  )
+
+# Recalculate validity after filling the missing CVRs.
+clean_winner_data <- clean_winner_data %>%
+  mutate(valid_cvr = coalesce(str_detect(winner_cvr_clean, "^\\d{8}$"), FALSE))
+
+n_filled_winner_cvrs <- sum(clean_winner_data$flag_fill_missing_cvr)
+cat("Number of missing winner CVRs filled from the same exact winner name:",
+    n_filled_winner_cvrs, "\n")
+
+if (any(clean_winner_data$flag_fill_missing_cvr & !clean_winner_data$valid_cvr)) {
+  stop("At least one borrowed KFST winner CVR is not a valid eight-digit CVR.")
+}
+
+if (any(clean_winner_data$flag_fill_missing_cvr &
+        (is.na(clean_winner_data$lot_id_borrowed_from) |
+           clean_winner_data$lot_id_borrowed_from == ""))) {
+  stop("At least one borrowed KFST winner CVR is missing its source lot.")
+}
+
+## 2.9 Other winner quality flags
 # Flag missing CVR number
 clean_winner_data <- clean_winner_data %>%
   mutate(flag_missing_winner_cvr =
