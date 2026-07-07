@@ -309,7 +309,7 @@ clean_winner_data <- clean_winner_data %>%
     winner_name_first_letter = winner_name_prepared$first_letter
   )
 
-## 2.7 Other winner quality flags
+## 2.7 Initial winner CVR quality flags
 ## Quality flags treat NAs as FALSE: missing values are captured by explicit
 ## missingness flags, not by propagating NA through boolean indicators.
 # Flag valid CVR numbers (exactly 8 digits, no letters or special characters)
@@ -322,12 +322,12 @@ clean_winner_data <- clean_winner_data %>%
 # is not necessarily wrong in this case (it may just be the first of multiple 
 # CVRs listed in the original data, which we have now separated into multiple rows).
 clean_winner_data <- clean_winner_data %>% 
-  mutate(flag_winner_cvr_changed = 
-	     coalesce(
-	             winner_cvr_clean != winner_cvr_candidate_original,
-	             FALSE
-	           )
-         )
+  mutate(
+    flag_winner_cvr_changed = coalesce(
+      winner_cvr_clean != winner_cvr_candidate_original,
+      FALSE
+    )
+  )
 
 # Flag missing CVR number
 clean_winner_data <- clean_winner_data %>%
