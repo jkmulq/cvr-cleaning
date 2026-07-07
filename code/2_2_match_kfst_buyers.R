@@ -5,12 +5,14 @@
 rm(list = ls())
 
 # Load config
-library(here)
+suppressWarnings(suppressPackageStartupMessages(library(here)))
 source(here::here("config.R"))
 
 # Packages
-library(data.table)
-library(tidyverse)
+suppressWarnings(suppressPackageStartupMessages({
+  library(data.table)
+  library(tidyverse)
+}))
 
 # Source functions
 source(file.path(PROJECT_DIR, "code", "functions.R"))

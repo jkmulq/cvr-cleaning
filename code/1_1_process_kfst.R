@@ -6,13 +6,15 @@
 rm(list = ls())
 
 # Config: edit config.R at the project root to set your own PROJECT_DIR and Stata path
-library(here)
+suppressWarnings(suppressPackageStartupMessages(library(here)))
 source(here::here("config.R"))
 
 # Packages
-library(haven)
-library(tidyverse)
-library(readxl)
+suppressWarnings(suppressPackageStartupMessages({
+  library(haven)
+  library(tidyverse)
+  library(readxl)
+}))
 
 # Paths
 raw_data_dir <- dirs$raw_data

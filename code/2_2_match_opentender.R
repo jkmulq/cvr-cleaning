@@ -6,11 +6,11 @@
 rm(list = ls())
 
 # Load config
-library(here)
+suppressWarnings(suppressPackageStartupMessages(library(here)))
 source(here::here("config.R"))
 
 # Packages
-library(data.table)
+suppressWarnings(suppressPackageStartupMessages(library(data.table)))
 
 # Source functions
 source(file.path(PROJECT_DIR, "code", "functions.R"))
