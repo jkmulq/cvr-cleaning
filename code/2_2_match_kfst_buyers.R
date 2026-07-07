@@ -63,12 +63,14 @@ cvr_key[, source_order := fifelse(name_source == "name", 1L, 2L)]
 # 2 Filter KFST data
 ## 2.1 Row id for later joining
 buyer_data[, match_row_id := .I]
+buyer_data[, buyer_name_in_data := buyer_name]
 remaining <- buyer_data[flag_check_fuzzy_match == TRUE, ]
 cat("No. observations to match:", nrow(remaining))
 
 # The CVR key records when a name was valid. 
 # We will use tender publication dates to filter potential matches. 
 remaining[, match_date := as.IDate(pub_date)]
+remaining_original <- remaining
 
 # Table to append matches at each step.
 # Matched rows are removed from remaining (just as in matching.ipynb).
