@@ -43,9 +43,6 @@ This file tracks development work against the current codebase and the project b
   - Report counts and proportions for exact agreement, fuzzy agreement, a CVR found with a different name, and a CVR not found in the provided keys.
   - Report results separately by dataset and cleaning source, and keep `tender_id`, `lot_id`, `winner_number`, the original values, and the cleaned values for review.
   - Add the results and representative disagreements to the quality analysis report.
-- [ ] Make sure winner/buyer names are expanded alongside the relevant CVR numbers.
-  - matching process not implemented for buyers
-
 ## OpenTender Cleaning
 
 - [x] Implement conservative multiple-name partition rule.
@@ -75,8 +72,9 @@ This file tracks development work against the current codebase and the project b
   - These occur when the row itself has exactly one valid CVR, but the same `winner_name` has multiple valid CVRs elsewhere, so `winner_cvr_clean_real` is missing.
   - Conclusion: invalid sibling tokens now collapse to the row's own single valid CVR; only `flag_cvr_borrowed_from_winner_name` distinguishes cross-row borrowing.
   - Key examples include `Nykredit A/S`, `Hoffmann A/S`, and `Deloitte Statsautoriseret Revisionsaktieselskab`.
-- [ ] Clean OpenTender buyer CVRs.
+- [x] Clean OpenTender buyer CVRs.
   - Target: clean `buyer bodyid id` into valid eight-digit CVR numbers where possible.
+  - Conclusion: OpenTender buyer CVRs are cleaned in the processing workflow and unmatched missing buyer CVRs are sent to the buyer name-matching workflow.
 - [x] Expand OpenTender multi-identifier fields.
   - Target: ensure cleaned data contain at most one bidder or buyer CVR per row when the source field contains multiple identifiers.
   - Conclusion: this is done in the matching script
