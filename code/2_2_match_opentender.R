@@ -69,7 +69,7 @@ remaining <- winner_data[
     toupper(trimws(winner_country)) == "DK"
 ]
 
-cat("Number observations to fuzzy match:", nrow(remaining))
+cat("Number observations to fuzzy match:", nrow(remaining), "\n")
 
 # The CVR key records when a name was valid. 
 # We will use tender publication dates to filter potential matches. 
@@ -145,8 +145,8 @@ cat("Step 4 matches:", nrow(new_matches), "\n")
 rm(new_matches)
 gc()
 
-cat("total exact matches:", nrow(matched))
-cat("share:", round(nrow(matched) / nrow(remaining_original), 3))
+cat("total exact matches:", nrow(matched), "\n")
+cat("share:", round(nrow(matched) / nrow(remaining_original), 3), "\n")
 
 
 # 4 Exact matching after removing consortium language
@@ -654,7 +654,7 @@ fuzzy_candidates <- rbindlist(
 new_matches <- accept_fuzzy_match(step_candidates, threshold = 85)
 new_matches <- add_winner_context_to_matches(new_matches)
 keep_step_matches(new_matches) # Append to larger matched dataset
-cat("Number of new fuzzy matches:", nrow(new_matches))
+cat("Number of new fuzzy matches:", nrow(new_matches), "\n")
 
 ## 6.2 Biname key, full winner name
 step_candidates <- find_fuzzy_matches(
@@ -678,7 +678,7 @@ fuzzy_candidates <- rbindlist(
 new_matches <- accept_fuzzy_match(step_candidates, threshold = 85)
 new_matches <- add_winner_context_to_matches(new_matches)
 keep_step_matches(new_matches) # Append to larger matched dataset
-cat("Number of new fuzzy matches:", nrow(new_matches))
+cat("Number of new fuzzy matches:", nrow(new_matches), "\n")
 
 ## 6.3 main name key, but using the broader name
 # The documented thresholds are 86 for main names and 89 for binames.
@@ -703,7 +703,7 @@ fuzzy_candidates <- rbindlist(
 new_matches <- accept_fuzzy_match(step_candidates, threshold = 86)
 new_matches <- add_winner_context_to_matches(new_matches)
 keep_step_matches(new_matches) # Append to new matched dataset
-cat("Number of fuzzy matches:", nrow(new_matches))
+cat("Number of fuzzy matches:", nrow(new_matches), "\n")
 
 ## 6.4 biname name key, but using the broader name
 step_candidates <- find_fuzzy_matches(
@@ -727,7 +727,7 @@ fuzzy_candidates <- rbindlist(
 new_matches <- accept_fuzzy_match(step_candidates, threshold = 89)
 new_matches <- add_winner_context_to_matches(new_matches)
 keep_step_matches(new_matches) # Append to matched dataset
-cat("Number of fuzzy matches", nrow(new_matches))
+cat("Number of fuzzy matches", nrow(new_matches), "\n")
 
 rm(new_matches, step_candidates, name_key, biname_key)
 gc()

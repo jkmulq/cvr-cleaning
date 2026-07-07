@@ -68,7 +68,7 @@ cvr_key[, source_order := fifelse(name_source == "name", 1L, 2L)]
 buyer_data[, match_row_id := .I]
 buyer_data[, buyer_name_in_data := buyer_name]
 remaining <- buyer_data[flag_check_fuzzy_match == TRUE, ]
-cat("No. observations to match:", nrow(remaining))
+cat("No. observations to match:", nrow(remaining), "\n")
 
 # The CVR key records when a name was valid. 
 # We will use tender publication dates to filter potential matches. 
@@ -171,7 +171,7 @@ fuzzy_candidates <- rbindlist(
 new_matches <- accept_fuzzy_match(step_candidates, threshold = 85)
 new_matches <- add_buyer_context_to_matches(new_matches)
 keep_step_matches(new_matches) # Append to larger matched dataset
-cat("Number of new fuzzy matches:", nrow(new_matches))
+cat("Number of new fuzzy matches:", nrow(new_matches), "\n")
 
 ## 4.2 Biname key, full winner name
 step_candidates <- find_fuzzy_matches(
@@ -195,7 +195,7 @@ fuzzy_candidates <- rbindlist(
 new_matches <- accept_fuzzy_match(step_candidates, threshold = 85)
 new_matches <- add_buyer_context_to_matches(new_matches)
 keep_step_matches(new_matches) # Append to larger matched dataset
-cat("Number of new fuzzy matches:", nrow(new_matches))
+cat("Number of new fuzzy matches:", nrow(new_matches), "\n")
 
 ## 4.3 main name key, but using the broader name
 # The documented thresholds are 86 for main names and 89 for binames.
@@ -220,7 +220,7 @@ fuzzy_candidates <- rbindlist(
 new_matches <- accept_fuzzy_match(step_candidates, threshold = 86)
 new_matches <- add_buyer_context_to_matches(new_matches)
 keep_step_matches(new_matches) # Append to new matched dataset
-cat("Number of fuzzy matches:", nrow(new_matches))
+cat("Number of fuzzy matches:", nrow(new_matches), "\n")
 
 ## 4.4 biname name key, but using the broader name
 step_candidates <- find_fuzzy_matches(
@@ -244,7 +244,7 @@ fuzzy_candidates <- rbindlist(
 new_matches <- accept_fuzzy_match(step_candidates, threshold = 89)
 new_matches <- add_buyer_context_to_matches(new_matches)
 keep_step_matches(new_matches) # Append to matched dataset
-cat("Number of fuzzy matches", nrow(new_matches))
+cat("Number of fuzzy matches", nrow(new_matches), "\n")
 
 rm(new_matches, step_candidates, name_key, biname_key)
 gc()
