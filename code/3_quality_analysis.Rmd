@@ -810,7 +810,7 @@ Being too generous with identifying possible multi-firm rows is a major risk, si
 After identifying candidate rows, I then create all possible splits of the provided firm name at plausible boundaries. The table below illustrates how this process works for the example "Firm A, Firm B & Firm C".  
 
 ```{r eg-splitting-process}
-partition_example <- make_winner_name_partitions("Firm A, Firm B & Firm C")
+partition_example <- make_name_partitions("Firm A, Firm B & Firm C")
 partition_example$partitions %>% 
   kable(caption = "Partition Example")
 ```
