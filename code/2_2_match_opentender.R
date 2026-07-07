@@ -583,7 +583,7 @@ name_partition_summary[,
     default = "no complete partition"
   )
 ]
-name_partition_summary[, flag_potential_multiple_winners := name_partition_n_complete > 0L]
+name_partition_summary[, flag_potential_multiple_names := name_partition_n_complete > 0L]
 
 # Separate accepted partitions
 unique_partition_ids <- name_partition_summary[
@@ -787,14 +787,14 @@ winner_data[name_partition_summary, on = "match_row_id",
     name_partition_n_complete = i.name_partition_n_complete,
     proposed_name_partition = i.proposed_name_partition,
     name_partition_n_firms = i.name_partition_n_firms,
-    flag_potential_multiple_winners = i.flag_potential_multiple_winners,
+    flag_potential_multiple_names = i.flag_potential_multiple_names,
     flag_joint_venture_text = i.flag_joint_venture_text,
     flag_consortium_text = i.flag_consortium_text,
     flag_collaboration_text = i.flag_collaboration_text)]
 
 # Coalesce flags to FALSE for rows that were not assessed for multiple winners
 winner_data[, `:=`(
-    flag_potential_multiple_winners = fcoalesce(flag_potential_multiple_winners, FALSE),
+    flag_potential_multiple_names = fcoalesce(flag_potential_multiple_names, FALSE),
     flag_joint_venture_text = fcoalesce(flag_joint_venture_text, FALSE),
     flag_consortium_text = fcoalesce(flag_consortium_text, FALSE),
     flag_collaboration_text = fcoalesce(flag_collaboration_text, FALSE))]
@@ -814,8 +814,8 @@ winner_data[matched, on = "match_row_id",
 # segment. The original row_id and winner_name_original remain on every new row
 # so the expansion can always be traced back to the OpenTender source.
 winner_data[, flag_name_partition_expanded := FALSE]
-winner_data[, flag_separated_winner := fifelse(match_row_id %in% unique_partition_ids$match_row_id, 
-                                               TRUE, FALSE)]
+winner_data[, flag_separated_name := fifelse(match_row_id %in% unique_partition_ids$match_row_id, 
+                                             TRUE, FALSE)]
 
 # Join the accepted partition segments onto their original winner rows.
 separated_winner_data <- winner_data[unique_partition_ids,
@@ -854,10 +854,10 @@ separated_columns <- grep(
   value = TRUE
 )
 separated_winner_data[, (separated_columns) := NULL]
-separated_winner_data[, flag_separated_winner := TRUE]
+separated_winner_data[, flag_separated_name := TRUE]
 
 # Remove original combined-name rows then appending separated rows
-winner_data <- winner_data[flag_separated_winner == FALSE, ]
+winner_data <- winner_data[flag_separated_name == FALSE, ]
 winner_data[, name_partition_segment_number := NA_integer_]
 winner_data <- rbindlist(
   list(winner_data, separated_winner_data),
@@ -926,7 +926,7 @@ winner_data[, name_match_step_code := fcase(
 winner_data[, flag_name_match_found := !is.na(winner_cvr_name_match)]
 winner_data[, flag_name_match_ambiguous := (flag_name_match_found & name_match_n_candidates > 1)]
 winner_data[, flag_review_name_match := (
-  (flag_potential_multiple_winners & !flag_name_partition_expanded) |
+  (flag_potential_multiple_names & !flag_name_partition_expanded) |
     (flag_name_match_found & (name_match_method == "fuzzy" | flag_name_match_ambiguous))
 )]
 
@@ -947,7 +947,7 @@ winner_data[, winner_cvr_final := as.character(winner_cvr_clean)]
 # Fill missing CVRs from name matching
 winner_data[flag_check_fuzzy_match & # Candidates for matching
               toupper(trimws(winner_country)) == "DK" & # Danish firm 
-              !flag_potential_multiple_winners & # Not a potential multiple-winner row
+              !flag_potential_multiple_names & # Not a potential multiple-name row
               !is.na(winner_cvr_name_match), # Has a matched CVR number
   winner_cvr_final := winner_cvr_name_match]
 
@@ -960,7 +960,7 @@ winner_data[, name_match_status := fcase(
   "matched - separated winner name",
   !flag_check_fuzzy_match,
   "not requested",
-  flag_potential_multiple_winners,
+  flag_potential_multiple_names,
   "manual review - potential multiple winners",
   flag_review_name_match,
   "manual review - fuzzy or ambiguous match",
@@ -977,9 +977,11 @@ winner_data[, name_match_status := fcase(
 manual_name_review <- winner_data[
   flag_manual_name_review == TRUE,
   .(
+    row_id,
     tender_id,
     lot_id,
     winner_number,
+    winner_name_in_data,
     winner_name,
     winner_name_match,
     winner_firm_type,
@@ -994,7 +996,7 @@ manual_name_review <- winner_data[
     proposed_name_partition,
     name_partition_n_firms,
     name_partition_n_complete,
-    flag_potential_multiple_winners,
+    flag_potential_multiple_names,
     flag_joint_venture_text,
     flag_consortium_text,
     flag_collaboration_text,
@@ -1003,7 +1005,10 @@ manual_name_review <- winner_data[
     name_match_method,
     name_match_score,
     name_match_n_candidates,
+    flag_name_match_found,
     flag_name_match_ambiguous,
+    flag_review_name_match,
+    flag_manual_name_review,
     name_match_status
   )
 ]

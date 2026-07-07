@@ -374,14 +374,18 @@ buyer_data[, name_match_status := fcase(
 )]
 
 # Save a compact table containing only rows that need a person to inspect.
-manual_name_review <- buyer_data[flag_manual_name_review == TRUE, ] %>% 
+manual_buyer_name_review <- buyer_data[flag_manual_name_review == TRUE, ] %>% 
   select(
-    tender_id, lot_id, buyer_name, buyer_name_match, buyer_firm_type,
+    tender_id, lot_id, buyer_number, buyer_name_in_data,
+    buyer_name, buyer_name_match, buyer_firm_type,
     pub_date,
     buyer_cvr_name_match, registered_name_match,
     starts_with("fuzzy_candidate_cvr"), starts_with("fuzzy_candidate_name"), starts_with("fuzzy_candidate_score"),
     name_match_step, name_match_step_code, name_match_method,
-    name_match_score,name_match_n_candidates, flag_name_match_ambiguous, name_match_status
+    name_match_score, name_match_n_candidates,
+    flag_name_match_found, flag_name_match_ambiguous,
+    flag_review_name_match, flag_manual_name_review,
+    name_match_status
   )
 
 # Delete match_row_id
@@ -389,4 +393,4 @@ buyer_data[, match_row_id := NULL]
 
 # 7 Save
 saveRDS(buyer_data, file.path(clean_data_dir, "clean_buyer_data_kfst_name_matched.rds"))
-saveRDS(manual_name_review,  file.path(clean_data_dir, "manual_buyer_name_review_kfst.rds"))
+saveRDS(manual_buyer_name_review,  file.path(clean_data_dir, "manual_buyer_name_review_kfst.rds"))
