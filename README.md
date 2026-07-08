@@ -209,7 +209,7 @@ equally verified without checking the matching flags.
 For match-quality statistics by source, entity, match type, and match step, see:
 
 - [code/3_quality_analysis.Rmd](code/3_quality_analysis.Rmd)
-- generated output for GitHub Pages: `docs/3_quality_analysis.html`
+- generated output:  `docs/3_quality_analysis.html`
 
 For definitions of cleaning and matching flags, see:
 
