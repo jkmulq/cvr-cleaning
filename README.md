@@ -92,19 +92,55 @@ replication sample is therefore determined by the files placed in that folder.
 All scripts source [config.R](config.R). The main setting is `PROJECT_DIR`, the
 root of this repository.
 
-If you run scripts from the repository root, no changes should be needed. If you
-run from another location or machine, either edit `config.R` or pass
-`CVR_CLEANING_PROJECT_DIR` as an environment variable:
+For the standard replication workflow, no edits should be needed:
+[run_replication.sh](run_replication.sh) moves to the repository root before it
+runs any R scripts, and `config.R` sets `PROJECT_DIR` from that working
+directory.
 
-```bash
-CVR_CLEANING_PROJECT_DIR="/path/to/cvr-cleaning" ./run_replication.sh
+If you run an individual R script manually, first open `cvr-cleaning.Rproj` or
+set your R working directory to the repository root. If you need to run from a
+different working directory on another machine, edit the `PROJECT_DIR` line in
+`config.R` to your local repository path.
+
+The derived paths in `config.R` are:
+
+```text
+dirs$raw_data    -> data/raw/
+dirs$cvr_key     -> data/cvr_matching_data/
+dirs$clean_data  -> data/clean/
+dirs$code        -> code/
 ```
 
-`config.R` also creates the expected local directories if they are missing.
+`config.R` creates the expected local output directories if they are missing,
+but it does not download or create the raw input files.
 
 ## Replication
 
-### 1. Restore the R environment
+### 1. Add local input data
+
+Place the KFST, OpenTender, and CVR-name-key files in the folders listed above
+before restoring the R environment or running the workflow. The raw data are
+local inputs and are not committed to this repository.
+
+Required for the cleaning scripts:
+
+```text
+data/raw/kfst/udbudsdata_kfst.xlsx
+data/raw/OpenTender/*.csv
+```
+
+Required for the CVR-name-key and matching scripts:
+
+```text
+data/cvr_matching_data/cvr_names_full.csv
+data/cvr_matching_data/cvr_binavne_full.csv
+```
+
+[run_replication.sh](run_replication.sh) checks for these local inputs before it
+runs `renv::restore()` or any processing scripts. If `RUN_MATCHING=false`, the
+script only requires the KFST and OpenTender raw inputs.
+
+### 2. Restore the R environment
 
 The project uses `renv`. On a new machine, restore the package environment once:
 
@@ -118,10 +154,8 @@ Alternatively, let the replication script do this:
 RESTORE_RENV=true ./run_replication.sh
 ```
 
-### 2. Add local input data
-
-Place the KFST, OpenTender, and CVR-name-key files in the folders listed above.
-The raw data are local inputs and are not committed to this repository.
+When using the `RESTORE_RENV=true` option, the script still checks that the
+local input data are present before restoring packages.
 
 ### 3. Run the full workflow
 
