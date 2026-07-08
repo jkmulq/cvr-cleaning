@@ -9,6 +9,20 @@ details, see:
 - Download the [quality report HTML](https://github.com/jkmulq/cvr-cleaning/releases/download/quality-report/3_quality_analysis.html) (rendered from [this](code/3_quality_analysis.Rmd) Rmarkdown) 
 - [Cleaning flag dictionary](docs/cleaning_flags.md)
 
+If you want to skip to replication, navigate to the [Configuration](#configuration)
+and then [Replication](#replication) sections. Otherwise, there's a table of
+contents below.
+
+## Contents
+
+- [Replication](#replication)
+- [Required local inputs](#required-local-inputs)
+- [Configuration](#configuration)
+- [Repository structure](#repository-structure)
+- [What each script does](#what-each-script-does)
+- [Main outputs](#main-outputs)
+- [Match quality and cleaning flags](#match-quality-and-cleaning-flags)
+
 ## Repository structure
 
 ```text
