@@ -193,6 +193,22 @@ code/2_3_match_opentender_buyers.R
 
 Outputs are written to `data/clean/`.
 
+Expected run time depends on the machine, but the main distinction is between
+cleaning and name matching:
+
+| Stage | Scripts | Approximate run time |
+|---|---|---|
+| Input checks | built into `run_replication.sh` | seconds |
+| Environment restore, if `RESTORE_RENV=true` | `renv::restore()` | depends on whether packages are already installed |
+| Cleaning only | `code/1_1_process_kfst.R`, `code/1_2_process_open_tender.R` | minutes |
+| CVR-name-key preparation | `code/1_3_process_keys.R` | minutes |
+| Winner matching | `code/2_1_match_kfst.R`, `code/2_2_match_opentender.R` | slower than cleaning, but not usually the main bottleneck |
+| Buyer matching | `code/2_2_match_kfst_buyers.R`, `code/2_3_match_opentender_buyers.R` | the main bottleneck; this is where most of the few-hour full-run time is spent |
+
+For a quick check that the cleaning scripts still run, use `RUN_MATCHING=false`.
+For a full matched dataset, plan for a few hours and expect most of that time to
+come from the buyer-matching scripts.
+
 ### 4. Run cleaning only
 
 To stop after the KFST and OpenTender cleaning scripts, without building the CVR
