@@ -6,8 +6,7 @@ matches for winners and buyers in the KFST and OpenTender data sources.
 The README is a navigation and replication guide. For substantive data-quality
 details, see:
 
-- [Match quality report source](code/3_quality_analysis.Rmd), which renders to
-  `docs/3_quality_analysis.html`
+- [Quality report][docs/3_quality_analysis.html] (rendered from [this][code/3_quality_analysis.Rmd] Rmarkdown) 
 - [Cleaning flag dictionary](docs/cleaning_flags.md)
 
 ## Repository structure
@@ -95,10 +94,10 @@ root of this repository.
 
 If you run scripts from the repository root, no changes should be needed. If you
 run from another location or machine, either edit `config.R` or pass
-`PROJECT_DIR` as an environment variable:
+`CVR_CLEANING_PROJECT_DIR` as an environment variable:
 
 ```bash
-PROJECT_DIR="/path/to/cvr-cleaning" ./run_replication.sh
+CVR_CLEANING_PROJECT_DIR="/path/to/cvr-cleaning" ./run_replication.sh
 ```
 
 `config.R` also creates the expected local directories if they are missing.
