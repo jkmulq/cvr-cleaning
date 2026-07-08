@@ -7,7 +7,7 @@ The README is a navigation and replication guide. For substantive data-quality
 details, see:
 
 - [Match quality report source](code/3_quality_analysis.Rmd), which renders to
-  `output/docs/3_quality_analysis.html`
+  `docs/3_quality_analysis.html`
 - [Cleaning flag dictionary](docs/cleaning_flags.md)
 
 ## Repository structure
@@ -30,7 +30,8 @@ cvr-cleaning/
 │   ├── 3_quality_analysis.Rmd
 │   └── drafts/
 ├── docs/
-│   └── cleaning_flags.md
+│   ├── cleaning_flags.md
+│   └── 3_quality_analysis.html
 ├── data/
 │   ├── raw/
 │   ├── cvr_matching_data/
@@ -61,7 +62,7 @@ report is generated separately.
 | [code/2_2_match_kfst_buyers.R](code/2_2_match_kfst_buyers.R) | Matches KFST buyer names to CVRs, since KFST buyer CVRs are not supplied in the raw source. | `clean_buyer_data_kfst_name_matched.rds`, `manual_buyer_name_review_kfst.rds`. |
 | [code/2_2_match_opentender.R](code/2_2_match_opentender.R) | Matches missing OpenTender winner CVRs and records ambiguous or fuzzy cases for review. Also writes winner-name partition diagnostics. | `clean_winner_data_ot_name_matched.rds`, `manual_name_review_ot.rds`, `winner_name_partition_diagnostics_ot.rds`. |
 | [code/2_3_match_opentender_buyers.R](code/2_3_match_opentender_buyers.R) | Matches missing OpenTender buyer CVRs and records ambiguous or fuzzy cases for review. Also writes buyer-name partition diagnostics. | `clean_buyer_data_ot_name_matched.rds`, `manual_buyer_name_review_ot.rds`, `buyer_name_partition_diagnostics_ot.rds`. |
-| [code/3_quality_analysis.Rmd](code/3_quality_analysis.Rmd) | Builds the match-quality and data-quality report from the cleaned and matched outputs. | `output/docs/3_quality_analysis.html`. |
+| [code/3_quality_analysis.Rmd](code/3_quality_analysis.Rmd) | Builds the match-quality and data-quality report from the cleaned and matched outputs. | `docs/3_quality_analysis.html`. |
 
 The [code/drafts/](code/drafts) folder contains experimental or benchmark
 scripts. These are useful for development, but they are not part of the default
@@ -209,7 +210,7 @@ equally verified without checking the matching flags.
 For match-quality statistics by source, entity, match type, and match step, see:
 
 - [code/3_quality_analysis.Rmd](code/3_quality_analysis.Rmd)
-- generated output: `output/docs/3_quality_analysis.html`
+- generated output for GitHub Pages: `docs/3_quality_analysis.html`
 
 For definitions of cleaning and matching flags, see:
 
