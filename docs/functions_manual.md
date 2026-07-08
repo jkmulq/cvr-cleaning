@@ -74,7 +74,7 @@ example above shows the main columns used by the later pivoting step.
 
 ### `clean_cvr_candidate()`
 
-**Purpose:** Prepare a raw CVR string for pattern matching.
+**Purpose:** Prepare a raw CVR string for more sophisticated pattern matching/distinct CVR extraction.
 
 **Used for:** Low-level CVR extraction inside `extract_valid_cvr_candidates()`.
 
@@ -103,7 +103,7 @@ regular expression used later.
 
 ### `extract_valid_cvr_candidates()`
 
-**Purpose:** Extract valid-looking Danish CVRs from a candidate string.
+**Purpose:** Extract valid-looking CVRs from a candidate string.
 
 **Used for:** OpenTender winner and buyer CVR cleaning, and helper functions
 that count CVRs.
@@ -171,15 +171,14 @@ compute_distinct_valid_cvr(c(
 **Example output:**
 
 ```r
-c(1L, 2L, 0L)
+c(1, 2, 0)
 ```
 
 ### `known_invalid_cvr_numbers()`
 
-**Purpose:** Store placeholder CVR-like values that should not be treated as
-real Danish CVRs.
+**Purpose:** Function to call technically valid but likely a placeholder CVR value. 
 
-**Used for:** Winner and buyer CVR cleaning in OpenTender.
+**Used for:** Winner and buyer CVR cleaning in OpenTender. Called in multiple functions to make them cleaner.
 
 **Current placeholders:**
 
@@ -229,8 +228,6 @@ recover_formatted_danish_cvr(
 "23456789"
 ```
 
-**Safety rule:** This function repairs formatting; it does not correct
-digit-level typos. It will not change `12345679` to `12345678`.
 
 ## Match Context Helpers
 
@@ -539,13 +536,13 @@ is retained but `name_match_n_candidates` records that ambiguity.
 
 ### `levenshtein_ratio()`
 
-**Purpose:** Convert edit distance into a similarity score from 0 to 100.
+**Purpose:** Calculate a similarity score from 0 to 100 between two strings.
 
 **Used for:** Fuzzy matching.
 
 **How it works:**
 
-- Uses base R's `adist()` to calculate Levenshtein edit distance.
+- Uses base R's `adist()` to calculate Levenshtein distance.
 - Converts distance into a percentage-like score:
   `100 * (total_length - distance) / total_length`.
 
@@ -662,9 +659,6 @@ new_matches <- accept_fuzzy_match(
 1               5             fuzzy              100                       1
 ```
 
-**Important limitation:** The current function checks for a unique top score,
-but it does not yet require a large score gap between the first and second
-candidates. That score-gap or "elbow" rule is a planned quality improvement.
 
 ### `keep_step_matches()`
 
