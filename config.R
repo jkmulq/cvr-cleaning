@@ -2,32 +2,13 @@
 # Project Configuration — cvr-cleaning
 # =============================================================================
 # Edit this file once. All scripts source it automatically.
-# Open the project via cvr-cleaning.Rproj so here::here() resolves
-# the root correctly. If you run scripts outside RStudio, set PROJECT_DIR
-# explicitly below instead.
-
-library(here)
+# Open cvr-cleaning.Rproj or run scripts from the project root.
+# run_replication.sh does this automatically.
 
 # 1. Project root
-#    When the .Rproj file is open in RStudio, here::here() resolves to the
-#    project root automatically — leave PROJECT_DIR as-is.
-#    If running outside RStudio, either:
-#      - set the PROJECT_DIR environment variable before running the scripts; or
-#      - replace the default below with your local project path.
-config_value <- function(name, default) {
-  value <- Sys.getenv(name, unset = "")
-
-  if (value == "") {
-    return(default)
-  }
-
-  value
-}
-
-PROJECT_DIR <- normalizePath(
-  config_value("PROJECT_DIR", here::here()),
-  mustWork = FALSE
-)
+#    If running from another location or machine, replace this line with your
+#    local project path.
+PROJECT_DIR <- normalizePath(getwd(), mustWork = TRUE)
 
 # 2. Derived paths (do not edit)
 dirs <- list(

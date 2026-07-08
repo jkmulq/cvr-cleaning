@@ -5,8 +5,7 @@
 rm(list = ls())
 
 # Load config
-library(here)
-source(here::here("config.R"))
+source("config.R")
 
 # Packages
 library(data.table)

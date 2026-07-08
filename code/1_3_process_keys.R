@@ -6,9 +6,8 @@
 # Clean environment
 rm(list = ls())
 
-# Config: edit config.R at the project root to set your own PROJECT_DIR and Stata path
-suppressWarnings(suppressPackageStartupMessages(library(here)))
-source(here::here("config.R"))
+# Config: run from the project root or use run_replication.sh.
+source("config.R")
 
 # Packages
 suppressWarnings(suppressPackageStartupMessages({

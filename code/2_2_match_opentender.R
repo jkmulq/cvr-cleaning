@@ -6,8 +6,7 @@
 rm(list = ls())
 
 # Load config
-suppressWarnings(suppressPackageStartupMessages(library(here)))
-source(here::here("config.R"))
+source("config.R")
 
 # Packages
 suppressWarnings(suppressPackageStartupMessages(library(data.table)))

@@ -2,10 +2,9 @@
 
 set -euo pipefail
 
-# Run from the repository root by default, even when the script is called from
-# another directory. A different location can be supplied with PROJECT_DIR.
+# Run from the repository root, even when the script is called from elsewhere.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="${PROJECT_DIR:-$SCRIPT_DIR}"
+PROJECT_DIR="$SCRIPT_DIR"
 RSCRIPT="${RSCRIPT:-Rscript}"
 RUN_MATCHING="${RUN_MATCHING:-true}"
 
