@@ -6,7 +6,7 @@ matches for winners and buyers in the KFST and OpenTender data sources.
 The README is a navigation and replication guide. For substantive data-quality
 details, see:
 
-- [Quality report][docs/3_quality_analysis.html] (rendered from [this][code/3_quality_analysis.Rmd] Rmarkdown) 
+- [Quality report](docs/3_quality_analysis.html) (rendered from [this](code/3_quality_analysis.Rmd) Rmarkdown) 
 - [Cleaning flag dictionary](docs/cleaning_flags.md)
 
 ## Repository structure
