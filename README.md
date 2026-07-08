@@ -218,14 +218,6 @@ name keys or running name matching:
 RUN_MATCHING=false ./run_replication.sh
 ```
 
-### 5. Use a different R executable
-
-If needed, set `RSCRIPT`:
-
-```bash
-RSCRIPT="/path/to/Rscript" ./run_replication.sh
-```
-
 ## Main outputs
 
 After a full replication run, the most important files are in `data/clean/`.
