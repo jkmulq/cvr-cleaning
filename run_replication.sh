@@ -15,6 +15,36 @@ cd "$PROJECT_DIR"
 echo "Project directory: $PROJECT_DIR"
 echo "Rscript: $RSCRIPT"
 
+require_file() {
+  local file_path="$1"
+
+  if [[ ! -f "$file_path" ]]; then
+    echo "Missing required input: $file_path" >&2
+    return 1
+  fi
+}
+
+require_any_file() {
+  local file_pattern="$1"
+  local description="$2"
+
+  if ! compgen -G "$file_pattern" > /dev/null; then
+    echo "Missing required input: $description" >&2
+    echo "Expected at least one file matching: $file_pattern" >&2
+    return 1
+  fi
+}
+
+echo
+echo "Checking local input data"
+require_file "data/raw/kfst/udbudsdata_kfst.xlsx"
+require_any_file "data/raw/OpenTender/*.csv" "OpenTender CSV files in data/raw/OpenTender/"
+
+if [[ "$RUN_MATCHING" == "true" ]]; then
+  require_file "data/cvr_matching_data/cvr_names_full.csv"
+  require_file "data/cvr_matching_data/cvr_binavne_full.csv"
+fi
+
 if [[ "${RESTORE_RENV:-false}" == "true" ]]; then
   echo
   echo "Restoring renv package environment"
