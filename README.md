@@ -8,6 +8,7 @@ details, see:
 
 - Download the [quality report HTML](https://github.com/jkmulq/cvr-cleaning/releases/download/quality-report/3_quality_analysis.html) (rendered from [this](code/3_quality_analysis.Rmd) Rmarkdown) 
 - [Cleaning flag dictionary](docs/cleaning_flags.md)
+- [Function manual](docs/functions_manual.md)
 
 If you want to skip to replication, navigate to the [Configuration](#configuration)
 and then [Replication](#replication) sections. Otherwise, there's a table of
