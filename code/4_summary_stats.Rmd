@@ -1,0 +1,612 @@
+---
+title: "CVR Cleaning Summary Statistics"
+author: "Jack Mulqueeney"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    self_contained: true
+knit: >
+  (function(inputFile, encoding) {
+    output_dir <- here::here("output", "docs")
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    rmarkdown::render(
+      inputFile,
+      encoding = encoding,
+      output_dir = output_dir
+    )
+  })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE
+)
+
+library(here)
+library(dplyr)
+library(knitr)
+library(tidyverse)
+library(ggplot2)
+
+report_project_dir <- here::here()
+report_clean_data_dir <- file.path(report_project_dir, "data", "clean")
+
+source(file.path(report_project_dir, "config.R"))
+
+input_files <- c(
+  file.path(report_clean_data_dir, "clean_winner_data_kfst.rds"),
+  file.path(report_clean_data_dir, "clean_buyer_data_kfst.rds"),
+  file.path(report_clean_data_dir, "clean_winner_data_ot.rds"),
+  file.path(report_clean_data_dir, "clean_buyer_data_ot.rds")
+)
+
+missing_files <- input_files[!file.exists(input_files)]
+
+if (length(missing_files) > 0) {
+  stop(
+    "Run the cleaning scripts first. Missing files: ",
+    paste(missing_files, collapse = ", ")
+  )
+}
+
+winner_summary_cols <- c(
+  "data_source", "tender_id", "lot_id", "tender_amount", "n_bidders",
+  "award_date", "winner_number", "winner_cvr", "buyer_name"
+)
+
+buyer_summary_cols <- c(
+  "data_source", "tender_id", "lot_id", "tender_amount", "n_bidders",
+  "award_date", "buyer_number", "buyer_name", "buyer_cvr"
+)
+
+parse_summary_date <- function(x) {
+  x <- as.character(x)
+  x[x == ""] <- NA_character_
+  
+  parsed <- suppressWarnings(lubridate::ymd(x))
+  excel_serial <- !is.na(x) & str_detect(x, "^[0-9]+$")
+  parsed[excel_serial] <- as.Date(as.numeric(x[excel_serial]), origin = "1899-12-30")
+  
+  parsed
+}
+
+prepare_winner_summary_data <- function(path, source_label) {
+  data <- readRDS(path)
+  
+  if (!"winner_cvr_clean" %in% names(data)) {
+    stop("Cleaned winner file is missing winner_cvr_clean: ", path)
+  }
+  
+  data %>%
+    mutate(
+      data_source = source_label,
+      tender_id = as.character(tender_id),
+      lot_id = as.character(lot_id),
+      award_date = parse_summary_date(award_date),
+      winner_cvr = winner_cvr_clean,
+      tender_amount = suppressWarnings(as.numeric(tender_amount)),
+      n_bidders = suppressWarnings(as.numeric(n_bidders))
+    ) %>%
+    select(any_of(winner_summary_cols))
+}
+
+prepare_buyer_summary_data <- function(path, source_label) {
+  data <- readRDS(path)
+  
+  if (!"buyer_cvr_clean" %in% names(data)) {
+    data$buyer_cvr_clean <- NA_character_
+  }
+  
+  data %>%
+    mutate(
+      data_source = source_label,
+      tender_id = as.character(tender_id),
+      lot_id = as.character(lot_id),
+      award_date = parse_summary_date(award_date),
+      buyer_cvr = buyer_cvr_clean,
+      tender_amount = suppressWarnings(as.numeric(tender_amount)),
+      n_bidders = suppressWarnings(as.numeric(n_bidders))
+    ) %>%
+    select(any_of(buyer_summary_cols))
+}
+
+kfst_winners <- prepare_winner_summary_data(input_files[1], "KFST")
+kfst_buyers <- prepare_buyer_summary_data(input_files[2], "KFST")
+ot_winners <- prepare_winner_summary_data(input_files[3], "OpenTender")
+ot_buyers <- prepare_buyer_summary_data(input_files[4], "OpenTender")
+
+winner_data <- bind_rows(kfst_winners, ot_winners)
+buyer_data <- bind_rows(kfst_buyers, ot_buyers)
+
+# One row per tender lot, so tender/lot-level quantities are not repeated for
+# each winner or buyer row.
+lot_data <- winner_data %>%
+  distinct(data_source, tender_id, lot_id, .keep_all = TRUE) %>%
+  mutate(
+    log_tender_amount = if_else(
+      !is.na(tender_amount) & tender_amount > 0,
+      log(tender_amount),
+      NA_real_
+    )
+  )
+
+theme_set(theme_light())
+theme_update(plot.title = element_text(hjust = 0.5, face = "bold"))
+theme_update(plot.subtitle = element_text(hjust = 0.5))
+
+summary_inset <- function(data, value_col, digits = 2) {
+  data %>%
+    filter(!is.na(.data[[value_col]])) %>%
+    summarise(
+      label = paste0(
+        "N = ", format(n(), big.mark = ","), "\n",
+        "Mean = ", round(mean(.data[[value_col]]), digits), "\n",
+        "Median = ", round(median(.data[[value_col]]), digits), "\n",
+        "P25 = ", round(quantile(.data[[value_col]], 0.25, names = FALSE), digits), "\n",
+        "P75 = ", round(quantile(.data[[value_col]], 0.75, names = FALSE), digits)
+      ),
+      .by = data_source
+    )
+}
+
+histogram_with_inset <- function(data, value_col, x_label, title, bins = 30, digits = 2) {
+  inset <- summary_inset(data, value_col, digits)
+
+  ggplot(
+    data %>% filter(!is.na(.data[[value_col]])),
+    aes(x = .data[[value_col]])
+  ) +
+    geom_histogram(bins = bins, fill = "#2f6f9f", color = "white") +
+    geom_label(
+      data = inset,
+      aes(x = Inf, y = Inf, label = label),
+      inherit.aes = FALSE,
+      hjust = 1.05,
+      vjust = 1.1,
+      size = 3,
+      label.size = 0.2
+    ) +
+    facet_wrap(vars(data_source), scales = "free_y") +
+    labs(
+      title = title,
+      x = x_label,
+      y = "Count"
+    )
+}
+```
+
+<style>
+body {
+  color: #24323d;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+h1, h2, h3 {
+  color: #17324d;
+}
+
+.section-note {
+  background: #f4f8fb;
+  border-left: 5px solid #2f6f9f;
+  border-radius: 4px;
+  margin: 1.2rem 0;
+  padding: 0.9rem 1.1rem;
+}
+
+table {
+  margin-bottom: 1.5rem;
+  width: 100%;
+}
+
+thead {
+  background: #17324d;
+  color: white;
+}
+
+th, td {
+  padding: 0.55rem 0.7rem !important;
+  vertical-align: top !important;
+}
+
+tbody tr:nth-child(even) {
+  background: #f5f7f9;
+}
+
+.overview-table {
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.overview-table caption {
+  color: #17324d;
+  font-weight: 700;
+  margin-bottom: 0.6rem;
+}
+</style>
+
+# Introduction
+
+This note gives a first-pass set of descriptive statistics for the cleaned KFST and OpenTender tender data. It is intended as an exploratory companion to the cleaning pipeline rather than a data quality report.
+
+<div class="section-note">
+Tender amount fields are source-specific. The tender-size summaries below use the natural log of positive numeric tender amounts, so KFST and OpenTender should still be compared carefully unless the amount definitions and currencies have been checked.
+</div>
+
+# Overview
+
+```{r overview-table}
+valid_cvr <- function(x) {
+  !is.na(x) & str_detect(x, "^\\d{8}$")
+}
+
+format_int <- function(x) {
+  if_else(is.na(x), "n/a", format(round(x), big.mark = ",", scientific = FALSE))
+}
+
+format_decimal <- function(x, digits = 2) {
+  if_else(is.na(x), "n/a", format(round(x, digits), nsmall = digits, scientific = FALSE))
+}
+
+# Create valid CVR flag for winners and buyers
+winner_data <- winner_data %>%
+  mutate(flag_valid_winner_cvr = valid_cvr(winner_cvr))
+buyer_data <- buyer_data %>% 
+  mutate(flag_valid_buyer_cvr = valid_cvr(buyer_cvr))
+
+# Years spanned by each dataset
+year_span <- lot_data %>%
+  mutate(year = lubridate::year(award_date)) %>%
+  filter(!is.na(year)) %>%
+  summarise(
+    years_spanned = paste0(min(year), "-", max(year)),
+    .by = data_source
+  )
+
+
+# Summary of winner CVR rows and unique winner firms
+winner_cvr_summary <- winner_data %>%
+  summarise(
+    valid_winner_cvr_rows = sum(flag_valid_winner_cvr),
+    unique_winner_firms = n_distinct(winner_cvr[flag_valid_winner_cvr]),
+    .by = data_source
+  )
+
+# Tenders per winner
+tenders_per_winner_cvr <- winner_data %>%
+  filter(flag_valid_winner_cvr) %>%
+  distinct(data_source, winner_cvr, tender_id) %>%
+  count(data_source, winner_cvr, name = "n_tenders")
+
+tenders_per_winner_summary <- tenders_per_winner_cvr %>%
+  summarise(
+    mean_tenders_per_winner_firm = mean(n_tenders),
+    sd_tenders_per_winner_firm = sd(n_tenders),
+    .by = data_source
+  )
+
+# Mean log value
+log_value_summary <- lot_data %>%
+  summarise(
+    mean_log_tender_amount = mean(log_tender_amount, na.rm = TRUE),
+    sd_log_tender_amount = sd(log_tender_amount, na.rm = TRUE),
+    .by = data_source
+  )
+
+# Buyer CVR summayr
+buyer_cvr_summary <- buyer_data %>%
+  summarise(
+    unique_buyers_by_cvr = if_else(
+      sum(flag_valid_buyer_cvr) > 0,
+      n_distinct(buyer_cvr[flag_valid_buyer_cvr]),
+      NA_integer_
+    ),
+    .by = data_source
+  )
+
+tenders_per_buyer_cvr <- buyer_data %>%
+  filter(valid_cvr(buyer_cvr)) %>%
+  distinct(data_source, buyer_cvr, tender_id) %>%
+  count(data_source, buyer_cvr, name = "n_tenders")
+
+tenders_per_buyer_summary <- tenders_per_buyer_cvr %>%
+  summarise(
+    mean_tenders_per_buyer = mean(n_tenders),
+    .by = data_source
+  )
+
+front_summary <- winner_cvr_summary %>%
+  left_join(year_span, by = "data_source") %>%
+  left_join(tenders_per_winner_summary, by = "data_source") %>%
+  left_join(log_value_summary, by = "data_source") %>%
+  left_join(buyer_cvr_summary, by = "data_source") %>%
+  left_join(tenders_per_buyer_summary, by = "data_source") %>%
+  transmute(
+    `Data source` = data_source,
+    `Valid winner CVR rows` = format_int(valid_winner_cvr_rows),
+    `Unique winner firms` = format_int(unique_winner_firms),
+    `Years spanned` = years_spanned,
+    `Mean tenders per winner firm` = format_decimal(mean_tenders_per_winner_firm),
+    `Mean log tender value` = format_decimal(mean_log_tender_amount),
+    `Unique buyers by CVR` = format_int(unique_buyers_by_cvr),
+    `Mean tenders per buyer CVR` = format_decimal(mean_tenders_per_buyer)
+  )
+
+kable(
+  front_summary,
+  caption = "Overview of cleaned tender data by source",
+  align = c("l", rep("r", ncol(front_summary) - 1)),
+  table.attr = 'class="overview-table"'
+)
+```
+
+# Tender Sizes
+
+```{r log-tender-value-histogram, fig.height=5, fig.width=9}
+histogram_with_inset(
+  lot_data,
+  value_col = "log_tender_amount",
+  x_label = "Log tender/lot amount",
+  title = "Distribution of log tender/lot amounts"
+)
+```
+
+```{r bidder-count-histogram, fig.height=5, fig.width=9}
+histogram_with_inset(
+  lot_data,
+  value_col = "n_bidders",
+  x_label = "Number of bidders",
+  title = "Distribution of bidders per tender lot"
+)
+```
+
+# Years
+
+```{r year-plot, fig.height=5, fig.width=9}
+lot_data %>%
+  mutate(year = lubridate::year(award_date)) %>%
+  count(data_source, year, name = "n_lots") %>%
+  filter(!is.na(year)) %>%
+  ggplot(aes(x = year, y = n_lots)) +
+  geom_col(fill = "#2f6f9f") +
+  facet_wrap(vars(data_source), scales = "free_y") +
+  labs(
+    title = "Tender lots by award year",
+    x = "Award year",
+    y = "Tender lots"
+  )
+```
+
+# Number of Tenders
+
+```{r tender-count-summary}
+tender_count_summary <- lot_data %>%
+  summarise(
+    n_tenders = n_distinct(tender_id),
+    n_lots = n_distinct(lot_id),
+    .by = data_source
+  )
+
+kable(
+  tender_count_summary,
+  caption = "Number of tenders and lots"
+)
+```
+
+# Distribution of Firms
+
+```{r unique-winner-firms}
+unique_winner_firms <- winner_data %>%
+  filter(flag_valid_winner_cvr, !is.na(winner_cvr), winner_cvr != "") %>%
+  summarise(
+    unique_winner_firms = n_distinct(winner_cvr),
+    winner_rows_with_cvr = n(),
+    .by = data_source
+  )
+
+kable(
+  unique_winner_firms,
+  caption = "Unique winner firms identified by cleaned CVR"
+)
+```
+
+```{r winner-firm-lot-distribution}
+winner_lots_per_firm <- winner_data %>%
+  filter(flag_valid_winner_cvr, !is.na(winner_cvr), winner_cvr != "") %>%
+  distinct(data_source, winner_cvr, lot_id) %>%
+  count(data_source, winner_cvr, name = "n_lots")
+
+histogram_with_inset(
+  winner_lots_per_firm,
+  value_col = "n_lots",
+  x_label = "Tender lots per winner firm",
+  title = "Distribution of tender lots per winner firm"
+)
+```
+
+# Tenders per Firm
+
+```{r tenders-per-winner-firm}
+tenders_per_firm <- winner_data %>%
+  filter(flag_valid_winner_cvr, !is.na(winner_cvr), winner_cvr != "") %>%
+  distinct(data_source, winner_cvr, tender_id) %>%
+  count(data_source, winner_cvr, name = "n_tenders")
+
+histogram_with_inset(
+  tenders_per_firm,
+  value_col = "n_tenders",
+  x_label = "Tenders per winner firm",
+  title = "Distribution of tenders per winner firm"
+)
+```
+
+# Buyer Side
+
+```{r buyer-summary}
+buyer_summary <- buyer_data %>%
+  filter(flag_valid_buyer_cvr, !is.na(buyer_name), buyer_name != "") %>%
+  summarise(
+    unique_buyers_by_name = n_distinct(buyer_name),
+    unique_buyer_cvrs = n_distinct(buyer_cvr[!is.na(buyer_cvr) & buyer_cvr != ""]),
+    buyer_rows = n(),
+    .by = data_source
+  )
+
+kable(
+  buyer_summary,
+  caption = "Buyer-side summary"
+)
+```
+
+```{r tenders-per-buyer}
+tenders_per_buyer <- buyer_data %>%
+  filter(flag_valid_buyer_cvr) %>%
+  distinct(data_source, buyer_cvr, tender_id) %>%
+  count(data_source, buyer_cvr, name = "n_tenders")
+
+histogram_with_inset(
+  tenders_per_buyer,
+  value_col = "n_tenders",
+  x_label = "Tenders per buyer name",
+  title = "Distribution of tenders per buyer name"
+)
+```
+
+# Multi-Winner Tenders
+
+```{r multi-winner-lots}
+multi_winner_lots <- winner_data %>%
+  summarise(
+    n_winners = n(),
+    .by = c(data_source, tender_id, lot_id)
+  )
+
+histogram_with_inset(
+  multi_winner_lots,
+  value_col = "n_winners",
+  x_label = "Winners per tender lot",
+  title = "Distribution of winners per tender lot"
+)
+```
+
+```{r multi-winner-lot-summary}
+multi_winner_lot_summary <- multi_winner_lots %>%
+  summarise(
+    n_lots = n(),
+    n_multi_winner_lots = sum(n_winners > 1),
+    share_multi_winner_lots = mean(n_winners > 1),
+    .by = data_source
+  )
+
+kable(
+  multi_winner_lot_summary,
+  digits = 3,
+  caption = "Multi-winner tender lots"
+)
+```
+
+```{r multi-winner-tenders}
+multi_winner_tender_summary <- multi_winner_lots %>%
+  summarise(
+    tender_has_multiple_winners = any(n_winners > 1),
+    .by = c(data_source, tender_id)
+  ) %>%
+  summarise(
+    n_tenders = n(),
+    n_multi_winner_tenders = sum(tender_has_multiple_winners),
+    share_multi_winner_tenders = mean(tender_has_multiple_winners),
+    .by = data_source
+  )
+
+kable(
+  multi_winner_tender_summary,
+  digits = 3,
+  caption = "Tenders with at least one multi-winner lot"
+)
+```
+
+# CVR overlap
+```{r winner-cvr-overlap}
+
+# Split data into data sourcess
+winner_data_ls <- winner_data %>% 
+  split(.$data_source) 
+
+# Extract unique valid CVRs
+unique_valid_winner_cvr <- map(winner_data_ls, ~unique(.x$winner_cvr[.x$flag_valid_winner_cvr]))
+
+# Take intersection
+winner_cvr_intersection <- unique_valid_winner_cvr %>%
+  purrr::reduce(intersect) %>%
+  length()
+
+# In KFST, not in OpenTender 
+winner_cvr_kfst_only <- unique_valid_winner_cvr[[1]] %>%
+  setdiff(unique_valid_winner_cvr[[2]]) %>%
+  length() 
+
+# In OpenTender, not in KFST 
+winner_cvr_ot_only <- unique_valid_winner_cvr[[2]] %>%
+  setdiff(unique_valid_winner_cvr[[1]]) %>%
+  length() 
+
+# Create table
+winner_partition <- tibble::tibble(
+  "Type" = "Winners",
+  "Intersection" = winner_cvr_intersection,
+  "KFST only" = winner_cvr_kfst_only,
+  "OpenTender only" = winner_cvr_ot_only
+)
+
+```
+
+```{r buyers-cvr-overlap}
+
+# Split data into data sourcess
+buyer_data_ls <- buyer_data %>% 
+  split(.$data_source) 
+
+# Extract unique valid CVRs
+unique_valid_buyer_cvr <- map(buyer_data_ls, ~unique(.x$buyer_cvr[.x$flag_valid_buyer_cvr]))
+
+# Take intersection
+buyer_cvr_intersection <- unique_valid_buyer_cvr %>%
+  purrr::reduce(intersect) %>%
+  length()
+
+# In KFST, not in OpenTender 
+buyer_cvr_kfst_only <- unique_valid_buyer_cvr[[1]] %>%
+  setdiff(unique_valid_buyer_cvr[[2]]) %>%
+  length() 
+
+# In OpenTender, not in KFST 
+buyer_cvr_ot_only <- unique_valid_buyer_cvr[[2]] %>%
+  setdiff(unique_valid_buyer_cvr[[1]]) %>%
+  length() 
+
+# Create table
+buyer_partition <- tibble::tibble(
+  "Type" = "buyers",
+  "Intersection" = buyer_cvr_intersection,
+  "KFST only" = buyer_cvr_kfst_only,
+  "OpenTender only" = buyer_cvr_ot_only
+)
+
+```
+
+```{r partition-table}
+
+# Combine winner and buyer partitions
+bind_rows(winner_partition, buyer_partition) %>%
+  kable(
+    caption = "Unique CVR number partition",
+    align = c("l", rep("r", 3))
+  )
+
+```
