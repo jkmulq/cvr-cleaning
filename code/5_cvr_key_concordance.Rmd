@@ -1,0 +1,255 @@
+---
+title: "CVR Key Concordance"
+author: "Jack Mulqueeney"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    self_contained: true
+knit: >
+  (function(inputFile, encoding) {
+    output_dir <- here::here("output", "docs")
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    rmarkdown::render(
+      inputFile,
+      encoding = encoding,
+      output_dir = output_dir
+    )
+  })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE
+)
+
+# Clean up environment
+rm(list = ls())
+
+# Packages
+library(here)
+library(data.table)
+library(knitr)
+
+# Paths
+report_project_dir <- here::here()
+report_cvr_key_dir <- file.path(report_project_dir, "data", "cvr_matching_data")
+
+source(file.path(report_project_dir, "config.R"))
+
+# Input files
+official_old_file <- file.path(report_cvr_key_dir, "cvr_names_full.csv")
+alternative_old_file <- file.path(report_cvr_key_dir, "cvr_binavne_full.csv")
+
+official_new_files <- list.files(
+  report_cvr_key_dir,
+  pattern = "^cvr_names_virk_[0-9]{8}_[0-9]{6}\\.csv$",
+  full.names = TRUE
+)
+alternative_new_files <- list.files(
+  report_cvr_key_dir,
+  pattern = "^cvr_binavne_virk_[0-9]{8}_[0-9]{6}\\.csv$",
+  full.names = TRUE
+)
+
+if (length(official_new_files) == 0) {
+  stop("No Virk-generated official-name key found.", call. = FALSE)
+}
+
+if (length(alternative_new_files) == 0) {
+  stop("No Virk-generated alternative-name key found.", call. = FALSE)
+}
+
+official_new_file <- official_new_files[
+  order(file.info(official_new_files)$mtime, decreasing = TRUE)
+][1]
+alternative_new_file <- alternative_new_files[
+  order(file.info(alternative_new_files)$mtime, decreasing = TRUE)
+][1]
+
+missing_files <- c(
+  official_old_file,
+  official_new_file,
+  alternative_old_file,
+  alternative_new_file
+)
+missing_files <- missing_files[!file.exists(missing_files)]
+
+if (length(missing_files) > 0) {
+  stop("Missing required CVR key files: ", paste(missing_files, collapse = ", "))
+}
+```
+
+## Inputs
+
+```{r inputs}
+kable(data.table(
+  key_type = c("Official names", "Alternative names"),
+  original_file = c(basename(official_old_file), basename(alternative_old_file)),
+  latest_virk_file = c(basename(official_new_file), basename(alternative_new_file))
+))
+```
+
+## Official Names
+
+### Distinct CVR numbers
+The below table summarises the number of distinct CVR numbers in each of the old and new keys, and shows how large the intersection is. 
+
+```{r official}
+# Read the original and new official-name keys exactly as stored.
+official_old <- fread(
+  official_old_file,
+  select = c("cvr", "name"),
+  colClasses = "character",
+  encoding = "Latin-1"
+)
+official_new <- fread(
+  official_new_file,
+  select = c("cvr", "name"),
+  colClasses = "character",
+  encoding = "UTF-8"
+)
+
+setnames(official_old, "name", "old_name")
+setnames(official_new, "name", "new_name")
+
+# Keep one row per raw CVR-name pair so repeated validity periods do not drive
+# the concordance counts.
+official_old <- unique(official_old[!is.na(cvr) & !is.na(old_name)])
+official_new <- unique(official_new[!is.na(cvr) & !is.na(new_name)])
+
+# Coverage by CVR number.
+official_old_cvrs <- unique(official_old$cvr)
+official_new_cvrs <- unique(official_new$cvr)
+official_common_cvrs <- intersect(official_old_cvrs, official_new_cvrs)
+
+official_coverage <- data.table(
+  measure = "distinct CVRs",
+  old_n = length(official_old_cvrs),
+  new_n = length(official_new_cvrs),
+  in_both_n = length(official_common_cvrs),
+  old_only_n = length(setdiff(official_old_cvrs, official_new_cvrs)),
+  new_only_n = length(setdiff(official_new_cvrs, official_old_cvrs)),
+  pct_old_in_new = scales::percent(length(official_common_cvrs) / length(official_old_cvrs), accuracy = 0.1),
+  pct_new_in_old = scales::percent(length(official_common_cvrs) / length(official_new_cvrs), accuracy = 0.1)
+)
+
+```
+
+### Firm name concordance
+The below table summarises the how many firm names are exactly equal between the old and new keys, conditional on the CVR number being the same.
+```{r name-concordance}
+
+# Use the old key as the reference
+official_old[, cvr_in_new_key := cvr %in% official_new_cvrs]
+official_join <- official_new[official_old, on = "cvr"]
+
+# Test equality of name
+official_join[, firm_name_equal := new_name == old_name]
+
+# Create summary table
+official_name_concordance <- data.table(
+  measure = c(
+    "old CVR-name pairs",
+    "old CVR-name pairs where CVR is in new key",
+    "old CVR-name pairs with exact same name after CVR join"
+  ),
+  n = c(
+    nrow(official_old),
+    official_old[cvr_in_new_key == TRUE, .N],
+    official_join[firm_name_equal == TRUE, .N]
+  )
+)
+official_name_concordance[
+  ,
+  share_of_old_pairs := scales::percent(n / nrow(official_old), accuracy = 0.1)
+]
+
+kable(official_coverage)
+kable(official_name_concordance)
+
+```
+
+## Alternative Names
+### Distinct CVR numbers
+The below table summarises the number of distinct CVR numbers in each of the old and new alternative name keys, and shows how large the intersection is. 
+```{r alternative}
+# Read the original and new alternative-name keys exactly as stored.
+alternative_old <- fread(
+  alternative_old_file,
+  select = c("cvr", "binavn"),
+  colClasses = "character",
+  encoding = "Latin-1"
+)
+alternative_new <- fread(
+  alternative_new_file,
+  select = c("cvr", "binavn"),
+  colClasses = "character",
+  encoding = "UTF-8"
+)
+
+setnames(alternative_old, "binavn", "old_name")
+setnames(alternative_new, "binavn", "new_name")
+
+# Keep one row per raw CVR-name pair so repeated validity periods do not drive
+# the concordance counts.
+alternative_old <- unique(alternative_old[!is.na(cvr) & !is.na(old_name)])
+alternative_new <- unique(alternative_new[!is.na(cvr) & !is.na(new_name)])
+
+# Coverage by CVR number.
+alternative_old_cvrs <- unique(alternative_old$cvr)
+alternative_new_cvrs <- unique(alternative_new$cvr)
+alternative_common_cvrs <- intersect(alternative_old_cvrs, alternative_new_cvrs)
+
+alternative_coverage <- data.table(
+  measure = "distinct CVRs",
+  old_n = length(alternative_old_cvrs),
+  new_n = length(alternative_new_cvrs),
+  in_both_n = length(alternative_common_cvrs),
+  old_only_n = length(setdiff(alternative_old_cvrs, alternative_new_cvrs)),
+  new_only_n = length(setdiff(alternative_new_cvrs, alternative_old_cvrs)),
+  pct_old_in_new = scales::percent(length(alternative_common_cvrs) / length(alternative_old_cvrs), accuracy = 0.1),
+  pct_new_in_old = scales::percent(length(alternative_common_cvrs) / length(alternative_new_cvrs), accuracy = 0.1)
+)
+
+```
+
+### Firm name concordance
+The below table summarises the how many firm names are exactly equal between the old and new alternative name keys, conditional on the CVR number being the same.
+```{r alt-name-concordance}
+
+# Use the old key as the reference. Join to the new key on both CVR and the raw
+# alternative name, so each old CVR-name pair is only counted once.
+alternative_old[, cvr_in_new_key := cvr %in% alternative_new_cvrs]
+alternative_new[, firm_name_equal := TRUE]
+alternative_join <- alternative_new[alternative_old, 
+                                    on = .(cvr, new_name = old_name)]
+alternative_join[is.na(firm_name_equal), firm_name_equal := FALSE]
+
+alternative_name_concordance <- data.table(
+  measure = c(
+    "old CVR-name pairs",
+    "old CVR-name pairs with CVR in new key",
+    "old CVR-name pairs with exact same name under same CVR"
+  ),
+  n = c(
+    nrow(alternative_old),
+    alternative_old[cvr_in_new_key == TRUE, .N],
+    alternative_join[firm_name_equal == TRUE, .N]
+  )
+)
+alternative_name_concordance[
+  ,
+  share_of_old_pairs := scales::percent(n / nrow(alternative_old), accuracy = 0.1)
+]
+
+kable(alternative_coverage)
+kable(alternative_name_concordance)
+
+```
+
