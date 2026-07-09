@@ -940,3 +940,349 @@ keep_step_matches <- function(new_matches) {
   
   invisible(NULL)
 }
+
+# ===============================
+# Virk CVR API lookup helpers
+# ===============================
+
+load_virk_renviron_files <- function() {
+  project_dir <- Sys.getenv("PROJECT_DIR")
+  if (!nzchar(project_dir)) {
+    project_dir <- getwd()
+  }
+
+  renviron_paths <- unique(c(
+    path.expand("~/.Renviron"),
+    file.path(project_dir, ".Renviron"),
+    file.path(getwd(), ".Renviron")
+  ))
+
+  for (renviron_path in renviron_paths[file.exists(renviron_paths)]) {
+    readRenviron(renviron_path)
+  }
+
+  invisible(NULL)
+}
+
+get_virk_credentials <- function(
+    user_var = "VIRK_CVR_USER",
+    password_var = "VIRK_CVR_PASSWORD"
+) {
+  user <- Sys.getenv(user_var)
+  password <- Sys.getenv(password_var)
+
+  if (!nzchar(user) || !nzchar(password)) {
+    load_virk_renviron_files()
+    user <- Sys.getenv(user_var)
+    password <- Sys.getenv(password_var)
+  }
+
+  if (!nzchar(user) || !nzchar(password)) {
+    stop(
+      paste(
+        "Missing Virk credentials.",
+        paste0("Set ", user_var, " and ", password_var, " before querying the Virk API."),
+        "For example, add them to .Renviron in your home folder or this project folder.",
+        sep = "\n"
+      ),
+      call. = FALSE
+    )
+  }
+
+  list(user = user, password = password)
+}
+
+virk_post_json <- function(url,
+                           body,
+                           query = list(),
+                           credentials = get_virk_credentials()) {
+  response <- httr::POST(
+    url,
+    query = query,
+    httr::authenticate(credentials$user, credentials$password),
+    httr::content_type_json(),
+    httr::accept_json(),
+    body = jsonlite::toJSON(body, auto_unbox = TRUE, null = "null")
+  )
+
+  if (httr::status_code(response) >= 300) {
+    message(httr::content(response, as = "text", encoding = "UTF-8"))
+    httr::stop_for_status(response)
+  }
+
+  jsonlite::fromJSON(
+    httr::content(response, as = "text", encoding = "UTF-8"),
+    simplifyVector = FALSE
+  )
+}
+
+virk_scalar <- function(x) {
+  if (is.null(x) || length(x) == 0) {
+    return(NA_character_)
+  }
+
+  as.character(x[[1]])
+}
+
+format_virk_cvr <- function(x) {
+  value <- virk_scalar(x)
+
+  if (is.na(value)) {
+    return(NA_character_)
+  }
+
+  digits <- gsub("\\D", "", value)
+  if (grepl("^[0-9]{1,8}$", digits)) {
+    return(sprintf("%08d", as.integer(digits)))
+  }
+
+  value
+}
+
+extract_virk_period <- function(x, field) {
+  if (is.null(x$periode)) {
+    return(NA_character_)
+  }
+
+  virk_scalar(x$periode[[field]])
+}
+
+empty_virk_name_table <- function(name_column = c("name", "binavn")) {
+  name_column <- match.arg(name_column)
+
+  out <- data.table::data.table(
+    cvr = character(),
+    registered_name = character(),
+    gyldigfra = character(),
+    gyldigtil = character()
+  )
+
+  data.table::setnames(out, "registered_name", name_column)
+  out
+}
+
+bind_virk_name_tables <- function(tables, name_column = c("name", "binavn")) {
+  name_column <- match.arg(name_column)
+
+  if (length(tables) == 0) {
+    return(empty_virk_name_table(name_column))
+  }
+
+  out <- data.table::rbindlist(tables, use.names = TRUE, fill = TRUE)
+
+  if (ncol(out) == 0) {
+    return(empty_virk_name_table(name_column))
+  }
+
+  data.table::setcolorder(out, c("cvr", name_column, "gyldigfra", "gyldigtil"))
+  out
+}
+
+extract_virk_main_names <- function(firm) {
+  if (is.null(firm$navne) || length(firm$navne) == 0) {
+    return(empty_virk_name_table("name"))
+  }
+
+  bind_virk_name_tables(
+    lapply(firm$navne, function(name_record) {
+      data.table::data.table(
+        cvr = format_virk_cvr(firm$cvrNummer),
+        name = virk_scalar(name_record$navn),
+        gyldigfra = extract_virk_period(name_record, "gyldigFra"),
+        gyldigtil = extract_virk_period(name_record, "gyldigTil")
+      )
+    }),
+    "name"
+  )
+}
+
+extract_virk_binavne <- function(firm) {
+  if (is.null(firm$binavne) || length(firm$binavne) == 0) {
+    return(empty_virk_name_table("binavn"))
+  }
+
+  bind_virk_name_tables(
+    lapply(firm$binavne, function(name_record) {
+      data.table::data.table(
+        cvr = format_virk_cvr(firm$cvrNummer),
+        binavn = virk_scalar(name_record$navn),
+        gyldigfra = extract_virk_period(name_record, "gyldigFra"),
+        gyldigtil = extract_virk_period(name_record, "gyldigTil")
+      )
+    }),
+    "binavn"
+  )
+}
+
+append_virk_lookup_chunk <- function(data, path) {
+  if (nrow(data) == 0) {
+    return(invisible(NULL))
+  }
+
+  data.table::fwrite(
+    unique(data),
+    path,
+    append = file.exists(path),
+    col.names = !file.exists(path),
+    na = ""
+  )
+
+  invisible(NULL)
+}
+
+virk_lookup_source_fields <- function() {
+  c(
+    "Vrvirksomhed.cvrNummer",
+    "Vrvirksomhed.navne",
+    "Vrvirksomhed.binavne"
+  )
+}
+
+virk_lookup_query_body <- function(size) {
+  body <- list(
+    size = size,
+    query = list(
+      exists = list(field = "Vrvirksomhed.cvrNummer")
+    )
+  )
+
+  body[["_source"]] <- virk_lookup_source_fields()
+  body
+}
+
+test_cvr_lookup_sample <- function(n = 100,
+                                   out_dir = "data/cvr_matching_data",
+                                   credentials = get_virk_credentials()) {
+  search_url <- "http://distribution.virk.dk/cvr-permanent/virksomhed/_search"
+
+  timed <- system.time({
+    result <- virk_post_json(
+      search_url,
+      virk_lookup_query_body(n),
+      credentials = credentials
+    )
+
+    firms <- lapply(result$hits$hits, function(hit) {
+      hit$`_source`$Vrvirksomhed
+    })
+
+    names_data <- bind_virk_name_tables(
+      lapply(firms, extract_virk_main_names),
+      "name"
+    )
+    binavne_data <- bind_virk_name_tables(
+      lapply(firms, extract_virk_binavne),
+      "binavn"
+    )
+
+    dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+    names_path <- file.path(out_dir, paste0("cvr_names_sample_", n, ".csv"))
+    binavne_path <- file.path(out_dir, paste0("cvr_binavne_sample_", n, ".csv"))
+
+    data.table::fwrite(unique(names_data), names_path, na = "")
+    data.table::fwrite(unique(binavne_data), binavne_path, na = "")
+  })
+
+  list(
+    firms_requested = n,
+    firms_returned = length(firms),
+    official_name_rows = nrow(names_data),
+    binavn_rows = nrow(binavne_data),
+    elapsed_seconds = unname(timed[["elapsed"]]),
+    seconds_per_100_firms = unname(timed[["elapsed"]]) / length(firms) * 100,
+    names_file = names_path,
+    binavne_file = binavne_path
+  )
+}
+
+generate_cvr_lookup_from_virk <- function(
+    out_dir = "data/cvr_matching_data",
+    batch_size = 1000,
+    scroll = "5m",
+    names_file = "cvr_names_full.csv",
+    binavne_file = "cvr_binavne_full.csv",
+    overwrite = FALSE,
+    credentials = get_virk_credentials()
+) {
+  search_url <- "http://distribution.virk.dk/cvr-permanent/virksomhed/_search"
+  scroll_url <- "http://distribution.virk.dk/_search/scroll"
+
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+  names_path <- file.path(out_dir, names_file)
+  binavne_path <- file.path(out_dir, binavne_file)
+
+  existing_outputs <- c(names_path, binavne_path)[file.exists(c(names_path, binavne_path))]
+  if (length(existing_outputs) > 0 && !overwrite) {
+    stop(
+      paste(
+        "Refusing to overwrite existing CVR lookup files:",
+        paste(existing_outputs, collapse = "\n"),
+        "Set overwrite = TRUE to rebuild them.",
+        sep = "\n"
+      ),
+      call. = FALSE
+    )
+  }
+
+  if (file.exists(names_path)) file.remove(names_path)
+  if (file.exists(binavne_path)) file.remove(binavne_path)
+
+  body <- virk_lookup_query_body(batch_size)
+  body$sort <- list("_doc")
+
+  result <- virk_post_json(
+    search_url,
+    body,
+    query = list(scroll = scroll),
+    credentials = credentials
+  )
+
+  scroll_id <- result$`_scroll_id`
+  firms_processed <- 0L
+  official_name_rows <- 0L
+  binavn_rows <- 0L
+
+  repeat {
+    hits <- result$hits$hits
+    if (length(hits) == 0) break
+
+    firms <- lapply(hits, function(hit) {
+      hit$`_source`$Vrvirksomhed
+    })
+
+    names_data <- bind_virk_name_tables(
+      lapply(firms, extract_virk_main_names),
+      "name"
+    )
+    binavne_data <- bind_virk_name_tables(
+      lapply(firms, extract_virk_binavne),
+      "binavn"
+    )
+
+    append_virk_lookup_chunk(names_data, names_path)
+    append_virk_lookup_chunk(binavne_data, binavne_path)
+
+    firms_processed <- firms_processed + length(firms)
+    official_name_rows <- official_name_rows + nrow(names_data)
+    binavn_rows <- binavn_rows + nrow(binavne_data)
+
+    message("Processed ", firms_processed, " CVR records")
+
+    result <- virk_post_json(
+      scroll_url,
+      list(scroll = scroll, scroll_id = scroll_id),
+      credentials = credentials
+    )
+    scroll_id <- result$`_scroll_id`
+  }
+
+  list(
+    firms_processed = firms_processed,
+    official_name_rows = official_name_rows,
+    binavn_rows = binavn_rows,
+    names_file = names_path,
+    binavne_file = binavne_path
+  )
+}
