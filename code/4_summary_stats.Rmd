@@ -346,6 +346,86 @@ kable(
 )
 ```
 
+# CVR overlap
+```{r winner-cvr-overlap}
+
+# Split data into data sourcess
+winner_data_ls <- winner_data %>% 
+  split(.$data_source) 
+
+# Extract unique valid CVRs
+unique_valid_winner_cvr <- map(winner_data_ls, ~unique(.x$winner_cvr[.x$flag_valid_winner_cvr]))
+
+# Take intersection
+winner_cvr_intersection <- unique_valid_winner_cvr %>%
+  purrr::reduce(intersect) %>%
+  length()
+
+# In KFST, not in OpenTender 
+winner_cvr_kfst_only <- unique_valid_winner_cvr[[1]] %>%
+  setdiff(unique_valid_winner_cvr[[2]]) %>%
+  length() 
+
+# In OpenTender, not in KFST 
+winner_cvr_ot_only <- unique_valid_winner_cvr[[2]] %>%
+  setdiff(unique_valid_winner_cvr[[1]]) %>%
+  length() 
+
+# Create table
+winner_partition <- tibble::tibble(
+  "Type" = "Winners",
+  "Intersection" = winner_cvr_intersection,
+  "KFST only" = winner_cvr_kfst_only,
+  "OpenTender only" = winner_cvr_ot_only
+)
+
+```
+
+```{r buyers-cvr-overlap}
+
+# Split data into data sourcess
+buyer_data_ls <- buyer_data %>% 
+  split(.$data_source) 
+
+# Extract unique valid CVRs
+unique_valid_buyer_cvr <- map(buyer_data_ls, ~unique(.x$buyer_cvr[.x$flag_valid_buyer_cvr]))
+
+# Take intersection
+buyer_cvr_intersection <- unique_valid_buyer_cvr %>%
+  purrr::reduce(intersect) %>%
+  length()
+
+# In KFST, not in OpenTender 
+buyer_cvr_kfst_only <- unique_valid_buyer_cvr[[1]] %>%
+  setdiff(unique_valid_buyer_cvr[[2]]) %>%
+  length() 
+
+# In OpenTender, not in KFST 
+buyer_cvr_ot_only <- unique_valid_buyer_cvr[[2]] %>%
+  setdiff(unique_valid_buyer_cvr[[1]]) %>%
+  length() 
+
+# Create table
+buyer_partition <- tibble::tibble(
+  "Type" = "buyers",
+  "Intersection" = buyer_cvr_intersection,
+  "KFST only" = buyer_cvr_kfst_only,
+  "OpenTender only" = buyer_cvr_ot_only
+)
+
+```
+
+```{r partition-table}
+
+# Combine winner and buyer partitions
+bind_rows(winner_partition, buyer_partition) %>%
+  kable(
+    caption = "Unique CVR number partition",
+    align = c("l", rep("r", 3))
+  )
+
+```
+
 # Tender Sizes
 
 ```{r log-tender-value-histogram, fig.height=5, fig.width=9}
@@ -531,82 +611,3 @@ kable(
 )
 ```
 
-# CVR overlap
-```{r winner-cvr-overlap}
-
-# Split data into data sourcess
-winner_data_ls <- winner_data %>% 
-  split(.$data_source) 
-
-# Extract unique valid CVRs
-unique_valid_winner_cvr <- map(winner_data_ls, ~unique(.x$winner_cvr[.x$flag_valid_winner_cvr]))
-
-# Take intersection
-winner_cvr_intersection <- unique_valid_winner_cvr %>%
-  purrr::reduce(intersect) %>%
-  length()
-
-# In KFST, not in OpenTender 
-winner_cvr_kfst_only <- unique_valid_winner_cvr[[1]] %>%
-  setdiff(unique_valid_winner_cvr[[2]]) %>%
-  length() 
-
-# In OpenTender, not in KFST 
-winner_cvr_ot_only <- unique_valid_winner_cvr[[2]] %>%
-  setdiff(unique_valid_winner_cvr[[1]]) %>%
-  length() 
-
-# Create table
-winner_partition <- tibble::tibble(
-  "Type" = "Winners",
-  "Intersection" = winner_cvr_intersection,
-  "KFST only" = winner_cvr_kfst_only,
-  "OpenTender only" = winner_cvr_ot_only
-)
-
-```
-
-```{r buyers-cvr-overlap}
-
-# Split data into data sourcess
-buyer_data_ls <- buyer_data %>% 
-  split(.$data_source) 
-
-# Extract unique valid CVRs
-unique_valid_buyer_cvr <- map(buyer_data_ls, ~unique(.x$buyer_cvr[.x$flag_valid_buyer_cvr]))
-
-# Take intersection
-buyer_cvr_intersection <- unique_valid_buyer_cvr %>%
-  purrr::reduce(intersect) %>%
-  length()
-
-# In KFST, not in OpenTender 
-buyer_cvr_kfst_only <- unique_valid_buyer_cvr[[1]] %>%
-  setdiff(unique_valid_buyer_cvr[[2]]) %>%
-  length() 
-
-# In OpenTender, not in KFST 
-buyer_cvr_ot_only <- unique_valid_buyer_cvr[[2]] %>%
-  setdiff(unique_valid_buyer_cvr[[1]]) %>%
-  length() 
-
-# Create table
-buyer_partition <- tibble::tibble(
-  "Type" = "buyers",
-  "Intersection" = buyer_cvr_intersection,
-  "KFST only" = buyer_cvr_kfst_only,
-  "OpenTender only" = buyer_cvr_ot_only
-)
-
-```
-
-```{r partition-table}
-
-# Combine winner and buyer partitions
-bind_rows(winner_partition, buyer_partition) %>%
-  kable(
-    caption = "Unique CVR number partition",
-    align = c("l", rep("r", 3))
-  )
-
-```
