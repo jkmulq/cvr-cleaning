@@ -1345,7 +1345,7 @@ ot_hist_data <- ot_typo %>%
 
 ```
 
-Of these, I test how many differ within-firm by only 1 digit. This suggests a typo.
+Of these, I test how many firms have at least one within-name CVR pair that differs by only 1 digit. This suggests a possible typo.
 
 ```{r typo-count, fig.align='center'}
 make_cvr_pairs <- function(data) {
@@ -1388,24 +1388,68 @@ cvr_pairs <- map(list(kfst_typo, ot_typo),
   setNames(c("kfst", "ot")) %>% 
   bind_rows(., .id = "source")
 
-# Convert to proportions
+# Convert to share of multi-CVR firm names with at least one pair at each distance.
+multi_cvr_firms <- cvr_pairs %>%
+  distinct(source, winner_name)
+
 cvr_pair_hist <- cvr_pairs %>%
-  count(source, l_dist, name = "count") %>%
-  mutate(
-    proportion = count / sum(count),
+  distinct(source, winner_name, l_dist) %>%
+  count(source, l_dist, name = "n_firms_with_distance") %>%
+  left_join(
+    multi_cvr_firms %>% count(source, name = "n_multi_cvr_firms"),
+    by = "source"
+  ) %>%
+  mutate(share_firms = n_firms_with_distance / n_multi_cvr_firms)
+
+
+# Count observations that could be recovered if all distance-1 pairs are typos.
+# For each distance-1 pair, treat the less frequent CVR as the potential typo.
+typo_obs_counts <- bind_rows(
+  kfst_typo %>%
+    transmute(source = "kfst", winner_name, winner_cvr_clean),
+  ot_typo %>%
+    transmute(source = "ot", winner_name, winner_cvr_clean)
+) %>%
+  count(source, winner_name, winner_cvr_clean, name = "n_obs")
+
+# Get tuples with distance one
+distance_one_recovery <- cvr_pairs %>%
+  filter(l_dist == 1) %>%
+  left_join(
+    typo_obs_counts,
+    by = c(
+      "source",
+      "winner_name",
+      "winner_cvr_clean_1" = "winner_cvr_clean"
+    )
+  ) %>%
+  rename(n_obs_1 = n_obs) %>%
+  left_join(
+    typo_obs_counts,
+    by = c(
+      "source",
+      "winner_name",
+      "winner_cvr_clean_2" = "winner_cvr_clean"
+    )
+  ) %>%
+  rename(n_obs_2 = n_obs) %>%
+  mutate(n_potentially_correctable_obs = pmin(n_obs_1, n_obs_2))
+
+distance_one_recovery_summary <- distance_one_recovery %>%
+  summarise(
+    n_firms_with_distance_one_pair = n_distinct(winner_name),
+    n_distance_one_pairs = n(),
+    n_potentially_correctable_obs = sum(n_potentially_correctable_obs),
     .by = source
   )
 
-# Create firm count label
-firm_count_label <- cvr_pairs %>%
-  distinct(source, winner_name) %>%
-  count(source, name = "n_firms") %>%
+recovery_label <- distance_one_recovery_summary %>%
   mutate(
     label = paste0(
       toupper(source),
       ": ",
-      scales::comma(n_firms),
-      " firms"
+      scales::comma(n_potentially_correctable_obs),
+      " potentially correctable rows"
     )
   ) %>%
   summarise(label = paste(label, collapse = "\n")) %>%
@@ -1414,14 +1458,14 @@ firm_count_label <- cvr_pairs %>%
 # Produce bar plot
 ggplot(
   cvr_pair_hist,
-  aes(x = l_dist, y = proportion, fill = source)
+  aes(x = l_dist, y = share_firms, fill = source)
 ) +
   geom_col(position = "dodge") +
   annotate(
     "label",
     x = Inf,
     y = Inf,
-    label = firm_count_label,
+    label = recovery_label,
     hjust = 1.05,
     vjust = 1.1,
     size = 3.5
@@ -1433,15 +1477,23 @@ ggplot(
     labels = scales::label_percent()
   ) +
   labs(
-    title = "Levenshtein distance between CVRs for the same firm name",
+    title = "Share of multi-CVR firm names with at least one CVR pair at each distance",
     x = "Levenshtein distance",
-    y = "Proportion",
+    y = "Share of multi-CVR firm names",
     fill = "Dataset"
   ) +
   theme(
     legend.position = "bottom"
   )
 
+```
+
+```{r typo-recovery-summary}
+kable(
+  distance_one_recovery_summary,
+  align = c("l", "r", "r", "r"),
+  caption = "Potential recovery if all Levenshtein-distance-1 CVR pairs are typos"
+)
 ```
 
 ## Improved fuzzy matching
