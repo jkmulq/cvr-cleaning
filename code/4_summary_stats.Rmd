@@ -639,8 +639,17 @@ kable(
 histogram_with_inset(
   lot_data,
   value_col = "log_tender_amount",
-  x_label = "Log tender/lot amount",
-  title = "Distribution of log tender/lot amounts"
+  x_label = "Log tender amount",
+  title = "Distribution of log tender amounts"
+)
+```
+
+```{r log-lot-value-histogram, fig.height=5, fig.width=9}
+histogram_with_inset(
+  lot_data,
+  value_col = "log_lot_amount",
+  x_label = "Log lot amount",
+  title = "Distribution of log lot amounts"
 )
 ```
 
