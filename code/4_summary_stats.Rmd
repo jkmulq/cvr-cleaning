@@ -257,9 +257,19 @@ tbody tr:nth-child(even) {
 
 This note gives a first-pass set of descriptive statistics for the cleaned and matched KFST and OpenTender tender data. It is intended as an exploratory companion to the cleaning pipeline rather than a data quality report.
 
-<div class="section-note">
-Tender and lot amount fields are source-specific. The tender-size summaries below use the natural log of positive numeric amounts, so KFST and OpenTender should still be compared carefully unless the amount definitions and currencies have been checked.
-</div>
+Tender and lot amount fields are source-specific. The tender-size summaries below use the natural log of positive numeric amounts. 
+
+## Measurement of tender amounts
+**For KFST**, there are four measures of tender/lot amount.
+
+* `Estimat af samlet kontraktværdi - angivet i udbud` which is `estimated_tender_amount`. Measured in DKK. This is the estimated value of the tender stated in the contract notice. The estimate is performed by the contracting authority. Some contracts state the estimated value as a range, in which case the maximum is taken. For tenders with several lots, the estimated tender contract value is the sum of the estimated value of each individual lot. If a total estimated tender value is available in addition to estimates for each lot, and those two differ, then the sum of the lots is preferred.  Values below 1000DKK are removed and values stated in currencies other than DKK are converted to DKK. Amount excludes VAT. 
+* `Estimat af delkontraktens kontraktværdi` which is `estimated_lot_amount`. Essentially the same principles as above, except for specific lots within the tender. Excludes VAT, converted to DKK, values below 1000DKK are removed, etc.
+* `Endelig kontraktværdi` which is `final_tender_amount`. This is the final total amount recorded in the TED contract award notice ("bekendtgørelse om indgået kontrakt" in Danish). [Here](https://ted.europa.eu/da/notice/-/detail/224608-2022) is an example of what the contract document looks like, where tender amounts are taken from sections II.1.7 or V.2.4 (if the amounts disagree, KFST usually takes the number from V.2.4). If specific lot values are provided, then the sum of those are preferred to the `final_tender_amount`. Excludes VAT, converted to DKK, values below 1000DKK are removed. Upper limits of ranges are taken as the truth, where relevant.
+* `Endelig værdi af delaftaler` which is `final_lot_amount`. Same as all other variables, but applies to individual lots. In cases where a single lot amount is missing and the total tender amount is known, the missing lot amount is imputed as the difference between the final tender amount and the sum of all the other final lot amounts
+
+I have two variables: `tender_amount` and `lot_amount`. If the `final_*` amount is available, I use that, otherwise I fill missings with the `estimated_*`.
+
+The fields are similar for **OpenTender**, except they are measured in Euros. Unfortunately I haven't found documentation with comparable detail, so I cannot confirm the precleaning rules applied.
 
 # Overview
 
