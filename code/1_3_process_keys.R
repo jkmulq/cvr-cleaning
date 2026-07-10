@@ -23,9 +23,38 @@ source(file.path(PROJECT_DIR, "code", "functions.R"))
 cvr_key_dir <- dirs$cvr_key
 clean_data_dir <- dirs$clean_data
 
+# Use the newest Virk API lookup files for matching.
+cvr_name_key_files <- list.files(
+  cvr_key_dir,
+  pattern = "^cvr_names_virk_[0-9]{8}_[0-9]{6}\\.csv$",
+  full.names = TRUE
+)
+cvr_biname_key_files <- list.files(
+  cvr_key_dir,
+  pattern = "^cvr_binavne_virk_[0-9]{8}_[0-9]{6}\\.csv$",
+  full.names = TRUE
+)
+
+if (length(cvr_name_key_files) == 0) {
+  stop("No Virk-generated CVR name key found in data/cvr_matching_data.", call. = FALSE)
+}
+
+if (length(cvr_biname_key_files) == 0) {
+  stop("No Virk-generated CVR alternative-name key found in data/cvr_matching_data.", call. = FALSE)
+}
+
+cvr_name_key_file <- cvr_name_key_files[
+  order(file.info(cvr_name_key_files)$mtime, decreasing = TRUE)
+][1]
+cvr_biname_key_file <- cvr_biname_key_files[
+  order(file.info(cvr_biname_key_files)$mtime, decreasing = TRUE)
+][1]
+
+cat("Using CVR name key:", basename(cvr_name_key_file), "\n")
+cat("Using CVR alternative-name key:", basename(cvr_biname_key_file), "\n")
+
 # 1 Process main CVR names
-key_data <- data.table::fread(file.path(cvr_key_dir, "cvr_names_full.csv"),
-                              encoding = "Latin-1")
+key_data <- data.table::fread(cvr_name_key_file, encoding = "UTF-8")
 
 key_names_prepared <- prepare_cvr_name(key_data$name)
 setDT(key_names_prepared)
@@ -63,8 +92,8 @@ gc()
 
 # 2 Process alternative CVR names
 alt_name_data <- data.table::fread(
-  file.path(cvr_key_dir, "cvr_binavne_full.csv"),
-  encoding = "Latin-1"
+  cvr_biname_key_file,
+  encoding = "UTF-8"
 )
 
 # Prepare names and make distinct (like above)
