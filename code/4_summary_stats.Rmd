@@ -255,10 +255,10 @@ tbody tr:nth-child(even) {
 
 # Introduction
 
-This note gives a first-pass set of descriptive statistics for the cleaned KFST and OpenTender tender data. It is intended as an exploratory companion to the cleaning pipeline rather than a data quality report.
+This note gives a first-pass set of descriptive statistics for the cleaned and matched KFST and OpenTender tender data. It is intended as an exploratory companion to the cleaning pipeline rather than a data quality report.
 
 <div class="section-note">
-Tender amount fields are source-specific. The tender-size summaries below use the natural log of positive numeric tender amounts, so KFST and OpenTender should still be compared carefully unless the amount definitions and currencies have been checked.
+Tender and lot amount fields are source-specific. The tender-size summaries below use the natural log of positive numeric amounts, so KFST and OpenTender should still be compared carefully unless the amount definitions and currencies have been checked.
 </div>
 
 # Overview
@@ -274,6 +274,23 @@ format_int <- function(x) {
 
 format_decimal <- function(x, digits = 2) {
   if_else(is.na(x), "n/a", format(round(x, digits), nsmall = digits, scientific = FALSE))
+}
+
+format_mean_sd <- function(mean, sd, digits = 2) {
+  paste0(
+    format_decimal(mean, digits),
+    "<br>[",
+    format_decimal(sd, digits),
+    "]"
+  )
+}
+
+format_percent <- function(x, digits = 1) {
+  if_else(
+    is.na(x),
+    "n/a",
+    paste0(format(round(100 * x, digits), nsmall = digits, scientific = FALSE), "%")
+  )
 }
 
 # Create valid CVR flag for winners and buyers
@@ -318,6 +335,8 @@ log_value_summary <- lot_data %>%
   summarise(
     mean_log_tender_amount = mean(log_tender_amount, na.rm = TRUE),
     sd_log_tender_amount = sd(log_tender_amount, na.rm = TRUE),
+    mean_log_lot_amount = mean(log_lot_amount, na.rm = TRUE),
+    sd_log_lot_amount = sd(log_lot_amount, na.rm = TRUE),
     .by = data_source
   )
 
@@ -340,6 +359,7 @@ tenders_per_buyer_cvr <- buyer_data %>%
 tenders_per_buyer_summary <- tenders_per_buyer_cvr %>%
   summarise(
     mean_tenders_per_buyer = mean(n_tenders),
+    sd_tenders_per_buyer = sd(n_tenders),
     .by = data_source
   )
 
@@ -354,10 +374,23 @@ front_summary <- winner_cvr_summary %>%
     `Valid winner CVR rows` = format_int(valid_winner_cvr_rows),
     `Unique winner firms` = format_int(unique_winner_firms),
     `Years spanned` = years_spanned,
-    `Mean tenders per winner firm` = format_decimal(mean_tenders_per_winner_firm),
-    `Mean log tender value` = format_decimal(mean_log_tender_amount),
+    `Mean tenders per winner firm` = format_mean_sd(
+      mean_tenders_per_winner_firm,
+      sd_tenders_per_winner_firm
+    ),
+    `Mean log tender amount` = format_mean_sd(
+      mean_log_tender_amount,
+      sd_log_tender_amount
+    ),
+    `Mean log lot amount` = format_mean_sd(
+      mean_log_lot_amount,
+      sd_log_lot_amount
+    ),
     `Unique buyers by CVR` = format_int(unique_buyers_by_cvr),
-    `Mean tenders per buyer CVR` = format_decimal(mean_tenders_per_buyer)
+    `Mean tenders per buyer CVR` = format_mean_sd(
+      mean_tenders_per_buyer,
+      sd_tenders_per_buyer
+    )
   )
 
 kable(
