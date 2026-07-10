@@ -82,8 +82,12 @@ parse_summary_date <- function(x) {
 prepare_winner_summary_data <- function(path, source_label) {
   data <- readRDS(path)
   
+  if (!"winner_cvr_final" %in% names(data)) {
+    stop("Matched winner file is missing winner_cvr_final: ", path)
+  }
+
   if (!"winner_cvr_clean" %in% names(data)) {
-    stop("Cleaned winner file is missing winner_cvr_clean: ", path)
+    data$winner_cvr_clean <- NA_character_
   }
   
   data %>%
