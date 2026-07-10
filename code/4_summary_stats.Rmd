@@ -96,8 +96,11 @@ prepare_winner_summary_data <- function(path, source_label) {
       tender_id = as.character(tender_id),
       lot_id = as.character(lot_id),
       award_date = parse_summary_date(award_date),
-      winner_cvr = winner_cvr_clean,
+      winner_cvr_clean = as.character(winner_cvr_clean),
+      winner_cvr_final = as.character(winner_cvr_final),
+      winner_cvr = coalesce(winner_cvr_final, winner_cvr_clean),
       tender_amount = suppressWarnings(as.numeric(tender_amount)),
+      lot_amount = suppressWarnings(as.numeric(lot_amount)),
       n_bidders = suppressWarnings(as.numeric(n_bidders))
     ) %>%
     select(any_of(winner_summary_cols))
