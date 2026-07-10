@@ -883,4 +883,3 @@ kable(
   caption = "Tenders with at least one multi-winner lot"
 )
 ```
-
