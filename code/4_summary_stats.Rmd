@@ -736,7 +736,9 @@ tender_count_summary <- tender_level_data %>%
 
 kable(
   tender_count_summary,
-  caption = "Number of tenders and lots"
+  caption = "Tender-level lot structure and amount consistency",
+  align = c("l", rep("r", ncol(tender_count_summary) - 1)),
+  escape = FALSE
 )
 ```
 
