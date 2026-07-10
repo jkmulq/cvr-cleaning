@@ -40,10 +40,10 @@ report_clean_data_dir <- file.path(report_project_dir, "data", "clean")
 source(file.path(report_project_dir, "config.R"))
 
 input_files <- c(
-  file.path(report_clean_data_dir, "clean_winner_data_kfst.rds"),
-  file.path(report_clean_data_dir, "clean_buyer_data_kfst.rds"),
-  file.path(report_clean_data_dir, "clean_winner_data_ot.rds"),
-  file.path(report_clean_data_dir, "clean_buyer_data_ot.rds")
+  file.path(report_clean_data_dir, "clean_winner_data_kfst_name_matched.rds"),
+  file.path(report_clean_data_dir, "clean_buyer_data_kfst_name_matched.rds"),
+  file.path(report_clean_data_dir, "clean_winner_data_ot_name_matched.rds"),
+  file.path(report_clean_data_dir, "clean_buyer_data_ot_name_matched.rds")
 )
 
 missing_files <- input_files[!file.exists(input_files)]
