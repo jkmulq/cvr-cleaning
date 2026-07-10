@@ -109,6 +109,10 @@ prepare_winner_summary_data <- function(path, source_label) {
 prepare_buyer_summary_data <- function(path, source_label) {
   data <- readRDS(path)
   
+  if (!"buyer_cvr_final" %in% names(data)) {
+    stop("Matched buyer file is missing buyer_cvr_final: ", path)
+  }
+
   if (!"buyer_cvr_clean" %in% names(data)) {
     data$buyer_cvr_clean <- NA_character_
   }
