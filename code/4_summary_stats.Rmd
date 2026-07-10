@@ -682,11 +682,56 @@ lot_data %>%
 # Number of Tenders
 
 ```{r tender-count-summary}
-tender_count_summary <- lot_data %>%
+tender_level_data <- lot_data %>%
+  group_by(data_source, tender_id) %>%
   summarise(
-    n_tenders = n_distinct(tender_id),
-    n_lots = n_distinct(lot_id),
-    .by = data_source
+    n_lots = n(),
+    tender_amount = {
+      nonmissing_tender_amount <- tender_amount[!is.na(tender_amount)]
+      if (length(nonmissing_tender_amount) == 0) NA_real_ else nonmissing_tender_amount[1]
+    },
+    sum_lot_amount = if_else(sum(!is.na(lot_amount)) > 0, sum(lot_amount, na.rm = TRUE), NA_real_),
+    .groups = "drop"
+  )
+
+tender_count_summary <- tender_level_data %>%
+  group_by(data_source) %>% 
+  summarise(
+    total_tenders = n_distinct(tender_id),
+    total_lots = sum(n_lots),
+    mean_lots_per_tender = total_lots / total_tenders,
+    median_lots_in_tender = median(n_lots),
+    max_lots_per_tender = max(n_lots),
+    n_multi_lot_tenders = n_distinct(tender_id[n_lots > 1]),
+    share_multi_lot_tenders = n_distinct(tender_id[n_lots > 1]) / total_tenders,
+    n_tenders_for_amount_correlation = sum(
+      !is.na(tender_amount) & !is.na(sum_lot_amount)
+    ),
+    lot_sum_tender_amount_correlation = if_else(
+      n_tenders_for_amount_correlation >= 2,
+      cor(
+        tender_amount,
+        sum_lot_amount,
+        use = "complete.obs"
+      ),
+      NA_real_
+    )
+  ) %>%
+  ungroup() %>% 
+  transmute(
+    `Data source` = data_source,
+    `Tenders` = format_int(total_tenders),
+    `Tender lots` = format_int(total_lots),
+    `Lots per tender` = format_decimal(mean_lots_per_tender),
+    `Median lots in tender` = format_int(median_lots_in_tender),
+    `Max lots per tender` = format_int(max_lots_per_tender),
+    `Multi-lot tenders` = format_int(n_multi_lot_tenders),
+    `Share multi-lot` = format_percent(share_multi_lot_tenders),
+    `Tenders in amount correlation` = format_int(n_tenders_for_amount_correlation),
+    `Corr(sum lot amount, tender amount)` = format_decimal(
+      lot_sum_tender_amount_correlation,
+      digits = 3
+    )
   )
 
 kable(
