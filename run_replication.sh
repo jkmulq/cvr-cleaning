@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR"
 RSCRIPT="${RSCRIPT:-Rscript}"
 RUN_MATCHING="${RUN_MATCHING:-true}"
+BUILD_CVR_LOOKUP="${BUILD_CVR_LOOKUP:-false}"
 
 export PROJECT_DIR
 
@@ -14,6 +15,14 @@ cd "$PROJECT_DIR"
 
 echo "Project directory: $PROJECT_DIR"
 echo "Rscript: $RSCRIPT"
+echo "Run matching: $RUN_MATCHING"
+echo "Build CVR lookup from Virk API: $BUILD_CVR_LOOKUP"
+
+if ! command -v "$RSCRIPT" > /dev/null 2>&1; then
+  echo "Could not find Rscript command: $RSCRIPT" >&2
+  echo "Unset RSCRIPT or run with RSCRIPT=Rscript ./run_replication.sh" >&2
+  exit 1
+fi
 
 require_file() {
   local file_path="$1"
@@ -40,9 +49,9 @@ echo "Checking local input data"
 require_file "data/raw/kfst/udbudsdata_kfst.xlsx"
 require_any_file "data/raw/OpenTender/*.csv" "OpenTender CSV files in data/raw/OpenTender/"
 
-if [[ "$RUN_MATCHING" == "true" ]]; then
-  require_file "data/cvr_matching_data/cvr_names_full.csv"
-  require_file "data/cvr_matching_data/cvr_binavne_full.csv"
+if [[ "$RUN_MATCHING" == "true" && "$BUILD_CVR_LOOKUP" != "true" ]]; then
+  require_any_file "data/cvr_matching_data/cvr_names_virk_*.csv" "Virk CVR official-name key files in data/cvr_matching_data/"
+  require_any_file "data/cvr_matching_data/cvr_binavne_virk_*.csv" "Virk CVR alternative-name key files in data/cvr_matching_data/"
 fi
 
 if [[ "${RESTORE_RENV:-false}" == "true" ]]; then
@@ -66,6 +75,12 @@ if [[ "$RUN_MATCHING" != "true" ]]; then
   echo
   echo "Cleaning-only replication complete. Outputs are in data/clean."
   exit 0
+fi
+
+if [[ "$BUILD_CVR_LOOKUP" == "true" ]]; then
+  run_r_script "code/0_build_cvr_lookup.R"
+  require_any_file "data/cvr_matching_data/cvr_names_virk_*.csv" "Virk CVR official-name key files in data/cvr_matching_data/"
+  require_any_file "data/cvr_matching_data/cvr_binavne_virk_*.csv" "Virk CVR alternative-name key files in data/cvr_matching_data/"
 fi
 
 run_r_script "code/1_3_process_keys.R"
