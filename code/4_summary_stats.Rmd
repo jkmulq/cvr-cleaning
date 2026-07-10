@@ -56,13 +56,16 @@ if (length(missing_files) > 0) {
 }
 
 winner_summary_cols <- c(
-  "data_source", "tender_id", "lot_id", "tender_amount", "n_bidders",
-  "award_date", "winner_number", "winner_cvr", "buyer_name"
+  "data_source", "tender_id", "lot_id", "tender_amount", "lot_amount",
+  "n_bidders", "award_date", "winner_number", "winner_cvr", "winner_cvr_clean",
+  "winner_cvr_final", "buyer_name", "name_match_step", "name_match_method",
+  "name_match_status", "name_match_step_code", "flag_name_match_found"
 )
 
 buyer_summary_cols <- c(
-  "data_source", "tender_id", "lot_id", "tender_amount", "n_bidders",
-  "award_date", "buyer_number", "buyer_name", "buyer_cvr"
+  "data_source", "tender_id", "lot_id", "tender_amount", "lot_amount",
+  "n_bidders", "award_date", "buyer_number", "buyer_name", "buyer_cvr",
+  "buyer_cvr_clean", "buyer_cvr_final"
 )
 
 parse_summary_date <- function(x) {
