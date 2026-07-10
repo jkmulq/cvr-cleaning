@@ -114,6 +114,33 @@ original_tender_data <- data %>%
     )
   )
 
+## Tender/lot amount
+original_tender_data <- original_tender_data %>%
+  mutate(
+    tender_amount = coalesce(
+      parse_number(tender_finalPrice_EUR),
+      parse_number(tender_estimatedPrice_EUR)
+    ),
+    lot_amount = coalesce(
+      parse_number(bid_price_EUR),
+      parse_number(lot_estimatedPrice_EUR)
+    ),
+    bid_amount = parse_number(bid_price_EUR)
+  )
+
+## Number of bidders
+original_tender_data <- original_tender_data %>%
+  mutate(n_bidders = parse_number(n_bids_received))
+
+## Award date
+original_tender_data <- original_tender_data %>%
+  mutate(award_date = as.Date(award_date))
+
+original_tender_data <- original_tender_data %>%
+  mutate(award_date = dplyr::if_else(is.na(award_date),
+                                     lubridate::ymd(tender_publications_firstdContractAwardDate),
+                                     award_date))
+
 ## 1.4 Separate winners/buyers/original data
 winner_data_original <- data %>% 
   select(row_id, tender_id, bidder_bodyIds, bidder_name, bidder_country) %>% 
@@ -532,6 +559,7 @@ clean_winner_data <- clean_winner_data %>%
       "flag_review_cvr", "flag_missing_cvr_with_name",
       "flag_no_winner_info", "flag_verify_cvr_external",
       "n_bids_received", "flag_single_bidder",
+      "tender_amount", "lot_amount", "bid_amount",
       "n_lots", "flag_multilot", "tender_cancelled", "flag_cancelled",
       "buyer_name", "buyer_cvr_original"
     )),
@@ -972,6 +1000,11 @@ clean_buyer_data <- clean_buyer_data %>%
 # Flag if observation will need CVR fuzzy match 
 clean_buyer_data <- clean_buyer_data %>% 
   mutate(flag_check_fuzzy_match = coalesce(buyer_name != "" & is.na(buyer_cvr_clean), FALSE))
+
+# Check that amount fields are present in both saved OpenTender outputs.
+required_amount_cols <- c("tender_amount", "lot_amount", "bid_amount")
+stopifnot(all(required_amount_cols %in% names(clean_winner_data)))
+stopifnot(all(required_amount_cols %in% names(clean_buyer_data)))
 
 # 4 Save 
 saveRDS(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_ot.rds"))

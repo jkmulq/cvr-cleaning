@@ -42,11 +42,49 @@ data <- data %>%
          cpv_code = `CPV-koder`,
          tender_cancelled = `Annulleret udbud`,
          tender_status = `Helt/delvist gennemført/annulleret`,
+         estimated_tender_amount = `Estimat af samlet kontraktværdi - angivet i udbud`,
+         estimated_lot_amount = `Estimat af delkontrakts kontraktværdi`,
+         final_tender_amount = `Endelig kontraktværdi`,
+         final_lot_amount = `Endelig værdi af delaftaler`,
          lot_number = `Delkontraktnr.`,
          n_lots = `Antal delkontrakter kortlagt`,
          n_lots_contracted = `Antal delkontrakter i udbudsbekendtgørelsen`,
          n_lot_winners = `Antal vindere på delkontrakten`,
          n_bids_received = `Antal modtagne bud`)
+
+# Standardise tender-level fields before they are joined onto buyer/winner rows.
+## Tender/lot amount
+data <- data %>%
+  mutate(
+    tender_amount = coalesce(
+      as.numeric(final_tender_amount),
+      as.numeric(estimated_tender_amount)
+    ),
+    lot_amount = coalesce(
+      as.numeric(final_lot_amount),
+      as.numeric(estimated_lot_amount)
+    )
+  )
+
+## Number of bidders
+data <- data %>%
+  mutate(n_bidders = as.numeric(n_bids_received))
+
+## Award date
+data <- data %>%
+  mutate(
+    award_date = coalesce(
+      as.Date(
+        if_else(
+          str_detect(as.character(award_date), "^[0-9]+$"),
+          suppressWarnings(as.numeric(award_date)),
+          NA_real_
+        ),
+        origin = "1899-12-30"
+      ),
+      lubridate::ymd(as.character(award_date), quiet = TRUE)
+    )
+  )
 
 # Order columns nicely
 data <- data %>% 
@@ -129,6 +167,7 @@ tender_lot_data <- data %>%
   select(any_of(c(
     "tender_id", "lot_id", "lot_number", "buyer_name",
     "n_lots", "n_lots_contracted", "n_lot_winners", "n_bids_received",
+    "tender_amount", "lot_amount", "n_bidders",
     "pub_date", "award_date", "submit_date",
     "divided_tender", "joint_tender", "consortium_winner",
     "cpv_code", "tender_cancelled", "tender_status",
@@ -622,8 +661,11 @@ clean_buyer_data <- clean_buyer_data %>%
 clean_buyer_data <- clean_buyer_data %>% 
   mutate(flag_check_fuzzy_match = coalesce(!flag_missing_buyer_name, FALSE))
 
+# Check that amount fields are present in both saved KFST outputs.
+required_amount_cols <- c("tender_amount", "lot_amount")
+stopifnot(all(required_amount_cols %in% names(clean_winner_data)))
+stopifnot(all(required_amount_cols %in% names(clean_buyer_data)))
+
 # 4 Save 
 saveRDS(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_kfst.rds"))
 saveRDS(clean_buyer_data, file.path(dirs$clean_data, "clean_buyer_data_kfst.rds"))
-haven::write_dta(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_kfst.dta"))
-haven::write_dta(clean_buyer_data, file.path(dirs$clean_data, "clean_buyer_data_kfst.dta"))
