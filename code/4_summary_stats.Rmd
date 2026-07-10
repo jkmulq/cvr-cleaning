@@ -397,6 +397,122 @@ kable(
   front_summary,
   caption = "Overview of cleaned tender data by source",
   align = c("l", rep("r", ncol(front_summary) - 1)),
+  escape = FALSE,
+  table.attr = 'class="overview-table"'
+)
+```
+
+```{r winner-overview-groups}
+winner_summary_groups <- bind_rows(
+  winner_data %>%
+    mutate(`Winner sample` = "Whole sample"),
+  winner_data %>%
+    filter(
+      valid_cvr(winner_cvr_clean),
+      !coalesce(flag_name_match_found, FALSE)
+    ) %>%
+    mutate(`Winner sample` = "Original CVRs only"),
+  winner_data %>%
+    filter(name_match_method == "exact", name_match_step %in% 1:3) %>%
+    mutate(`Winner sample` = "Exact match steps 1-3"),
+  winner_data %>%
+    filter(
+      coalesce(flag_name_match_found, FALSE),
+      !(name_match_method == "exact" & name_match_step %in% 1:3)
+    ) %>%
+    mutate(`Winner sample` = "Other matching steps")
+) %>%
+  mutate(
+    `Winner sample` = factor(
+      `Winner sample`,
+      levels = c(
+        "Whole sample",
+        "Original CVRs only",
+        "Exact match steps 1-3",
+        "Other matching steps"
+      )
+    )
+  )
+
+winner_group_lot_data <- winner_summary_groups %>%
+  distinct(data_source, `Winner sample`, tender_id, lot_id, .keep_all = TRUE) %>%
+  mutate(
+    log_tender_amount = if_else(
+      !is.na(tender_amount) & tender_amount > 0,
+      log(tender_amount),
+      NA_real_
+    ),
+    log_lot_amount = if_else(
+      !is.na(lot_amount) & lot_amount > 0,
+      log(lot_amount),
+      NA_real_
+    )
+  )
+
+winner_group_year_span <- winner_group_lot_data %>%
+  mutate(year = lubridate::year(award_date)) %>%
+  filter(!is.na(year)) %>%
+  summarise(
+    years_spanned = paste0(min(year), "-", max(year)),
+    .by = c(data_source, `Winner sample`)
+  )
+
+winner_group_cvr_summary <- winner_summary_groups %>%
+  summarise(
+    valid_winner_cvr_rows = sum(flag_valid_winner_cvr),
+    unique_winner_firms = n_distinct(winner_cvr[flag_valid_winner_cvr]),
+    .by = c(data_source, `Winner sample`)
+  )
+
+winner_group_tenders_per_firm <- winner_summary_groups %>%
+  filter(flag_valid_winner_cvr) %>%
+  distinct(data_source, `Winner sample`, winner_cvr, tender_id) %>%
+  count(data_source, `Winner sample`, winner_cvr, name = "n_tenders") %>%
+  summarise(
+    mean_tenders_per_winner_firm = mean(n_tenders),
+    sd_tenders_per_winner_firm = sd(n_tenders),
+    .by = c(data_source, `Winner sample`)
+  )
+
+winner_group_log_value_summary <- winner_group_lot_data %>%
+  summarise(
+    mean_log_tender_amount = mean(log_tender_amount, na.rm = TRUE),
+    sd_log_tender_amount = sd(log_tender_amount, na.rm = TRUE),
+    mean_log_lot_amount = mean(log_lot_amount, na.rm = TRUE),
+    sd_log_lot_amount = sd(log_lot_amount, na.rm = TRUE),
+    .by = c(data_source, `Winner sample`)
+  )
+
+winner_group_summary <- winner_group_cvr_summary %>%
+  left_join(winner_group_year_span, by = c("data_source", "Winner sample")) %>%
+  left_join(winner_group_tenders_per_firm, by = c("data_source", "Winner sample")) %>%
+  left_join(winner_group_log_value_summary, by = c("data_source", "Winner sample")) %>%
+  arrange(data_source, `Winner sample`) %>%
+  transmute(
+    `Data source` = data_source,
+    `Winner sample`,
+    `Valid winner CVR rows` = format_int(valid_winner_cvr_rows),
+    `Unique winner firms` = format_int(unique_winner_firms),
+    `Years spanned` = years_spanned,
+    `Mean tenders per winner firm` = format_mean_sd(
+      mean_tenders_per_winner_firm,
+      sd_tenders_per_winner_firm
+    ),
+    `Mean log tender amount` = format_mean_sd(
+      mean_log_tender_amount,
+      sd_log_tender_amount
+    ),
+    `Mean log lot amount` = format_mean_sd(
+      mean_log_lot_amount,
+      sd_log_lot_amount
+    )
+  )
+
+kable(
+  winner_group_summary,
+  caption = "Winner-side overview by CVR source group",
+  align = c("l", "l", rep("r", ncol(winner_group_summary) - 2)),
+  escape = FALSE,
   table.attr = 'class="overview-table"'
 )
 ```
