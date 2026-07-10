@@ -34,6 +34,7 @@ cvr-cleaning/
 ├── run_replication.sh
 ├── code/
 │   ├── functions.R
+│   ├── 0_build_cvr_lookup.R
 │   ├── 1_1_process_kfst.R
 │   ├── 1_2_process_open_tender.R
 │   ├── 1_3_process_keys.R
@@ -69,6 +70,7 @@ report is generated separately.
 | Script | Purpose | Main outputs |
 |---|---|---|
 | [code/functions.R](code/functions.R) | Shared helper functions for CVR extraction, CVR formatting, name preparation, name partitioning, and matching support. | No direct output. |
+| [code/0_build_cvr_lookup.R](code/0_build_cvr_lookup.R) | Optional script for users with Virk system-to-system API access. Builds CVR official-name and alternative-name lookup CSVs, or runs a small API timing sample. | Timestamped `cvr_names_virk_*.csv` and `cvr_binavne_virk_*.csv`, or sample CSVs. |
 | [code/1_1_process_kfst.R](code/1_1_process_kfst.R) | Cleans KFST winner and buyer data. Splits multi-winner and multi-buyer rows where possible, standardises winner CVRs, creates matching-ready name fields, and saves clean KFST objects. | `clean_winner_data_kfst.rds`, `clean_buyer_data_kfst.rds`, plus `.dta` versions. |
 | [code/1_2_process_open_tender.R](code/1_2_process_open_tender.R) | Reads annual OpenTender files, checks schema consistency, cleans winner and buyer CVR fields, handles multi-CVR rows, creates audit identifiers, prepares matching-ready names, and saves clean OpenTender objects. | `clean_winner_data_ot.rds`, `clean_buyer_data_ot.rds`. |
 | [code/1_3_process_keys.R](code/1_3_process_keys.R) | Cleans the CVR register name keys used for later matching. It prepares both official names and alternative names. | `clean_cvr_name_key.rds`, `clean_cvr_biname_key.rds`. |
@@ -96,8 +98,8 @@ Expected source files:
 
 - `data/raw/kfst/udbudsdata_kfst.xlsx`
 - annual OpenTender CSV files under `data/raw/OpenTender/`
-- `data/cvr_matching_data/cvr_names_full.csv`
-- `data/cvr_matching_data/cvr_binavne_full.csv`
+- `data/cvr_matching_data/cvr_names_virk_*.csv`
+- `data/cvr_matching_data/cvr_binavne_virk_*.csv`
 
 The OpenTender script reads all files present in `data/raw/OpenTender/`. The
 replication sample is therefore determined by the files placed in that folder.
@@ -147,9 +149,13 @@ data/raw/OpenTender/*.csv
 Required for the CVR-name-key and matching scripts:
 
 ```text
-data/cvr_matching_data/cvr_names_full.csv
-data/cvr_matching_data/cvr_binavne_full.csv
+data/cvr_matching_data/cvr_names_virk_*.csv
+data/cvr_matching_data/cvr_binavne_virk_*.csv
 ```
+
+The key-processing script uses the newest timestamped Virk files in this folder.
+The original `cvr_names_full.csv` and `cvr_binavne_full.csv` files can remain in
+the same directory for old/new key comparisons.
 
 [run_replication.sh](run_replication.sh) checks for these local inputs before it
 runs `renv::restore()` or any processing scripts. If `RUN_MATCHING=false`, the
@@ -172,7 +178,42 @@ RESTORE_RENV=true ./run_replication.sh
 When using the `RESTORE_RENV=true` option, the script still checks that the
 local input data are present before restoring packages.
 
-### 3. Run the full workflow
+### 3. Optional: rebuild the CVR lookup from Virk
+
+The matching workflow uses CVR lookup files built from the Virk
+system-to-system API. Store your credentials locally, not in the repository.
+
+Copy [.Renviron.example](.Renviron.example) to `.Renviron` in either your home
+folder or this project folder, or set the variables in another local environment
+setup:
+
+```text
+VIRK_CVR_USER="your-virk-username"
+VIRK_CVR_PASSWORD="your-virk-password"
+```
+
+The API helper reads these `.Renviron` files explicitly, so this also works when
+running scripts with `Rscript --vanilla`. To test API speed and output shape on
+a small sample without overwriting the full lookup files:
+
+```bash
+CVR_LOOKUP_SAMPLE_SIZE=100 Rscript --vanilla code/0_build_cvr_lookup.R
+```
+
+This writes sample files under `data/cvr_matching_data/`. To build a new full
+lookup from Virk:
+
+```bash
+BUILD_CVR_LOOKUP=true ./run_replication.sh
+```
+
+By default, the API build writes timestamped comparison files such as
+`cvr_names_virk_YYYYMMDD_HHMMSS.csv` and
+`cvr_binavne_virk_YYYYMMDD_HHMMSS.csv`. The matching workflow uses the newest
+timestamped Virk files. These generated files remain local inputs and are not
+committed to the repository.
+
+### 4. Run the full workflow
 
 From the repository root:
 
@@ -185,6 +226,7 @@ The script runs:
 ```text
 code/1_1_process_kfst.R
 code/1_2_process_open_tender.R
+code/0_build_cvr_lookup.R  # only if BUILD_CVR_LOOKUP=true
 code/1_3_process_keys.R
 code/2_1_match_kfst.R
 code/2_2_match_kfst_buyers.R
@@ -210,7 +252,7 @@ For a quick check that the cleaning scripts still run, use `RUN_MATCHING=false`.
 For a full matched dataset, plan for a few hours and expect most of that time to
 come from the buyer-matching scripts.
 
-### 4. Run cleaning only
+### 5. Run cleaning only
 
 To stop after the KFST and OpenTender cleaning scripts, without building the CVR
 name keys or running name matching:
