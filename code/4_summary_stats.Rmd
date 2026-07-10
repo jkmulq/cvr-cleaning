@@ -150,6 +150,11 @@ lot_data <- winner_data %>%
       !is.na(tender_amount) & tender_amount > 0,
       log(tender_amount),
       NA_real_
+    ),
+    log_lot_amount = if_else(
+      !is.na(lot_amount) & lot_amount > 0,
+      log(lot_amount),
+      NA_real_
     )
   )
 
