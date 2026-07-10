@@ -599,6 +599,42 @@ bind_rows(winner_partition, buyer_partition) %>%
 
 # Tender Sizes
 
+```{r amount-coverage-table}
+amount_coverage <- bind_rows(
+  lot_data %>%
+    summarise(
+      variable = "Tender amount",
+      n_lots = n(),
+      n_nonmissing = sum(!is.na(tender_amount)),
+      n_positive = sum(!is.na(tender_amount) & tender_amount > 0),
+      .by = data_source
+    ),
+  lot_data %>%
+    summarise(
+      variable = "Lot amount",
+      n_lots = n(),
+      n_nonmissing = sum(!is.na(lot_amount)),
+      n_positive = sum(!is.na(lot_amount) & lot_amount > 0),
+      .by = data_source
+    )
+) %>%
+  transmute(
+    `Data source` = data_source,
+    `Amount variable` = variable,
+    `Tender lots` = format_int(n_lots),
+    `Non-missing` = format_int(n_nonmissing),
+    `Non-missing share` = format_percent(n_nonmissing / n_lots),
+    `Positive for log` = format_int(n_positive),
+    `Positive share` = format_percent(n_positive / n_lots)
+  )
+
+kable(
+  amount_coverage,
+  caption = "Coverage of tender and lot amount variables",
+  align = c("l", "l", rep("r", ncol(amount_coverage) - 2))
+)
+```
+
 ```{r log-tender-value-histogram, fig.height=5, fig.width=9}
 histogram_with_inset(
   lot_data,
