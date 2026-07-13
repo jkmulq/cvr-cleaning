@@ -1,0 +1,224 @@
+---
+title: "Employment Data Quality"
+author: "Jack Mulqueeney"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    self_contained: true
+knit: >
+  (function(inputFile, encoding) {
+    project_dir <- normalizePath(file.path(dirname(inputFile), ".."), mustWork = TRUE)
+    output_dir <- file.path(project_dir, "output", "docs")
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    rmarkdown::render(
+      inputFile,
+      encoding = encoding,
+      knit_root_dir = project_dir,
+      output_dir = output_dir
+    )
+  })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE
+)
+
+# Clean up environment
+rm(list = ls())
+
+# Packages
+library(here)
+library(data.table)
+library(tidyverse)
+library(knitr)
+library(fixest)
+library(lubridate)
+library(kableExtra)
+
+# Paths
+report_project_dir <- if (file.exists("config.R")) {
+  getwd()
+} else {
+  normalizePath("..", mustWork = TRUE)
+}
+setwd(report_project_dir)
+knitr::opts_knit$set(root.dir = report_project_dir)
+
+source(file.path(report_project_dir, "config.R"))
+clean_data_dir <- dirs$clean_data
+key_dir <- dirs$cvr_key
+
+valid_cvrs <- function(x) {
+  x <- trimws(as.character(x))
+  x <- gsub("[^0-9]", "", x)
+  x <- x[grepl("^[0-9]{1,8}$", x)]
+  unique(sprintf("%08d", as.integer(x)))
+}
+
+# 1 Load data
+## 1.1 Firm data
+firm_data_raw <- fread(file.path(clean_data_dir, "cvr_employment_history_virk.csv"))
+setDT(firm_data_raw)
+
+firm_data <- copy(firm_data_raw)
+setDT(firm_data)
+firm_data[, firm_by := year(lifecycle_start)]
+firm_data[, firm_dy := year(lifecycle_end)]
+firm_data[, firm_age := as.integer(floor(as.numeric(period_end - lifecycle_start) / 365.25))]
+firm_data_ls <- firm_data %>% 
+  split(.$frequency)
+
+## 1.2 Tender data
+data_ot <- readRDS(file.path(clean_data_dir, "clean_winner_data_ot_name_matched.rds")) %>% 
+  mutate(data_source = "OpenTender")
+data_kfst <- readRDS(file.path(clean_data_dir, "clean_winner_data_kfst_name_matched.rds")) %>% 
+  mutate(data_source = "KFST")
+data_ot_buyers <- readRDS(file.path(clean_data_dir, "clean_buyer_data_ot_name_matched.rds")) %>% 
+  mutate(data_source = "OpenTender")
+data_kfst_buyers <- readRDS(file.path(clean_data_dir, "clean_buyer_data_kfst_name_matched.rds")) %>% 
+  mutate(data_source = "KFST")
+data_tender <- rbindlist(list(data_ot, data_kfst), fill = TRUE, ignore.attr = TRUE) %>% 
+  select(data_source, tender_id, lot_id, award_date, winner_cvr_final, tender_amount, lot_amount)
+unique_cvrs <- unique(data_tender$winner_cvr_final)
+
+
+## 1.3 CVR key (includes firm registration and death dates)
+virk_data <- fread(file.path(key_dir, "cvr_names_virk_20260710_182823.csv"))
+virk_data[, tender_firm := FALSE]
+virk_data[cvr %in% unique_cvrs, tender_firm := TRUE]
+```
+
+# Introduction
+The `virk.dk` API contains has employment data on a monthly, quarterly, and annual frequency. I pulled these data for every firm in the tender datasets. This note describes the quality of these data.
+
+# Availability/coverage
+```{r availability, fig.align='center'}
+
+# How many CVRs actually appear in the employment data?
+
+emp_cvrs <- valid_cvrs(firm_data_raw$cvr)
+
+coverage_cvrs <- rbindlist(list(
+  data.table(
+    data_source = "OpenTender",
+    firm_role = "Winner",
+    cvr = valid_cvrs(data_ot$winner_cvr_final)
+  ),
+  data.table(
+    data_source = "OpenTender",
+    firm_role = "Buyer",
+    cvr = valid_cvrs(data_ot_buyers$buyer_cvr_final)
+  ),
+  data.table(
+    data_source = "KFST",
+    firm_role = "Winner",
+    cvr = valid_cvrs(data_kfst$winner_cvr_final)
+  ),
+  data.table(
+    data_source = "KFST",
+    firm_role = "Buyer",
+    cvr = valid_cvrs(data_kfst_buyers$buyer_cvr_final)
+  )
+))
+
+coverage_table <- coverage_cvrs[, .(
+  n_cvrs = uniqueN(cvr),
+  n_in_employment_data = uniqueN(cvr[cvr %in% emp_cvrs]),
+  share_in_employment_data = round(uniqueN(cvr[cvr %in% emp_cvrs]) / uniqueN(cvr), 5)
+), by = .(data_source, firm_role)]
+
+kable(
+  coverage_table,
+  caption = "Share of valid firm CVRs in the tender data that appear in the pulled employment data"
+)
+
+# How many rows have non-missing data
+missingness_table <- firm_data_raw[, .(
+  # Counts
+  n = .N, 
+  n_nonmissing_fte = sum(!is.na(fte)),
+  n_nonmissing_emp = sum(!is.na(employees)),
+  n_nonmissing_emp_with_owner = sum(!is.na(employees_including_owners)),
+  
+  # Shares
+  share_nonmissing_fte = round(sum(!is.na(fte)) / .N, 5),
+  share_nonmissing_emp = round(sum(!is.na(employees)) / .N, 5),
+  share_nonmissing_emp_with_owner = round(sum(!is.na(employees_including_owners)) / .N, 5)
+
+
+), by = frequency]
+
+kable(missingness_table,
+      caption = "Employment data availability for firms that appear in the employment data")
+
+```
+
+# Balance
+We should construct a balance table of the following partition of firms: firms that have employment history AND are in the tender datasets, firms that do not have employment history AND are in the tender data, and firms that are not in the tender dataset. The only thing we can compare at the moment is firm age.
+
+```{r age-balance}
+
+# Calculate firm age
+anchor_date <- lubridate::floor_date(Sys.Date(), unit = "year") # Beginning of this year
+virk_data[!is.na(lifecycle_end), firm_age := lifecycle_end - registration_date] # If firm ended, calculate total age
+virk_data[is.na(lifecycle_end), firm_age := anchor_date - registration_date] # Otherwise, calculate from today's date
+virk_data[, firm_age_yrs := as.numeric(firm_age) / 365.25]
+virk_data[, firm_dissolved := fifelse(is.na(lifecycle_end), "Still registered", "Dissolved")]
+age_regs <- feols(firm_age_yrs ~ i(tender_firm) - 1, fsplit = ~firm_dissolved, data = virk_data)
+
+# Make table
+age_table <- coeftable(age_regs) %>% 
+  mutate(
+    group = ifelse(str_detect(coefficient, "TRUE"), "Won tender", "No tender")
+  ) %>% 
+  select(sample, group, Estimate) %>% 
+  pivot_wider(id_cols = group, names_from = sample, values_from = Estimate)
+
+kable(
+  age_table,
+  caption = "Firm Age by Tender Winning Status",
+  escape = FALSE,
+  align = "lcc"
+) %>%
+  kable_styling(full_width = FALSE)
+```
+
+# Employment by firm age
+```{r emp-by-firm-age, fig.align='center'}
+
+# Regression data
+reg_data <- firm_data[
+  frequency == "annual" &
+    exists_during_period == TRUE &
+    !is.na(fte) &
+    fte > 0 &
+    !is.na(firm_age) &
+    firm_age >= 0 &
+    firm_age <= 100
+]
+
+regression_sample_table <- reg_data[, .(
+  n = .N,
+  n_firms = uniqueN(cvr),
+  min_firm_age = min(firm_age),
+  max_firm_age = max(firm_age)
+)]
+
+kable(
+  regression_sample_table,
+  caption = "Annual employment observations used in the firm-age regression"
+)
+
+# Regression
+fte_reg <- feols(log(fte) ~ i(firm_age) - 1 | cvr, 
+                 data = reg_data, 
+                 cluster = ~cvr)
+iplot(fte_reg)
+```
