@@ -11,11 +11,13 @@ output:
     self_contained: true
 knit: >
   (function(inputFile, encoding) {
-    output_dir <- here::here("output", "docs")
+    project_dir <- normalizePath(file.path(dirname(inputFile), ".."), mustWork = TRUE)
+    output_dir <- file.path(project_dir, "output", "docs")
     dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
     rmarkdown::render(
       inputFile,
       encoding = encoding,
+      knit_root_dir = project_dir,
       output_dir = output_dir
     )
   })
@@ -34,7 +36,13 @@ library(knitr)
 library(tidyverse)
 library(ggplot2)
 
-report_project_dir <- here::here()
+report_project_dir <- if (file.exists("config.R")) {
+  getwd()
+} else {
+  normalizePath("..", mustWork = TRUE)
+}
+setwd(report_project_dir)
+knitr::opts_knit$set(root.dir = report_project_dir)
 report_clean_data_dir <- file.path(report_project_dir, "data", "clean")
 
 source(file.path(report_project_dir, "config.R"))
