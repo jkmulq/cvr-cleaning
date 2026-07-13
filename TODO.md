@@ -88,3 +88,6 @@ This file tracks development work against the current codebase and the project b
   - Target: add a readable, documented short-name mapping for tender-level
     columns before calling `haven::write_dta()`, while keeping the full column
     names in the `.rds` outputs.
+
+## Overall cleaning
+- [ ] Fix typos in the final cleaned and matched dataset. I'll define typo as a CVR number only different from another CVR attached to the same firm name, where one appears in the CVR key and the other doesn't.
