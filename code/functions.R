@@ -1054,7 +1054,10 @@ empty_virk_name_table <- function(name_column = c("name", "binavn")) {
     cvr = character(),
     registered_name = character(),
     gyldigfra = character(),
-    gyldigtil = character()
+    gyldigtil = character(),
+    registration_date = character(),
+    lifecycle_start = character(),
+    lifecycle_end = character()
   )
 
   data.table::setnames(out, "registered_name", name_column)
@@ -1074,8 +1077,56 @@ bind_virk_name_tables <- function(tables, name_column = c("name", "binavn")) {
     return(empty_virk_name_table(name_column))
   }
 
-  data.table::setcolorder(out, c("cvr", name_column, "gyldigfra", "gyldigtil"))
+  data.table::setcolorder(
+    out,
+    c(
+      "cvr", name_column, "gyldigfra", "gyldigtil",
+      "registration_date", "lifecycle_start", "lifecycle_end"
+    )
+  )
   out
+}
+
+extract_virk_lifecycle_summary <- function(firm) {
+  registration_date <- virk_scalar(firm$stiftelsesDato)
+  lifecycle_starts <- character()
+  lifecycle_ends <- character()
+
+  if (!is.null(firm$livsforloeb) && length(firm$livsforloeb) > 0) {
+    lifecycle_starts <- vapply(
+      firm$livsforloeb,
+      function(record) extract_virk_period(record, "gyldigFra"),
+      character(1)
+    )
+    lifecycle_ends <- vapply(
+      firm$livsforloeb,
+      function(record) extract_virk_period(record, "gyldigTil"),
+      character(1)
+    )
+  }
+
+  lifecycle_starts <- lifecycle_starts[!is.na(lifecycle_starts) & lifecycle_starts != ""]
+  lifecycle_ends <- lifecycle_ends[!is.na(lifecycle_ends) & lifecycle_ends != ""]
+
+  lifecycle_start <- if (length(lifecycle_starts) == 0) {
+    registration_date
+  } else {
+    min(lifecycle_starts)
+  }
+
+  if (is.na(registration_date) || registration_date == "") {
+    registration_date <- lifecycle_start
+  }
+
+  list(
+    registration_date = registration_date,
+    lifecycle_start = lifecycle_start,
+    lifecycle_end = if (length(lifecycle_ends) == 0) {
+      NA_character_
+    } else {
+      max(lifecycle_ends)
+    }
+  )
 }
 
 extract_virk_main_names <- function(firm) {
@@ -1083,13 +1134,18 @@ extract_virk_main_names <- function(firm) {
     return(empty_virk_name_table("name"))
   }
 
+  lifecycle <- extract_virk_lifecycle_summary(firm)
+
   bind_virk_name_tables(
     lapply(firm$navne, function(name_record) {
       data.table::data.table(
         cvr = format_virk_cvr(firm$cvrNummer),
         name = virk_scalar(name_record$navn),
         gyldigfra = extract_virk_period(name_record, "gyldigFra"),
-        gyldigtil = extract_virk_period(name_record, "gyldigTil")
+        gyldigtil = extract_virk_period(name_record, "gyldigTil"),
+        registration_date = lifecycle$registration_date,
+        lifecycle_start = lifecycle$lifecycle_start,
+        lifecycle_end = lifecycle$lifecycle_end
       )
     }),
     "name"
@@ -1101,13 +1157,18 @@ extract_virk_binavne <- function(firm) {
     return(empty_virk_name_table("binavn"))
   }
 
+  lifecycle <- extract_virk_lifecycle_summary(firm)
+
   bind_virk_name_tables(
     lapply(firm$binavne, function(name_record) {
       data.table::data.table(
         cvr = format_virk_cvr(firm$cvrNummer),
         binavn = virk_scalar(name_record$navn),
         gyldigfra = extract_virk_period(name_record, "gyldigFra"),
-        gyldigtil = extract_virk_period(name_record, "gyldigTil")
+        gyldigtil = extract_virk_period(name_record, "gyldigTil"),
+        registration_date = lifecycle$registration_date,
+        lifecycle_start = lifecycle$lifecycle_start,
+        lifecycle_end = lifecycle$lifecycle_end
       )
     }),
     "binavn"
@@ -1134,7 +1195,9 @@ virk_lookup_source_fields <- function() {
   c(
     "Vrvirksomhed.cvrNummer",
     "Vrvirksomhed.navne",
-    "Vrvirksomhed.binavne"
+    "Vrvirksomhed.binavne",
+    "Vrvirksomhed.stiftelsesDato",
+    "Vrvirksomhed.livsforloeb"
   )
 }
 
