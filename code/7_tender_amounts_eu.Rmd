@@ -1,0 +1,166 @@
+---
+title: "Tender amounts external comparison"
+author: "Jack Mulqueeney"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    self_contained: true
+knit: >
+  (function(inputFile, encoding) {
+    project_dir <- normalizePath(file.path(dirname(inputFile), ".."), mustWork = TRUE)
+    output_dir <- file.path(project_dir, "output", "docs")
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    rmarkdown::render(
+      inputFile,
+      encoding = encoding,
+      knit_root_dir = project_dir,
+      output_dir = output_dir
+    )
+  })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE
+)
+
+# Clean up environment
+rm(list = ls())
+
+# Packages
+library(tidyverse)
+library(ggplot2)
+library(patchwork)
+library(readxl)
+
+# Paths
+report_project_dir <- if (file.exists("config.R")) {
+  getwd()
+} else {
+  normalizePath("..", mustWork = TRUE)
+}
+setwd(report_project_dir)
+knitr::opts_knit$set(root.dir = report_project_dir)
+
+source(file.path(report_project_dir, "config.R"))
+
+
+```
+
+# Introduction
+In this note, I compare tender amounts in Denmark to other EU countries, finding that the average Danish tender award amount is relatively large. Possible explanations include multi-buyer tenders, framework agreements and tender options. While some of these features are benign, others might make tender award an imprecise demand shock.
+
+```{r load-data}
+
+# Load data
+ext_data <- read_excel(file.path(dirs$data, "external", "eu_mean_tender_value_2012_2015.xlsx"),
+                       sheet = "Data", skip = 1)
+
+```
+
+# KFST and OpenTender are a selected sample...
+The KFST and OpenTender data are largely extracted from EU TED (Tender Electronic Daily) notices. Buyers are required to post a TED notice if the estimated value of a tender exceeds certain thresholds. These thresholds are updated semi-regularly, most recently in 2026. These reporting thresholds mean the tender data are selected on being relatively high value tenders, which explains why the tender amounts in the data were surprisingly large.
+
+# ... but Danish tenders are large relative to other EU countries
+In saying that, Danish tenders are also large relative to other EU countries ([DG Grow G4, 2016](https://webgate.ec.europa.eu/circabc-ewpp/rest/download/533677d7-e98a-42d8-9231-182d5e0bad67)). The data below were sourced from Tables 3, 4, 5, and 6. I calculated these as the ratio of estimated value of tenders to number of TED notices. 
+
+```{r comparison-graph}
+# Filter to Mean rows only
+plot_data <- ext_data %>%
+  filter(year == "Mean") %>%
+  mutate(
+    is_denmark = country == "Denmark",
+    country = reorder(country, mean_value_incl_eur)  # sort by incl for consistent ordering
+  )
+
+eu_avg_incl <- mean(plot_data$mean_value_incl_eur, na.rm = TRUE)
+eu_avg_excl <- mean(plot_data$mean_value_excl_eur, na.rm = TRUE)
+
+# Shared theme
+base_theme <- theme_minimal(base_family = "Arial") +
+  theme(
+    plot.title    = element_text(size = 12, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 9, hjust = 0.5),
+    plot.caption  = element_text(size = 8),
+    axis.text.y   = element_text(size = 9,
+                                  colour = ifelse(levels(plot_data$country) == "Denmark",
+                                                  "#A32D2D", "#52514e")),
+    axis.text.x   = element_text(size = 8,  colour = "#52514e"),
+    axis.title.x  = element_text(size = 9,  colour = "#52514e"),
+    panel.grid.major.y = element_blank(),
+    panel.grid.major.x = element_line(colour = "#e1e0d9"),
+    panel.grid.minor   = element_blank(),
+    legend.position    = "none"
+  )
+
+caption_txt <- "Source: EC DG GROW, Public Procurement Indicators 2015. Mean = avg. total value ÷ avg. notices, 2012–2015."
+
+# ── Plot 1: Including utilities & defence ─────────────────────────────────────
+p1 <- ggplot(plot_data, aes(
+    x    = mean_value_incl_eur / 1e6,
+    y    = country,
+    fill = is_denmark
+  )) +
+  geom_col(width = 0.7) +
+  scale_fill_manual(values = c("TRUE" = "#e34948", "FALSE" = "#2a78d6")) +
+  scale_x_continuous(labels = scales::label_dollar(prefix = "€", suffix = "M",
+                                                    big.mark = ",")) +
+  labs(
+    title    = "Incl. utilities & defence",
+    subtitle = "4-year average (2012–2015), TED publications",
+    x        = "Mean value per contract notice (€M)",
+    y        = NULL,
+    caption  = caption_txt
+  ) +
+  base_theme
+
+# ── Plot 2: Excluding utilities & defence ─────────────────────────────────────
+plot_data2 <- plot_data %>%
+  mutate(country = reorder(country, mean_value_excl_eur))
+
+p2 <- ggplot(plot_data2, aes(
+    x    = mean_value_excl_eur / 1e6,
+    y    = country,
+    fill = is_denmark
+  )) +
+  geom_col(width = 0.7) +
+  geom_vline(xintercept = eu_avg_excl / 1e6,
+             linetype = "dashed", colour = "#888780", linewidth = 0.6) +
+  annotate("text", x = eu_avg_excl / 1e6, y = 2,
+           label = "EU avg", hjust = -0.1, size = 2.8, colour = "#888780") +
+  scale_fill_manual(values = c("TRUE" = "#e34948", "FALSE" = "#2a78d6")) +
+  scale_x_continuous(labels = scales::label_dollar(prefix = "€", suffix = "M",
+                                                    big.mark = ",")) +
+  labs(
+    title    = "Excl. utilities & defence",
+    subtitle = "4-year average (2012–2015), TED publications",
+    x        = "Mean value per contract notice (€M)",
+    y        = NULL
+  ) +
+  base_theme
+
+# Report
+p1 + p2
+
+```
+
+There are several reasons why Danish tenders might be structurally larger than other countries. 
+
+## Composition
+The Danish public sector is a source of strong demand for ICT services, accounting for about 25 per cent of all spending on ICT services ([International Trade Administration 2026](https://www.trade.gov/country-commercial-guides/denmark-digital-services-and-technologies)). Most of this demand reflects a desire to create a unified government ICT infrastructure. This demand is likely to continue into the future, with the growth in AI services. These services are quite costly, which could inflate the relative value of tenders awarded in Denmark.
+
+## Multi-buyer contracts
+Danish authorities also tend to issue 'multi-buyer tender contracts', which are tenders issued by multiple public authorities under the same award notice. Multi-buyer contracts could also inflate the value of tenders in Denmark, since they aggregate demand across municipalities. An example comes from demand for IT services -- multiple public hospitals across Denmark might issue a joint tender to update and integrate their IT infrastructure under the same award notice. 
+
+## Framework agreements
+A framework agreement is an ongoing agreement between the buyer and winner for services/supplies, over time. Since framework agreements do not pertain to a specific product, the price quoted on the awarded tender is typically the maximum estimated amount of goods/services the buyer will purchase over the lifespan of the contract. The maximum period of time for a framework agreement is four years, but framework agreements can last longer in some circumstances. Framework agreements stand in contrast to 'public contracts', which are agreements to purchase a specific product at a specified price. 
+
+Since framework agreements quote the total expected amount of the tender over a specific time period, they provide an upper bound on the value of services expected from the winning firm. Framework agreements complicate how we measure the timing of services awarded, and therefore the precision of the awarded tender as a demand shock. The value of a framework agreement more accurately measures _potential_ value of services from the winning firm. We can identify framework agreements in both the KFST and OpenTender data. A bit under half of all notices are framework agreements in our data. 
+
+
