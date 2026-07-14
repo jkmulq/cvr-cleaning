@@ -161,7 +161,7 @@ kable(missingness_table,
 ```
 
 # Balance
-We should construct a balance table of the following partition of firms: firms that have employment history AND are in the tender datasets, firms that do not have employment history AND are in the tender data, and firms that are not in the tender dataset. The only thing we can compare at the moment is firm age.
+Below is a balance table of age for firms in our tender dataset compared to those not in the tender dataset. Firms appearing in our tender dataset tend are older than firms not in the tender dataset. This could be because firms who win tenders are usually more productive/cost competitive than firms who do not win them (especially if price is heavily weighted in deciding which firm to award a tender to).
 
 ```{r age-balance}
 
