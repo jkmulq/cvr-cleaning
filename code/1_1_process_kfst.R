@@ -36,6 +36,7 @@ data <- data %>%
          submit_date = `Frist for aflevering af tilbud`,
          tender_id = `Løbenummer`,
          lot_id = `Nummerplade`,
+         contract_type = `Rammeaftale`,
          divided_tender = `Opdelt udbud`,
          joint_tender = `Fælles-/enkeltudbud`,
          consortium_winner = `Konsortium/Sammenslutning`,
@@ -85,6 +86,12 @@ data <- data %>%
       lubridate::ymd(as.character(award_date), quiet = TRUE)
     )
   )
+
+## Framework agreement
+data <- data %>% 
+  mutate(contract_type = case_when(
+    contract_type == "Offentlig kontrakt" ~ "Public contract",
+    contract_type == "Rammeaftale" ~ "Framework agreement"))
 
 # Order columns nicely
 data <- data %>% 
@@ -165,7 +172,7 @@ if (nrow(remaining_dup_lots) > 0) {
 # Tender/lot-level data to join onto cleaned entity tables at the end.
 tender_lot_data <- data %>%
   select(any_of(c(
-    "tender_id", "lot_id", "lot_number", "buyer_name",
+    "tender_id", "lot_id", "contract_type", "lot_number", "buyer_name",
     "n_lots", "n_lots_contracted", "n_lot_winners", "n_bids_received",
     "tender_amount", "lot_amount", "n_bidders",
     "pub_date", "award_date", "submit_date",

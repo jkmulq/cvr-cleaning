@@ -97,6 +97,7 @@ original_tender_data <- data %>%
     award_date = tender_awardDecisionDate,
     cpv_code = tender_cpvs,
     divided_tender = tender_hasLots,
+    contract_type = tender_isFrameworkAgreement,
     joint_tender = tender_isJointProcurement,
     consortium_winner = bid_isConsortium,
     winner_cvr_original = bidder_bodyIds,
@@ -140,6 +141,14 @@ original_tender_data <- original_tender_data %>%
   mutate(award_date = dplyr::if_else(is.na(award_date),
                                      lubridate::ymd(tender_publications_firstdContractAwardDate),
                                      award_date))
+
+
+## Framework agreement
+original_tender_data <- original_tender_data %>% 
+  mutate(contract_type = case_when(
+    contract_type == "yes" ~ "Framework agreement",
+    contract_type == "no" ~ "Public contract"
+  ))
 
 ## 1.4 Separate winners/buyers/original data
 winner_data_original <- data %>% 
