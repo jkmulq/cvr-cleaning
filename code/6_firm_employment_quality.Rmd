@@ -222,3 +222,281 @@ fte_reg <- feols(log(fte) ~ i(firm_age) - 1 | cvr,
                  cluster = ~cvr)
 iplot(fte_reg)
 ```
+
+# Event study around tender award
+
+```{r es-plot-helper, include=FALSE}
+# Helper: plot a pair of fixest models as one event-study figure
+# (models[[1]] = FTE, models[[2]] = employees).
+plot_es <- function(models, main, xlab = "Quarters relative to contract win") {
+  iplot(list(models[[1]], models[[2]]),
+        main   = main,
+        xlab   = xlab,
+        col    = c("steelblue", "darkred"),
+        pt.pch = c(16, 17),
+        ci.lty = c(1, 1))
+  legend("bottomleft",
+         legend = c("FTE", "Employees"),
+         col    = c("steelblue", "darkred"),
+         pch    = c(16, 17),
+         lty    = c(1, 1),
+         bty    = "n")
+}
+```
+
+## Annual {.tabset}
+
+Event studies around the **first** tender award (employment relative to the award year). Click through the tabs for each sample.
+
+```{r tender-award-estudy-data, include=FALSE}
+
+# Build universe of events
+## Get unique events
+setDT(data_tender)
+setorder(data_tender, winner_cvr_final, data_source, award_date)
+valid_winner_events <- data_tender[winner_cvr_final %in% coverage_cvrs[firm_role == "Winner"]$cvr, ]
+valid_winner_events <- unique(valid_winner_events, by = c("winner_cvr_final", "award_date"))
+
+## Create event identifier (chronological: event_id == 1 is the earliest award).
+## Sort by award_date within firm *before* numbering. The earlier setorder puts
+## data_source ahead of award_date, so numbering off that order would not be
+## chronological for firms appearing in more than one source.
+setorder(valid_winner_events, winner_cvr_final, award_date)
+valid_winner_events[, event_id := seq_len(.N), by = winner_cvr_final]
+
+## Flag "isolated" events: no other award by the same firm within 4 quarters on
+## either side. Used by the all-events quarterly event study so the +/-4 quarter
+## window around each event is not polluted by another award.
+valid_winner_events[, award_qidx := year(award_date) * 4 + quarter(award_date)]
+valid_winner_events[, gap_prev := award_qidx - shift(award_qidx), by = winner_cvr_final]
+valid_winner_events[, gap_next := shift(award_qidx, type = "lead") - award_qidx, by = winner_cvr_final]
+valid_winner_events[, isolated_event := (is.na(gap_prev) | gap_prev > 4) &
+                                        (is.na(gap_next) | gap_next > 4)]
+
+## Coerce firm data CVR to a zero-padded 8-digit string.
+## fread reads the all-numeric cvr column as integer and drops leading zeros,
+## whereas the tender CVRs are 8-digit strings. Pad here so the join matches.
+firm_data[, winner_cvr_final := sprintf("%08d", as.integer(cvr))]
+
+## Join every event to each firms employment history
+firm_data_annual <- firm_data[frequency == "annual", ]
+estudy_data <- firm_data_annual[valid_winner_events, on = "winner_cvr_final", allow.cartesian = TRUE]
+
+## Create event time
+estudy_data[, award_year := year(award_date)]
+estudy_data[, event_year := year - award_year]
+estudy_data[, event_year_binned := fcase(
+  event_year <= -5, -5,
+  event_year >= 5, 5,
+  default = event_year  
+)]
+
+## Order more nicely
+setorder(estudy_data, winner_cvr_final, event_id, year)
+
+## Remove join failures
+estudy_data <- estudy_data[!is.na(year), ]
+
+## Balanced sample
+# Get firms observed in the full -3 to 3 window around each event
+# A firm-event is "balanced" if it has an observation in every year from -3 to 3
+required_years <- -3:3
+
+balanced_events <- estudy_data[
+  event_year %in% required_years,
+  .(n_years = uniqueN(event_year)),
+  by = .(winner_cvr_final, event_id)
+][n_years == length(required_years)]
+
+# Filter estudy_data to only those firm-events
+estudy_data_balanced <- estudy_data[
+  balanced_events, 
+  on = .(winner_cvr_final, event_id)
+]
+```
+
+### All firms
+
+Employment tends to fall after the first tender award. This is likely biased by firms dying as time passes.
+
+```{r estudy-reg-all, fig.align='center'}
+
+models <- feols(c(fte, employees) ~ i(event_year_binned, ref = -1) | year + winner_cvr_final, 
+      cluster = ~winner_cvr_final, 
+      data = estudy_data[event_id == 1 & 
+                           year >= firm_by & 
+                           (year <= firm_dy | is.na(lifecycle_end)), ])
+
+# Plot
+iplot(list(models[[1]], models[[2]]),
+      main   = "Effect on employment",
+      xlab   = "Years relative to first contract win",
+      col    = c("steelblue", "darkred"),
+      pt.pch = c(16, 17),
+      ci.lty = c(1, 1))
+
+legend("bottomleft",
+       legend = c("FTE", "Employees"),
+       col    = c("steelblue", "darkred"),
+       pch    = c(16, 17),
+       lty    = c(1, 1),
+       bty    = "n")
+```
+
+### Current firms only
+
+Restricting to firms currently still registered. This doesn't correct the issue.
+
+```{r estudy-regs-alive-firms, fig.align='center'}
+models <- feols(c(fte, employees) ~ i(event_year_binned, ref = -1) |
+                  year + winner_cvr_final,
+                cluster = ~winner_cvr_final,
+                data = estudy_data[event_id == 1 &
+                                     year >= firm_by &
+                                     is.na(lifecycle_end), ])
+
+plot_es(models, "Effect on employment; only current firms",
+        xlab = "Years relative to first contract win")
+```
+
+```{r estudy-regs-1-tender-models, include=FALSE}
+# Number of tenders won per firm, then split the first-award event study by it.
+estudy_data[, total_tenders_won   := max(event_id, na.rm = TRUE), by = winner_cvr_final]
+estudy_data[, total_tenders_group := fifelse(total_tenders_won > 1, "more than 1", "only 1")]
+
+models_by_tenders <- feols(c(fte, employees) ~ i(event_year_binned, ref = -1) |
+                             year + winner_cvr_final,
+                           cluster = ~winner_cvr_final,
+                           split  = ~total_tenders_group,
+                           data   = estudy_data[event_id == 1 &
+                                                  year >= firm_by &
+                                                  (year <= firm_dy | is.na(lifecycle_end))])
+```
+
+### More than 1 tender
+
+Firms that go on to win more than one tender.
+
+```{r estudy-regs-multi-tender, fig.align='center'}
+plot_es(models_by_tenders[sample = "more than 1"],
+        "Effect on employment; more than 1 tender won",
+        xlab = "Years relative to first contract win")
+```
+
+### Only 1 tender
+
+Firms that win exactly one tender.
+
+```{r estudy-regs-single-tender, fig.align='center'}
+plot_es(models_by_tenders[sample = "only 1"],
+        "Effect on employment; only 1 tender won",
+        xlab = "Years relative to first contract win")
+```
+
+## Quarterly {.tabset}
+
+Quarterly event studies. The **First award** tab uses the first award per firm; the remaining tabs use *all isolated events* (firms with no other award within four quarters on either side), with a balanced ±4-quarter window and firm + calendar-year + season fixed effects, shown in three functional forms.
+
+```{r qtr-estudy_data, include=FALSE}
+
+## Join every event to each firms employment history
+firm_data_qtr <- firm_data[frequency == "quarterly", ]
+estudy_data <- firm_data_qtr[valid_winner_events,
+                                on = "winner_cvr_final",
+                                allow.cartesian = TRUE]
+
+# Extract award year and quarter
+estudy_data[, award_year    := year(award_date)]
+estudy_data[, award_quarter := quarter(award_date)]
+
+# Define event_quarter as number of quarters after event quarter
+# First create a unique quarter index for both the observation and award date
+estudy_data[, obs_quarter_index   := year * 4 + quarter]
+estudy_data[, award_quarter_index := award_year * 4 + award_quarter]
+estudy_data[, event_quarter       := obs_quarter_index - award_quarter_index]
+
+# Bin
+estudy_data[, event_quarter_binned := fcase(
+  event_quarter >= 8, 8,
+  event_quarter <= -8, -8,
+  default = event_quarter
+)]
+
+```
+
+```{r estudy-reg-all-events-models, include=FALSE}
+# All isolated events, in the clean +/-4 quarter window, within the firm's life.
+window_quarters <- -4:4
+estudy_all_events <- estudy_data[
+  isolated_event == TRUE &
+    event_quarter %in% window_quarters &
+    year >= firm_by &
+    (year <= firm_dy | is.na(lifecycle_end))
+]
+
+# Unique identifier for each stacked event (firm x event)
+estudy_all_events[, event_uid := paste(winner_cvr_final, event_id, sep = "_")]
+
+# Balanced window: keep only events observed in every event-quarter from -4 to +4,
+# so each coefficient is estimated off the same composition of events.
+balanced_q_events <- estudy_all_events[
+  , .(n_q = uniqueN(event_quarter)), by = event_uid
+][n_q == length(window_quarters)]
+estudy_all_events <- estudy_all_events[balanced_q_events, on = "event_uid"]
+
+# Employment outcomes in three functional forms. log() is NA for non-positive
+# values; asinh() (inverse hyperbolic sine) keeps zeros while giving ~% effects.
+estudy_all_events[, `:=`(
+  log_fte   = fifelse(fte > 0, log(fte), NA_real_),
+  log_emp   = fifelse(employees > 0, log(employees), NA_real_),
+  asinh_fte = asinh(fte),
+  asinh_emp = asinh(employees)
+)]
+
+# firm + year + quarter FE: firm and calendar-year as before, plus quarter-of-year
+# to absorb employment seasonality. (event_quarter dummies stay identified because
+# year/quarter enter additively, not as the full calendar-quarter interaction.)
+models_levels <- feols(c(fte, employees) ~ i(event_quarter, ref = -1) |
+                         winner_cvr_final + year + quarter,
+                       cluster = ~winner_cvr_final, data = estudy_all_events)
+models_log    <- feols(c(log_fte, log_emp) ~ i(event_quarter, ref = -1) |
+                         winner_cvr_final + year + quarter,
+                       cluster = ~winner_cvr_final, data = estudy_all_events)
+models_asinh  <- feols(c(asinh_fte, asinh_emp) ~ i(event_quarter, ref = -1) |
+                         winner_cvr_final + year + quarter,
+                       cluster = ~winner_cvr_final, data = estudy_all_events)
+```
+
+### First award
+
+Employment tends to fall after the first tender award. This is likely biased by firms dying as time passes.
+
+```{r estudy-reg-all-qtr, fig.align='center'}
+models <- feols(c(fte, employees) ~ i(event_quarter_binned, ref = -1) |
+                  year + winner_cvr_final,
+                cluster = ~winner_cvr_final,
+                data = estudy_data[event_id == 1 &
+                                     year >= firm_by &
+                                     (year <= firm_dy | is.na(lifecycle_end)), ])
+
+plot_es(models, "Effect on employment",
+        xlab = "Quarters relative to first contract win")
+```
+
+### All isolated events — levels
+
+```{r qtr-es-levels, fig.align='center'}
+plot_es(models_levels, "Effect on employment (levels); all isolated events")
+```
+
+### All isolated events — log
+
+```{r qtr-es-log, fig.align='center'}
+plot_es(models_log, "Effect on log employment; all isolated events")
+```
+
+### All isolated events — asinh
+
+```{r qtr-es-asinh, fig.align='center'}
+plot_es(models_asinh, "Effect on asinh(employment); all isolated events")
+```
