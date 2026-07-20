@@ -1349,3 +1349,185 @@ generate_cvr_lookup_from_virk <- function(
     binavne_file = binavne_path
   )
 }
+
+## Common Procurement Vocabulary (CPV) division lookup.
+## The CPV is the EU's standard classification for public procurement subject
+## matter (https://ted.europa.eu/). A CPV code is an 8-digit code where the
+## first two digits identify the division (the broadest, most interpretable
+## grouping). Below is the full list of CPV 2008 divisions.
+cpv_division_names <- c(
+  "03" = "Agricultural, farming, fishing, forestry and related products",
+  "09" = "Petroleum products, fuel, electricity and other sources of energy",
+  "14" = "Mining, basic metals and related products",
+  "15" = "Food, beverages, tobacco and related products",
+  "16" = "Agricultural machinery",
+  "18" = "Clothing, footwear, luggage articles and accessories",
+  "19" = "Leather and textile fabrics, plastic and rubber materials",
+  "22" = "Printed matter and related products",
+  "24" = "Chemical products",
+  "30" = "Office and computing machinery, equipment and supplies except furniture and software packages",
+  "31" = "Electrical machinery, apparatus, equipment and consumables; lighting",
+  "32" = "Radio, television, communication, telecommunication and related equipment",
+  "33" = "Medical equipments, pharmaceuticals and personal care products",
+  "34" = "Transport equipment and auxiliary products to transportation",
+  "35" = "Security, fire-fighting, police and defence equipment",
+  "37" = "Musical instruments, sport goods, games, toys, handicraft, art materials and accessories",
+  "38" = "Laboratory, optical and precision equipments (excl. glasses)",
+  "39" = "Furniture (incl. office furniture), furnishings, domestic appliances (excl. lighting) and cleaning products",
+  "41" = "Collected and purified water",
+  "42" = "Industrial machinery",
+  "43" = "Machinery for mining, quarrying, construction equipment",
+  "44" = "Construction structures and materials; auxiliary products to construction (except electric apparatus)",
+  "45" = "Construction work",
+  "48" = "Software package and information systems",
+  "50" = "Repair and maintenance services",
+  "51" = "Installation services (except software)",
+  "55" = "Hotel, restaurant and retail trade services",
+  "60" = "Transport services (excl. Waste transport)",
+  "63" = "Supporting and auxiliary transport services; travel agencies services",
+  "64" = "Postal and telecommunications services",
+  "65" = "Public utilities",
+  "66" = "Financial and insurance services",
+  "70" = "Real estate services",
+  "71" = "Architectural, construction, engineering and inspection services",
+  "72" = "IT services: consulting, software development, Internet and support",
+  "73" = "Research and development services and related consultancy services",
+  "75" = "Administration, defence and social security services",
+  "76" = "Services related to the oil and gas industry",
+  "77" = "Agricultural, forestry, horticultural, aquacultural and apicultural services",
+  "79" = "Business services: law, marketing, consulting, recruitment, printing and security",
+  "80" = "Education and training services",
+  "85" = "Health and social work services",
+  "90" = "Sewage, refuse, cleaning and environmental services",
+  "92" = "Recreational, cultural and sporting services",
+  "98" = "Other community, social and personal services"
+)
+
+## CPV 2003 (Regulation 2195/2002) division names for the divisions that were
+## dropped/renumbered in the CPV 2008 revision. Older TED tenders (roughly
+## pre-2009) use CPV 2003 codes, so datasets that span many years — e.g. the
+## OpenTender extracts — mix both vocabularies. This lookup only covers division
+## numbers that DO NOT exist in CPV 2008; numbers reused across versions are
+## intentionally handled by the CPV 2008 lookup above (see clean_cpv_code()).
+## Source: TED CPV correspondence table (2008 <-> 2003).
+cpv_division_names_2003 <- c(
+  "01" = "Agricultural, horticultural, hunting and related products",
+  "02" = "Forestry and logging products",
+  "05" = "Fish, fishing products and other by-products of the fishing industry",
+  "10" = "Coal, lignite, peat and other coal-related products",
+  "11" = "Petroleum, natural gas, oil and associated products",
+  "12" = "Uranium and thorium ores",
+  "13" = "Metal ores",
+  "17" = "Textiles and textile articles",
+  "20" = "Wood, wood products, cork products, basketware and wickerwork",
+  "21" = "Various types of pulp, paper and paper products",
+  "23" = "Petroleum products and fuels",
+  "25" = "Rubber, plastic and film products",
+  "26" = "Non-metallic mineral products",
+  "27" = "Basic metals and associated products",
+  "28" = "Fabricated products and materials",
+  "29" = "Machinery, equipment, appliances, apparatus and associated products",
+  "36" = "Manufactured goods, furniture, handicrafts, special-purpose products and associated consumables",
+  "40" = "Electricity, gas, nuclear energy and fuels, steam, hot water and other sources of energy",
+  "52" = "Retail trade services",
+  "61" = "Water transport services",
+  "62" = "Air transport services",
+  "67" = "Services auxiliary to financial intermediation",
+  "74" = "Architectural, engineering, construction, legal, accounting and other professional services",
+  "78" = "Printing, publishing, advertising and marketing services",
+  "91" = "Membership organisation services",
+  "93" = "Miscellaneous services",
+  "95" = "Private households with employed persons",
+  "99" = "Services provided by extra-territorial organisations and bodies"
+)
+
+## Map a CPV division (first two digits) to the EU procurement contract type:
+## Works, Supplies, or Services. This is the standard EU trichotomy used across
+## the public procurement directives. The boundaries are stable across the CPV
+## 2003 and CPV 2008 vocabularies: division 45 is works, divisions 50-99 are
+## services, and everything else is supplies (goods). Returns NA for a missing
+## division. Kept coarse on purpose so each group is large enough for regressions.
+cpv_division_to_category <- function(division) {
+  division_num <- suppressWarnings(as.integer(division))
+  dplyr::case_when(
+    is.na(division) ~ NA_character_,
+    division == "45" ~ "Works",
+    division_num >= 50 ~ "Services",
+    TRUE ~ "Supplies"
+  )
+}
+
+## Map a CPV division to one of eight economically-coherent sectors. This is a
+## middle ground between the 45 CPV divisions (too sparse for heterogeneity in
+## the treatment-effect event studies) and the three-way EU trichotomy (services
+## dominates). Each sector holds hundreds of distinct winner firms across the
+## KFST and OpenTender data, so the grouping is intended for heterogeneity
+## analysis where per-cell sample size matters. Divisions unique to CPV 2003
+## (e.g. 74 professional services, 67 auxiliary financial, 52 retail) are placed
+## in the sector matching their CPV 2008 successor. Any division not listed falls
+## through to manufactured goods/supplies.
+cpv_division_to_sector <- function(division) {
+  dplyr::case_when(
+    is.na(division) ~ NA_character_,
+    division %in% c("45", "44", "43", "71") ~ "Construction & engineering",
+    division %in% c("60", "61", "62", "63", "34", "64") ~ "Transport & logistics",
+    division %in% c("33", "85", "24") ~ "Health, medical & pharma",
+    division %in% c("48", "72", "73", "74", "79", "66", "67", "70", "75", "78") ~ "ICT & professional services",
+    division %in% c("90", "50", "51", "65", "41") ~ "Environmental & facilities services",
+    division %in% c("15", "55", "52", "03", "77", "16", "01", "02", "05") ~ "Food, hospitality & agriculture",
+    division %in% c("80", "92", "98", "91", "93", "95", "99") ~ "Education, culture & other public services",
+    TRUE ~ "Other manufacturing & goods"
+  )
+}
+
+## Clean a raw CPV code field into an interpretable division label.
+## Tenders can list several CPV codes; as a first pass we keep only the first
+## listed code (the primary subject matter). Codes are separated by a semicolon
+## in the KFST data and by a comma in the OpenTender data, so we split on both.
+## The raw codes need light cleaning: Excel drops leading zeros from some
+## numeric-looking codes (e.g. "03000000" -> "3000000"), and some carry a
+## supplementary suffix (e.g. "71000000 - IA01"). We extract the leading digit
+## sequence and zero-pad it to the standard 8 digits, then map the first two
+## digits (the division) to its name.
+##
+## Datasets spanning many years mix CPV 2008 and CPV 2003 codes. We label a
+## division with its CPV 2008 name whenever that number exists in CPV 2008 (the
+## current standard and the bulk of the data), and fall back to the CPV 2003
+## name only for division numbers that CPV 2008 dropped. A handful of numbers
+## were reused with a different meaning across the two versions (e.g. 35, 37);
+## for those, pre-2009 rows carry the CPV 2008 label, which may be imprecise.
+##
+## Returns a list of parallel vectors (mirrors prepare_cvr_name()).
+clean_cpv_code <- function(cpv_code) {
+
+  # Keep only the first listed code (comma- or semicolon-separated).
+  first_code <- trimws(sub("[,;].*", "", cpv_code))
+
+  # Extract the leading digit sequence, dropping any supplementary suffix,
+  # then zero-pad to the standard 8-digit CPV code length.
+  code_digits <- stringr::str_extract(first_code, "[0-9]+")
+  code_first <- stringr::str_pad(code_digits, width = 8, side = "left", pad = "0")
+
+  # Division = first two digits. Prefer the CPV 2008 name, falling back to the
+  # CPV 2003 name for division numbers that only exist in CPV 2003.
+  division <- substr(code_first, 1, 2)
+  division_name <- unname(cpv_division_names[division])
+  division_name <- ifelse(
+    is.na(division_name),
+    unname(cpv_division_names_2003[division]),
+    division_name
+  )
+
+  # Coarser groupings for treatment-effect heterogeneity, where each cell needs
+  # enough firms to be tractable: the eight-sector scheme and the EU trichotomy.
+  sector <- cpv_division_to_sector(division)
+  category <- cpv_division_to_category(division)
+
+  list(
+    code_first = code_first,
+    division = division,
+    division_name = division_name,
+    sector = sector,
+    category = category
+  )
+}
