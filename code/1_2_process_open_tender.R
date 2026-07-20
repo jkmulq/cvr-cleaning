@@ -144,11 +144,27 @@ original_tender_data <- original_tender_data %>%
 
 
 ## Framework agreement
-original_tender_data <- original_tender_data %>% 
+original_tender_data <- original_tender_data %>%
   mutate(contract_type = case_when(
     contract_type == "yes" ~ "Framework agreement",
     contract_type == "no" ~ "Public contract"
   ))
+
+## CPV code
+## Tenders can list several CPV codes (comma-separated here); as a first pass
+## keep the first listed code and map it to its EU CPV division (the broadest
+## interpretable grouping). OpenTender spans many years, so codes mix the CPV
+## 2003 and CPV 2008 vocabularies; clean_cpv_code() handles both.
+cpv_prepared <- clean_cpv_code(original_tender_data$cpv_code)
+original_tender_data <- original_tender_data %>%
+  mutate(
+    cpv_code_first = cpv_prepared$code_first,
+    cpv_division = cpv_prepared$division,
+    cpv_division_name = cpv_prepared$division_name,
+    # Coarser groupings for treatment-effect heterogeneity (large enough cells).
+    cpv_sector = cpv_prepared$sector,
+    cpv_category = cpv_prepared$category
+  )
 
 ## 1.4 Separate winners/buyers/original data
 winner_data_original <- data %>% 

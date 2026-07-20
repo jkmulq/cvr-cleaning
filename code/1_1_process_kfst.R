@@ -88,10 +88,24 @@ data <- data %>%
   )
 
 ## Framework agreement
-data <- data %>% 
+data <- data %>%
   mutate(contract_type = case_when(
     contract_type == "Offentlig kontrakt" ~ "Public contract",
     contract_type == "Rammeaftale" ~ "Framework agreement"))
+
+## CPV code
+## Tenders can list several CPV codes; as a first pass keep the first listed
+## code and map it to its EU CPV division (the broadest interpretable grouping).
+cpv_prepared <- clean_cpv_code(data$cpv_code)
+data <- data %>%
+  mutate(
+    cpv_code_first = cpv_prepared$code_first,
+    cpv_division = cpv_prepared$division,
+    cpv_division_name = cpv_prepared$division_name,
+    # Coarser groupings for treatment-effect heterogeneity (large enough cells).
+    cpv_sector = cpv_prepared$sector,
+    cpv_category = cpv_prepared$category
+  )
 
 # Order columns nicely
 data <- data %>% 
@@ -177,7 +191,9 @@ tender_lot_data <- data %>%
     "tender_amount", "lot_amount", "n_bidders",
     "pub_date", "award_date", "submit_date",
     "divided_tender", "joint_tender", "consortium_winner",
-    "cpv_code", "tender_cancelled", "tender_status",
+    "cpv_code", "cpv_code_first", "cpv_division", "cpv_division_name",
+    "cpv_sector", "cpv_category",
+    "tender_cancelled", "tender_status",
     "n_lot_id"
   ))) %>%
   arrange(tender_id, lot_id, lot_number)
