@@ -358,6 +358,16 @@ log_value_summary <- lot_data %>%
     .by = data_source
   )
 
+# Mean level value
+level_value_summary <- lot_data %>%
+  summarise(
+    mean_tender_amount = mean(tender_amount, na.rm = TRUE),
+    sd_tender_amount = sd(tender_amount, na.rm = TRUE),
+    mean_lot_amount = mean(lot_amount, na.rm = TRUE),
+    sd_lot_amount = sd(lot_amount, na.rm = TRUE),
+    .by = data_source
+  )
+
 # Buyer CVR summayr
 buyer_cvr_summary <- buyer_data %>%
   summarise(
@@ -384,6 +394,7 @@ tenders_per_buyer_summary <- tenders_per_buyer_cvr %>%
 front_summary <- winner_cvr_summary %>%
   left_join(year_span, by = "data_source") %>%
   left_join(tenders_per_winner_summary, by = "data_source") %>%
+  left_join(level_value_summary, by = "data_source") %>% 
   left_join(log_value_summary, by = "data_source") %>%
   left_join(buyer_cvr_summary, by = "data_source") %>%
   left_join(tenders_per_buyer_summary, by = "data_source") %>%
@@ -403,6 +414,14 @@ front_summary <- winner_cvr_summary %>%
     `Mean log lot amount` = format_mean_sd(
       mean_log_lot_amount,
       sd_log_lot_amount
+    ),
+    `Mean tender amount` = format_mean_sd(
+      mean_tender_amount,
+      sd_tender_amount
+    ),
+    `Mean lot amount` = format_mean_sd(
+      mean_lot_amount,
+      sd_lot_amount
     ),
     `Unique buyers by CVR` = format_int(unique_buyers_by_cvr),
     `Mean tenders per buyer CVR` = format_mean_sd(
