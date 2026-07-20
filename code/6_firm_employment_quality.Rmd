@@ -393,6 +393,64 @@ plot_es(models_by_tenders[sample = "only 1"],
         xlab = "Years relative to first contract win")
 ```
 
+### By agreement type
+Compares across framework agreements and public contracts. I hypothesise that Services behaves more like a demand shock that Works or Supplies, since it is likely more labour intensive.
+
+```{r contract-type-estudy}
+
+# Run models
+models_by_type <- feols(c(fte, employees) ~ i(event_year_binned, ref = -1) |
+                             year + winner_cvr_final,
+                           cluster = ~winner_cvr_final,
+                           split  = ~contract_type,
+                           data   = estudy_data[event_id == 1 &
+                                                  year >= firm_by &
+                                                  (year <= firm_dy | is.na(lifecycle_end))])
+
+# Framework agreement
+plot_es(models_by_type[sample = "Framework agreement"],
+        "Effect on employment; Framework agreement",
+        xlab = "Years relative to first contract win")
+
+# Public contract
+plot_es(models_by_type[sample = "Public contract"],
+        "Effect on employment; Public contracts",
+        xlab = "Years relative to first contract win")
+
+
+```
+
+### By work category
+Compares across tenders for 'Works', 'Services' and 'Supplies'. I hypothesise that Services behaves more like a demand shock that Works or Supplies, since it is likely more labour intensive.
+
+```{r work-category-estudy}
+
+# Run models
+models_by_work_cat <- feols(c(fte, employees) ~ i(event_year_binned, ref = -1) |
+                             year + winner_cvr_final,
+                           cluster = ~winner_cvr_final,
+                           split  = ~cpv_category,
+                           data   = estudy_data[event_id == 1 &
+                                                  year >= firm_by &
+                                                  (year <= firm_dy | is.na(lifecycle_end))])
+
+# Works
+plot_es(models_by_work_cat[sample = "Works"],
+        "Effect on employment; Works",
+        xlab = "Years relative to first contract win")
+
+# Services
+plot_es(models_by_work_cat[sample = "Services"],
+        "Effect on employment; Services",
+        xlab = "Years relative to first contract win")
+
+# Supplies
+plot_es(models_by_work_cat[sample = "Supplies"],
+        "Effect on employment; Supplies",
+        xlab = "Years relative to first contract win")
+
+```
+
 ## Quarterly {.tabset}
 
 Quarterly event studies. The **First award** tab uses the first award per firm; the remaining tabs use *all isolated events* (firms with no other award within four quarters on either side), with a balanced ±4-quarter window and firm + calendar-year + season fixed effects, shown in three functional forms.
@@ -483,6 +541,65 @@ plot_es(models, "Effect on employment",
         xlab = "Quarters relative to first contract win")
 ```
 
+### By agreement type
+Compares across framework agreements and public contracts. I hypothesise that Services behaves more like a demand shock that Works or Supplies, since it is likely more labour intensive.
+
+```{r contract-type-estudy-qtr}
+
+# Run models
+models_by_type <- feols(c(fte, employees) ~ i(event_quarter_binned, ref = -1) |
+                             year + winner_cvr_final,
+                           cluster = ~winner_cvr_final,
+                           split  = ~contract_type,
+                           data   = estudy_data[event_id == 1 &
+                                                  year >= firm_by &
+                                                  (year <= firm_dy | is.na(lifecycle_end))])
+
+# Framework agreement
+plot_es(models_by_type[sample = "Framework agreement"],
+        "Effect on employment; Framework agreement",
+        xlab = "Quarters relative to first contract win")
+
+# Public contract
+plot_es(models_by_type[sample = "Public contract"],
+        "Effect on employment; Public contracts",
+        xlab = "Quarters relative to first contract win")
+
+
+```
+
+### By work category
+Compares across tenders for 'Works', 'Services' and 'Supplies'. I hypothesise that Services and Works behaves more like a demand shock than Supplies, since they are likely more labour intensive.
+
+```{r work-category-estudy-qtr}
+
+# Run models
+models_by_work_cat <- feols(c(fte, employees) ~ i(event_quarter_binned, ref = -1) |
+                             year + winner_cvr_final,
+                           cluster = ~winner_cvr_final,
+                           split  = ~cpv_category,
+                           data   = estudy_data[event_id == 1 &
+                                                  year >= firm_by &
+                                                  (year <= firm_dy | is.na(lifecycle_end))])
+
+# Works
+plot_es(models_by_work_cat[sample = "Works"],
+        "Effect on employment; Works",
+        xlab = "Quarters relative to first contract win")
+
+# Services
+plot_es(models_by_work_cat[sample = "Services"],
+        "Effect on employment; Services",
+        xlab = "Quarters relative to first contract win")
+
+# Supplies
+plot_es(models_by_work_cat[sample = "Supplies"],
+        "Effect on employment; Supplies",
+        xlab = "Quarters relative to first contract win")
+
+```
+
+
 ### All isolated events — levels
 
 ```{r qtr-es-levels, fig.align='center'}
@@ -500,3 +617,4 @@ plot_es(models_log, "Effect on log employment; all isolated events")
 ```{r qtr-es-asinh, fig.align='center'}
 plot_es(models_asinh, "Effect on asinh(employment); all isolated events")
 ```
+
