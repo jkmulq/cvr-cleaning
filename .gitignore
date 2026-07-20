@@ -10,3 +10,5 @@
 data/*
 documents/*
 output/*
+ted_xml_cache/*
+ted_intermediate/*
