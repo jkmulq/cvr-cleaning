@@ -85,7 +85,7 @@ data_ot_buyers <- readRDS(file.path(clean_data_dir, "clean_buyer_data_ot_name_ma
 data_kfst_buyers <- readRDS(file.path(clean_data_dir, "clean_buyer_data_kfst_name_matched.rds")) %>% 
   mutate(data_source = "KFST")
 data_tender <- rbindlist(list(data_ot, data_kfst), fill = TRUE, ignore.attr = TRUE) %>% 
-  select(data_source, tender_id, lot_id, award_date, winner_cvr_final, tender_amount, lot_amount)
+  select(data_source, tender_id, lot_id, award_date, winner_cvr_final, tender_amount, lot_amount, contract_type, cpv_category, cpv_sector)
 unique_cvrs <- unique(data_tender$winner_cvr_final)
 
 
