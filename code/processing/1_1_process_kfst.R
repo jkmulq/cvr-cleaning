@@ -122,6 +122,34 @@ data <- data %>%
     as.Date(NA)
   ))
 
+## Annualised framework amounts
+# A framework agreement's amount covers its whole (multi-year) duration, so the
+# headline total is not comparable to a single-year contract. Annualise it:
+# amount per month (amount / duration in months) scaled to 12 months. KFST
+# records duration in months, so annualising by month avoids any day
+# approximation. Uses the base ("min") duration, falling back to "max", matching
+# award_end_date. Framework agreements only, and only where the amount and a
+# positive duration are both present (the > 0 guard avoids divide-by-zero).
+data <- data %>%
+  mutate(
+    contract_duration_months = coalesce(
+      as.numeric(contract_duration_months_min),
+      as.numeric(contract_duration_months_max)
+    ),
+    annualised_tender_amount = if_else(
+      contract_type == "Framework agreement" &
+        !is.na(contract_duration_months) & contract_duration_months > 0,
+      tender_amount / contract_duration_months * 12,
+      NA_real_
+    ),
+    annualised_lot_amount = if_else(
+      contract_type == "Framework agreement" &
+        !is.na(contract_duration_months) & contract_duration_months > 0,
+      lot_amount / contract_duration_months * 12,
+      NA_real_
+    )
+  )
+
 ## CPV code
 ## Tenders can list several CPV codes; as a first pass keep the first listed
 ## code and map it to its EU CPV division (the broadest interpretable grouping).
@@ -224,6 +252,7 @@ tender_lot_data <- data %>%
     "cpv_sector", "cpv_category",
     "tender_cancelled", "tender_status", "flag_awarded",
     "contract_duration_months_min", "contract_duration_months_max", "award_end_date",
+    "annualised_tender_amount", "annualised_lot_amount",
     "n_lot_id"
   ))) %>%
   arrange(tender_id, lot_id, lot_number)
