@@ -6,9 +6,22 @@
 # run_replication.sh does this automatically.
 
 # 1. Project root
-#    If running from another location or machine, replace this line with your
-#    local project path.
-PROJECT_DIR <- normalizePath(getwd(), mustWork = TRUE)
+#    Located by searching upward from the working directory for the RStudio
+#    project marker, so paths are correct no matter which sub-directory a script
+#    or R Markdown report is run from. Falls back to getwd() with a warning.
+find_project_root <- function(start = getwd(), marker = "cvr-cleaning.Rproj") {
+  d <- normalizePath(start, mustWork = TRUE)
+  while (!file.exists(file.path(d, marker))) {
+    parent <- dirname(d)
+    if (parent == d) {
+      warning("Could not locate project root (", marker, "); using getwd().")
+      return(normalizePath(getwd(), mustWork = TRUE))
+    }
+    d <- parent
+  }
+  d
+}
+PROJECT_DIR <- find_project_root()
 
 # 2. Derived paths (do not edit)
 dirs <- list(
@@ -19,5 +32,5 @@ dirs <- list(
   code = file.path(PROJECT_DIR, "code")
 )
 
-# Create any missing output directories
-invisible(lapply(dirs[c("raw_data", "clean_data", "code")], dir.create, recursive = TRUE, showWarnings = FALSE))
+# Create any missing data output directories (never the code directory).
+invisible(lapply(dirs[c("raw_data", "clean_data")], dir.create, recursive = TRUE, showWarnings = FALSE))
