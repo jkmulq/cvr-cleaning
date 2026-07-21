@@ -34,15 +34,24 @@ cvr-cleaning/
 ├── run_replication.sh
 ├── code/
 │   ├── functions.R
-│   ├── 0_build_cvr_lookup.R
-│   ├── 1_1_process_kfst.R
-│   ├── 1_2_process_open_tender.R
-│   ├── 1_3_process_keys.R
-│   ├── 2_1_match_kfst.R
-│   ├── 2_2_match_kfst_buyers.R
-│   ├── 2_2_match_opentender.R
-│   ├── 2_3_match_opentender_buyers.R
-│   ├── 3_quality_analysis.Rmd
+│   ├── processing/                      # data cleaning + CVR matching pipeline
+│   │   ├── 0_build_cvr_lookup.R
+│   │   ├── 1_1_process_kfst.R
+│   │   ├── 1_2_process_open_tender.R
+│   │   ├── 1_3_process_keys.R
+│   │   ├── 2_1_match_kfst.R
+│   │   ├── 2_2_match_kfst_buyers.R
+│   │   ├── 2_3_match_opentender.R
+│   │   └── 2_4_match_opentender_buyers.R
+│   ├── analysis/                        # R Markdown quality/analysis reports
+│   │   ├── 3_quality_analysis.Rmd
+│   │   ├── 4_summary_stats.Rmd
+│   │   ├── 5_cvr_key_concordance.Rmd
+│   │   ├── 6_firm_employment_quality.Rmd
+│   │   └── 7_tender_amounts_eu.Rmd
+│   ├── scraping/                        # optional web/API pulls (run after matching)
+│   │   ├── 1_build_cvr_employment_history.R
+│   │   └── 2_extract_ted_notices.R
 │   └── drafts/
 ├── docs/
 │   ├── cleaning_flags.md
