@@ -92,3 +92,6 @@ This file tracks development work against the current codebase and the project b
 ## Overall cleaning
 - [ ] Fix typos in the final cleaned and matched dataset. I'll define typo as a CVR number only different from another CVR attached to the same firm name, where one appears in the CVR key and the other doesn't.
 - [ ] Convert to common currency for tender/lot amounts. KFST has amounts quoted in DKK while OpenTender uses Euro. Ideally we would have both currencies for both datasets (DKK->EURO for KFST and EURO->DKK for OpenTender).
+
+## Replication readiness
+- [ ] Document data provenance for the raw inputs (KFST `udbudsdata_kfst.xlsx`, OpenTender CSVs, Virk CVR keys). Ask PI's coauthors where each source comes from and how a replicator obtains access, then add a "Data availability" section to the README.
