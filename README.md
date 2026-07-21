@@ -133,27 +133,31 @@ by the files placed in that folder.
 All scripts source [config.R](config.R). The main setting is `PROJECT_DIR`, the
 root of this repository.
 
-For the standard replication workflow, no edits should be needed:
-[run_replication.sh](run_replication.sh) moves to the repository root before it
-runs any R scripts, and `config.R` sets `PROJECT_DIR` from that working
-directory.
+For the standard replication workflow, no edits should be needed. `config.R`
+locates the repository root automatically by searching upward from the working
+directory for the `cvr-cleaning.Rproj` marker, so scripts and reports resolve
+paths correctly whether they are run from the root or from `code/processing/`,
+`code/analysis/`, etc. [run_replication.sh](run_replication.sh) still runs from
+the repository root.
 
-If you run an individual R script manually, first open `cvr-cleaning.Rproj` or
-set your R working directory to the repository root. If you need to run from a
-different working directory on another machine, edit the `PROJECT_DIR` line in
-`config.R` to your local repository path.
+If you run an individual R script or knit a report manually, keep the
+`cvr-cleaning.Rproj` marker at the repository root (open the project in RStudio,
+or clone the repo intact). `config.R` falls back to the working directory, with a
+warning, only if the marker cannot be found.
 
 The derived paths in `config.R` are:
 
 ```text
-dirs$raw_data    -> data/raw/
-dirs$cvr_key     -> data/cvr_matching_data/
-dirs$clean_data  -> data/clean/
-dirs$code        -> code/
+dirs$raw_data      -> data/raw/
+dirs$cvr_key       -> data/cvr_matching_data/
+dirs$clean_data    -> data/clean/
+dirs$intermediates -> data/intermediates/
+dirs$code          -> code/
 ```
 
-`config.R` creates the expected local output directories if they are missing,
-but it does not download or create the raw input files.
+`config.R` creates the expected local data output directories (`data/raw/`,
+`data/clean/`) if they are missing, but it does not download or create the raw
+input files.
 
 ## Replication
 
@@ -221,7 +225,7 @@ running scripts with `Rscript --vanilla`. To test API speed and output shape on
 a small sample without overwriting the full lookup files:
 
 ```bash
-CVR_LOOKUP_SAMPLE_SIZE=100 Rscript --vanilla code/0_build_cvr_lookup.R
+CVR_LOOKUP_SAMPLE_SIZE=100 Rscript --vanilla code/processing/0_build_cvr_lookup.R
 ```
 
 This writes sample files under `data/cvr_matching_data/`. To build a new full
@@ -248,17 +252,20 @@ From the repository root:
 The script runs:
 
 ```text
-code/1_1_process_kfst.R
-code/1_2_process_open_tender.R
-code/0_build_cvr_lookup.R  # only if BUILD_CVR_LOOKUP=true
-code/1_3_process_keys.R
-code/2_1_match_kfst.R
-code/2_2_match_kfst_buyers.R
-code/2_2_match_opentender.R
-code/2_3_match_opentender_buyers.R
+code/processing/1_1_process_kfst.R
+code/processing/1_2_process_open_tender.R
+code/processing/0_build_cvr_lookup.R  # only if BUILD_CVR_LOOKUP=true
+code/processing/1_3_process_keys.R
+code/processing/2_1_match_kfst.R
+code/processing/2_2_match_kfst_buyers.R
+code/processing/2_3_match_opentender.R
+code/processing/2_4_match_opentender_buyers.R
+code/scraping/1_build_cvr_employment_history.R  # only if BUILD_EMPLOYMENT_HISTORY=true
+code/scraping/2_extract_ted_notices.R           # only if EXTRACT_TED_NOTICES=true
 ```
 
-Outputs are written to `data/clean/`.
+Outputs are written to `data/clean/` (and, for the optional TED pull,
+`data/intermediates/`).
 
 Expected run time depends on the machine, but the main distinction is between
 cleaning and name matching:
@@ -267,10 +274,10 @@ cleaning and name matching:
 |---|---|---|
 | Input checks | built into `run_replication.sh` | seconds |
 | Environment restore, if `RESTORE_RENV=true` | `renv::restore()` | depends on whether packages are already installed |
-| Cleaning only | `code/1_1_process_kfst.R`, `code/1_2_process_open_tender.R` | minutes |
-| CVR-name-key preparation | `code/1_3_process_keys.R` | minutes |
-| Winner matching | `code/2_1_match_kfst.R`, `code/2_2_match_opentender.R` | slower than cleaning, but not usually the main bottleneck |
-| Buyer matching | `code/2_2_match_kfst_buyers.R`, `code/2_3_match_opentender_buyers.R` | the main bottleneck; this is where most of the few-hour full-run time is spent |
+| Cleaning only | `code/processing/1_1_process_kfst.R`, `code/processing/1_2_process_open_tender.R` | minutes |
+| CVR-name-key preparation | `code/processing/1_3_process_keys.R` | minutes |
+| Winner matching | `code/processing/2_1_match_kfst.R`, `code/processing/2_3_match_opentender.R` | slower than cleaning, but not usually the main bottleneck |
+| Buyer matching | `code/processing/2_2_match_kfst_buyers.R`, `code/processing/2_4_match_opentender_buyers.R` | the main bottleneck; this is where most of the few-hour full-run time is spent |
 
 For a quick check that the cleaning scripts still run, use `RUN_MATCHING=false`.
 For a full matched dataset, plan for a few hours and expect most of that time to
@@ -285,6 +292,33 @@ name keys or running name matching:
 RUN_MATCHING=false ./run_replication.sh
 ```
 
+### 6. Optional: employment history and TED notices
+
+These post-matching pulls (in [code/scraping/](code/scraping)) consume the
+matched datasets, so they only run when matching runs (`RUN_MATCHING=true`, the
+default). Both are resumable — an interrupted pull continues on the next run.
+
+Build firm employment history from the Virk CVR API (needs Virk credentials, as
+in step 3):
+
+```bash
+BUILD_EMPLOYMENT_HISTORY=true ./run_replication.sh
+```
+
+Extract TED notice data for OpenTender award notices (needs internet access):
+
+```bash
+EXTRACT_TED_NOTICES=true ./run_replication.sh
+```
+
+The flags combine with each other and with the other options. Because their
+inputs are the matched `*_name_matched.rds` files, you can also run either script
+on its own once those files exist, without re-running the pipeline:
+
+```bash
+Rscript --vanilla code/scraping/2_extract_ted_notices.R
+```
+
 ## Main outputs
 
 After a full replication run, the most important files are in `data/clean/`.
@@ -297,6 +331,15 @@ clean_buyer_data_kfst.rds
 clean_winner_data_ot.rds
 clean_buyer_data_ot.rds
 ```
+
+The OpenTender clean files now keep the bound source-file identifier
+(`dataset`), a stable source-row identifier (`row_id`), the original tender
+fields joined back onto the cleaned winner and buyer rows, and the derived
+amount fields `tender_amount`, `lot_amount`, and `bid_amount`. They also record
+when a missing OpenTender CVR was filled from another row with the same firm
+name (`row_id_borrowed_from` and `flag_fill_missing_cvr`); on the buyer side,
+the cleaning output also flags invalid multi-CVR tokens that were dropped before
+name matching (`flag_non_cvr_identifier`).
 
 Matched data:
 
@@ -331,7 +374,7 @@ equally verified without checking the matching flags.
 
 For match-quality statistics by source, entity, match type, and match step, see:
 
-- [code/3_quality_analysis.Rmd](code/3_quality_analysis.Rmd)
+- [code/analysis/3_quality_analysis.Rmd](code/analysis/3_quality_analysis.Rmd)
 - generated output:  `docs/3_quality_analysis.html`
 
 For definitions of cleaning and matching flags, see:
