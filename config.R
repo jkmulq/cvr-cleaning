@@ -29,6 +29,7 @@ dirs <- list(
   cvr_key = file.path(PROJECT_DIR, "data", "cvr_matching_data"),
   raw_data   = file.path(PROJECT_DIR, "data", "raw"),
   clean_data = file.path(PROJECT_DIR, "data", "clean"),
+  intermediates = file.path(PROJECT_DIR, "data", "intermediates"),
   code = file.path(PROJECT_DIR, "code")
 )
 
