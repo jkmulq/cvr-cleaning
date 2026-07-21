@@ -68,8 +68,8 @@ run_r_script() {
   "$RSCRIPT" --vanilla "$script_path"
 }
 
-run_r_script "code/1_1_process_kfst.R"
-run_r_script "code/1_2_process_open_tender.R"
+run_r_script "code/processing/1_1_process_kfst.R"
+run_r_script "code/processing/1_2_process_open_tender.R"
 
 if [[ "$RUN_MATCHING" != "true" ]]; then
   echo
@@ -78,16 +78,16 @@ if [[ "$RUN_MATCHING" != "true" ]]; then
 fi
 
 if [[ "$BUILD_CVR_LOOKUP" == "true" ]]; then
-  run_r_script "code/0_build_cvr_lookup.R"
+  run_r_script "code/processing/0_build_cvr_lookup.R"
   require_any_file "data/cvr_matching_data/cvr_names_virk_*.csv" "Virk CVR official-name key files in data/cvr_matching_data/"
   require_any_file "data/cvr_matching_data/cvr_binavne_virk_*.csv" "Virk CVR alternative-name key files in data/cvr_matching_data/"
 fi
 
-run_r_script "code/1_3_process_keys.R"
-run_r_script "code/2_1_match_kfst.R"
-run_r_script "code/2_2_match_kfst_buyers.R"
-run_r_script "code/2_2_match_opentender.R"
-run_r_script "code/2_3_match_opentender_buyers.R"
+run_r_script "code/processing/1_3_process_keys.R"
+run_r_script "code/processing/2_1_match_kfst.R"
+run_r_script "code/processing/2_2_match_kfst_buyers.R"
+run_r_script "code/processing/2_3_match_opentender.R"
+run_r_script "code/processing/2_4_match_opentender_buyers.R"
 
 echo
 echo "Replication complete. Outputs are in data/clean."
