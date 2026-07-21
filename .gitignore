@@ -6,6 +6,9 @@
 .env
 .DS_Store
 
+# Stray/scratch files
+/page.html
+
 # Folders to ignore
 data/*
 documents/*
