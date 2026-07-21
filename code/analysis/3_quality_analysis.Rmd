@@ -11,7 +11,9 @@ output:
     self_contained: true
 knit: >
   (function(inputFile, encoding) {
-    project_dir <- normalizePath(file.path(dirname(inputFile), ".."), mustWork = TRUE)
+    project_dir <- normalizePath(dirname(inputFile), mustWork = TRUE)
+    while (!file.exists(file.path(project_dir, "cvr-cleaning.Rproj")) &&
+           dirname(project_dir) != project_dir) project_dir <- dirname(project_dir)
     output_dir <- file.path(project_dir, "output", "docs")
     dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
     rmarkdown::render(
@@ -36,11 +38,13 @@ library(knitr)
 library(tidyverse)
 library(ggplot2)
 
-report_project_dir <- if (file.exists("config.R")) {
-  getwd()
-} else {
-  normalizePath("..", mustWork = TRUE)
-}
+report_project_dir <- local({
+  d <- normalizePath(getwd(), mustWork = TRUE)
+  while (!file.exists(file.path(d, "cvr-cleaning.Rproj")) && dirname(d) != d) {
+    d <- dirname(d)
+  }
+  d
+})
 setwd(report_project_dir)
 knitr::opts_knit$set(root.dir = report_project_dir)
 report_clean_data_dir <- file.path(report_project_dir, "data", "clean")
