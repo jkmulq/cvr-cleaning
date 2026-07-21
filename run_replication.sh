@@ -8,6 +8,10 @@ PROJECT_DIR="$SCRIPT_DIR"
 RSCRIPT="${RSCRIPT:-Rscript}"
 RUN_MATCHING="${RUN_MATCHING:-true}"
 BUILD_CVR_LOOKUP="${BUILD_CVR_LOOKUP:-false}"
+# Optional post-matching web/API pulls. They consume the matched datasets and
+# need network access, so they run after matching and are off by default.
+BUILD_EMPLOYMENT_HISTORY="${BUILD_EMPLOYMENT_HISTORY:-false}"
+EXTRACT_TED_NOTICES="${EXTRACT_TED_NOTICES:-false}"
 
 export PROJECT_DIR
 
@@ -17,6 +21,8 @@ echo "Project directory: $PROJECT_DIR"
 echo "Rscript: $RSCRIPT"
 echo "Run matching: $RUN_MATCHING"
 echo "Build CVR lookup from Virk API: $BUILD_CVR_LOOKUP"
+echo "Build employment history from Virk API: $BUILD_EMPLOYMENT_HISTORY"
+echo "Extract TED notices: $EXTRACT_TED_NOTICES"
 
 if ! command -v "$RSCRIPT" > /dev/null 2>&1; then
   echo "Could not find Rscript command: $RSCRIPT" >&2
@@ -72,6 +78,11 @@ run_r_script "code/processing/1_1_process_kfst.R"
 run_r_script "code/processing/1_2_process_open_tender.R"
 
 if [[ "$RUN_MATCHING" != "true" ]]; then
+  if [[ "$BUILD_EMPLOYMENT_HISTORY" == "true" || "$EXTRACT_TED_NOTICES" == "true" ]]; then
+    echo
+    echo "Note: BUILD_EMPLOYMENT_HISTORY / EXTRACT_TED_NOTICES need the matched" >&2
+    echo "datasets, so they are skipped when RUN_MATCHING=false." >&2
+  fi
   echo
   echo "Cleaning-only replication complete. Outputs are in data/clean."
   exit 0
@@ -88,6 +99,17 @@ run_r_script "code/processing/2_1_match_kfst.R"
 run_r_script "code/processing/2_2_match_kfst_buyers.R"
 run_r_script "code/processing/2_3_match_opentender.R"
 run_r_script "code/processing/2_4_match_opentender_buyers.R"
+
+# Optional post-matching pulls (consume the *_name_matched.rds outputs above).
+# BUILD_EMPLOYMENT_HISTORY needs Virk credentials; EXTRACT_TED_NOTICES needs
+# internet access. Both are resumable.
+if [[ "$BUILD_EMPLOYMENT_HISTORY" == "true" ]]; then
+  run_r_script "code/scraping/1_build_cvr_employment_history.R"
+fi
+
+if [[ "$EXTRACT_TED_NOTICES" == "true" ]]; then
+  run_r_script "code/scraping/2_extract_ted_notices.R"
+fi
 
 echo
 echo "Replication complete. Outputs are in data/clean."
