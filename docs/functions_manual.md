@@ -6,13 +6,13 @@ for, how it works, what it returns, and where it appears in the pipeline.
 
 Most functions are used by the staged scripts:
 
-- `code/1_1_process_kfst.R`
-- `code/1_2_process_open_tender.R`
-- `code/1_3_process_keys.R`
-- `code/2_1_match_kfst.R`
-- `code/2_2_match_kfst_buyers.R`
-- `code/2_2_match_opentender.R`
-- `code/2_3_match_opentender_buyers.R`
+- `code/processing/1_1_process_kfst.R`
+- `code/processing/1_2_process_open_tender.R`
+- `code/processing/1_3_process_keys.R`
+- `code/processing/2_1_match_kfst.R`
+- `code/processing/2_2_match_kfst_buyers.R`
+- `code/processing/2_3_match_opentender.R`
+- `code/processing/2_4_match_opentender_buyers.R`
 
 The examples assume the same packages used by the pipeline scripts are already
 loaded, especially `tidyverse` and `data.table`, and that `code/functions.R`
