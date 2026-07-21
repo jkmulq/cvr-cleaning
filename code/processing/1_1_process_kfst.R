@@ -51,7 +51,9 @@ data <- data %>%
          n_lots = `Antal delkontrakter kortlagt`,
          n_lots_contracted = `Antal delkontrakter i udbudsbekendtgørelsen`,
          n_lot_winners = `Antal vindere på delkontrakten`,
-         n_bids_received = `Antal modtagne bud`)
+         n_bids_received = `Antal modtagne bud`,
+         contract_duration_months_min = `Varighed af kontrakten i måneder (min)`,
+         contract_duration_months_max = `Varighed af kontrakten i måneder (max)`)
 
 # Standardise tender-level fields before they are joined onto buyer/winner rows.
 ## Tender/lot amount
@@ -92,6 +94,33 @@ data <- data %>%
   mutate(contract_type = case_when(
     contract_type == "Offentlig kontrakt" ~ "Public contract",
     contract_type == "Rammeaftale" ~ "Framework agreement"))
+
+## Tender awarded
+# KFST rows are at the lot (delkontrakt) level, and `tender_cancelled`
+# (variable 43, "Annulleret udbud") records annulment at that level: "Nej" = the
+# lot was carried out (awarded), "Ja" = annulled. This is the right granularity
+# for "keep awarded lots only" — it drops the annulled lots inside partially-
+# completed tenders that the tender-level status (variable 44, `tender_status`)
+# would keep. Mirrors the OpenTender flag_awarded; default FALSE if status is
+# missing.
+data <- data %>%
+  mutate(flag_awarded = coalesce(tender_cancelled == "Nej", FALSE))
+
+## Award end date
+# KFST has no contract end date, only the award (start) date and the contract
+# duration in months. Per the documentation, "min" (variable 46) is the base
+# contract length excluding options and is the more reliable/complete field,
+# while "max" (variable 47) includes extension options; prefer min, fall back to
+# max. Months are approximated as 30 days. Populated for awarded lots only.
+data <- data %>%
+  mutate(award_end_date = if_else(
+    flag_awarded,
+    award_date + coalesce(
+      as.numeric(contract_duration_months_min),
+      as.numeric(contract_duration_months_max)
+    ) * 30,
+    as.Date(NA)
+  ))
 
 ## CPV code
 ## Tenders can list several CPV codes; as a first pass keep the first listed
@@ -193,7 +222,8 @@ tender_lot_data <- data %>%
     "divided_tender", "joint_tender", "consortium_winner",
     "cpv_code", "cpv_code_first", "cpv_division", "cpv_division_name",
     "cpv_sector", "cpv_category",
-    "tender_cancelled", "tender_status",
+    "tender_cancelled", "tender_status", "flag_awarded",
+    "contract_duration_months_min", "contract_duration_months_max", "award_end_date",
     "n_lot_id"
   ))) %>%
   arrange(tender_id, lot_id, lot_number)

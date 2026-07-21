@@ -150,6 +150,34 @@ original_tender_data <- original_tender_data %>%
     contract_type == "no" ~ "Public contract"
   ))
 
+## Framework agreement end date
+# OpenTender has no dedicated framework-duration field, so derive an end date:
+# use the reported completion date when present, otherwise add the reported
+# duration to a start anchor (planned start date, else award date). The duration
+# falls back from the most to least granular unit (days, then months, then
+# years). Populated for framework agreements only.
+original_tender_data <- original_tender_data %>%
+  mutate(
+    framework_start_anchor = coalesce(
+      award_date,
+      lubridate::ymd(tender_estimatedStartDate)
+    ),
+    framework_duration_days = coalesce(
+      parse_number(tender_estimatedDurationInDays),
+      parse_number(tender_estimatedDurationInMonths) * 30,
+      parse_number(tender_estimatedDurationInYears) * 365
+    ),
+    framework_end_date = coalesce(
+      lubridate::ymd(tender_estimatedCompletionDate),
+      framework_start_anchor + framework_duration_days
+    ),
+    framework_end_date = if_else(
+      contract_type == "Framework agreement",
+      framework_end_date,
+      as.Date(NA)
+    )
+  ) 
+
 ## CPV code
 ## Tenders can list several CPV codes (comma-separated here); as a first pass
 ## keep the first listed code and map it to its EU CPV division (the broadest
@@ -165,6 +193,12 @@ original_tender_data <- original_tender_data %>%
     cpv_sector = cpv_prepared$sector,
     cpv_category = cpv_prepared$category
   )
+
+## Tender awarded
+# Make a flag at the lot level for whether the lot is awarded.
+# I am strict here: only say TRUE if "yes", otherwise false
+original_tender_data <- original_tender_data %>% 
+  mutate(flag_awarded = ifelse(tender_isAwarded == "yes", TRUE, FALSE))
 
 ## 1.4 Separate winners/buyers/original data
 winner_data_original <- data %>% 
