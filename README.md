@@ -123,8 +123,10 @@ Expected source files:
 - `data/cvr_matching_data/cvr_names_virk_*.csv`
 - `data/cvr_matching_data/cvr_binavne_virk_*.csv`
 
-The OpenTender script reads all files present in `data/raw/OpenTender/`. The
-replication sample is therefore determined by the files placed in that folder.
+The OpenTender script reads all semicolon-delimited CSV files present in
+`data/raw/OpenTender/`, checks that their column names concord, and then binds
+them into one cleaning dataset. The replication sample is therefore determined
+by the files placed in that folder.
 
 ## Configuration
 
