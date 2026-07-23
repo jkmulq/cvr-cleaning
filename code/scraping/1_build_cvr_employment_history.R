@@ -1,25 +1,25 @@
-# ─────────────────────────────────────────────────────────────────────────────
 # Build CVR employment-history data for matched winners and buyers.
 #
 # For every unique valid CVR across the four matched winner/buyer datasets, pull
-# annual, quarterly, and monthly employment counts from the Virk CVR
-# system-to-system API and write them to a long CSV (one row per firm × period ×
-# frequency). Each row is enriched with the firm's lifecycle (existence) and
-# legal status for that period, so later analysis can tell active firms from
-# dormant/closed ones.
+# historical company employment from the Virk company endpoint and newer monthly
+# employment from the production-unit endpoint. Production-unit employment is
+# aggregated to the legal CVR-month, then spliced with the historical company
+# series while keeping source-specific audit columns.
 #
-# Writes incrementally and is resumable: a companion "*_status.csv" records which
-# CVRs have been pulled, so a re-run only fetches the remainder.
+# Writes incrementally and is resumable. The companion "*_status.csv" records
+# CVRs completed by this schema version, so old company-only status files are not
+# treated as complete.
 #
 # Optional; requires Virk credentials (see .Renviron.example). Controlled by
 # environment variables:
-#   CVR_EMPLOYMENT_BATCH_SIZE   CVRs per API request          (default 1000)
-#   CVR_EMPLOYMENT_SAMPLE_SIZE  pull a random N CVRs, not all (default: all)
-#   CVR_EMPLOYMENT_OVERWRITE    "true" rebuilds from scratch  (default false)
-#   CVR_EMPLOYMENT_OUTPUT_FILE  output path (default data/clean/cvr_employment_history_virk.csv)
-# ─────────────────────────────────────────────────────────────────────────────
+#   CVR_EMPLOYMENT_BATCH_SIZE    CVRs per API request          (default 1000)
+#   CVR_EMPLOYMENT_SAMPLE_SIZE   pull a random N CVRs, not all (default: all)
+#   CVR_EMPLOYMENT_OVERWRITE     "true" rebuilds from scratch  (default false)
+#   CVR_EMPLOYMENT_OUTPUT_FILE   output path (default data/clean/cvr_employment_history_virk.csv)
+#   CVR_EMPLOYMENT_SCROLL_SIZE   production-unit scroll size   (default 1000)
+#   CVR_EMPLOYMENT_SCROLL        scroll lifetime               (default 5m)
 
-# ── Setup ────────────────────────────────────────────────────────────────────
+# -- Setup --------------------------------------------------------------------
 
 rm(list = ls())
 
@@ -33,7 +33,10 @@ suppressWarnings(suppressPackageStartupMessages({
 
 source(file.path(PROJECT_DIR, "code", "functions.R"))
 
-# ── Inputs: matched datasets to pull CVRs from, and the final-CVR column in each ──
+employment_pull_schema <- "spliced_production_units_v1"
+
+# -- Inputs: matched datasets to pull CVRs from -------------------------------
+
 matched_cvr_files <- list(
   kfst_winners = list(
     path = file.path(dirs$clean_data, "clean_winner_data_kfst_name_matched.rds"),
@@ -53,8 +56,11 @@ matched_cvr_files <- list(
   )
 )
 
-# ── Runtime options (environment variables) and output paths ──
+# -- Runtime options and output paths -----------------------------------------
+
 batch_size <- as.integer(Sys.getenv("CVR_EMPLOYMENT_BATCH_SIZE", "1000"))
+scroll_size <- as.integer(Sys.getenv("CVR_EMPLOYMENT_SCROLL_SIZE", "1000"))
+scroll_keepalive <- Sys.getenv("CVR_EMPLOYMENT_SCROLL", "5m")
 sample_size <- Sys.getenv("CVR_EMPLOYMENT_SAMPLE_SIZE")
 use_sample <- nzchar(sample_size)
 overwrite <- tolower(Sys.getenv("CVR_EMPLOYMENT_OVERWRITE", "false")) == "true"
@@ -65,8 +71,12 @@ if (!nzchar(output_file)) {
 }
 status_file <- sub("[.]csv$", "_status.csv", output_file)
 
-if (is.na(batch_size) || batch_size < 1L) {
-  stop("CVR_EMPLOYMENT_BATCH_SIZE must be a positive integer.", call. = FALSE)
+if (is.na(batch_size) || batch_size < 1L || batch_size > 3000L) {
+  stop("CVR_EMPLOYMENT_BATCH_SIZE must be between 1 and 3000.", call. = FALSE)
+}
+
+if (is.na(scroll_size) || scroll_size < 1L || scroll_size > 3000L) {
+  stop("CVR_EMPLOYMENT_SCROLL_SIZE must be between 1 and 3000.", call. = FALSE)
 }
 
 if (use_sample) {
@@ -77,7 +87,8 @@ if (use_sample) {
   }
 }
 
-# ── Output schema: defines the columns and types of every emitted row ──
+# -- Output schema -------------------------------------------------------------
+
 empty_employment_table <- function() {
   data.table(
     cvr = character(),
@@ -90,9 +101,26 @@ empty_employment_table <- function() {
     employees = numeric(),
     fte = numeric(),
     employees_including_owners = numeric(),
+    employees_historical = numeric(),
+    fte_historical = numeric(),
+    employees_including_owners_historical = numeric(),
+    employees_new = numeric(),
+    fte_new = numeric(),
+    employees_including_owners_new = numeric(),
     employee_interval = character(),
     fte_interval = character(),
     employees_including_owners_interval = character(),
+    employee_interval_historical = character(),
+    fte_interval_historical = character(),
+    employees_including_owners_interval_historical = character(),
+    employee_interval_new = character(),
+    fte_interval_new = character(),
+    employees_including_owners_interval_new = character(),
+    employment_source = character(),
+    has_historical_new_overlap = logical(),
+    n_production_units_aggregated = integer(),
+    n_production_units_nonmissing_employees = integer(),
+    n_production_units_nonmissing_fte = integer(),
     period_start = character(),
     period_end = character(),
     lifecycle_start = character(),
@@ -102,13 +130,111 @@ empty_employment_table <- function() {
     exists_during_period = logical(),
     status_code = character(),
     status_text = character(),
-    updated_at = character()
+    legal_form_code = integer(),
+    legal_form_short = character(),
+    legal_form_text = character(),
+    industry_code = character(),
+    industry_text = character(),
+    secondary_industry_1_code = character(),
+    secondary_industry_1_text = character(),
+    secondary_industry_2_code = character(),
+    secondary_industry_2_text = character(),
+    secondary_industry_3_code = character(),
+    secondary_industry_3_text = character(),
+    capital_amount = numeric(),
+    capital_currency = character(),
+    derived_from_monthly = logical(),
+    derived_months_observed = integer(),
+    derived_months_expected = integer(),
+    derived_period_complete = logical(),
+    updated_at = character(),
+    updated_at_historical = character(),
+    updated_at_new = character()
   )
 }
 
-# ── Parse Virk firm records into employment rows ──────────────────────────────
+empty_production_unit_employment_table <- function() {
+  data.table(
+    cvr = character(),
+    p_nummer = character(),
+    year = integer(),
+    month = integer(),
+    employees_new = numeric(),
+    fte_new = numeric(),
+    employees_including_owners_new = numeric(),
+    employee_interval_new = character(),
+    fte_interval_new = character(),
+    employees_including_owners_interval_new = character(),
+    updated_at_new = character(),
+    period_start = character(),
+    period_end = character()
+  )
+}
 
-# Parse a Virk timestamp (YYYY-MM-DD...) into a Date; NA when absent.
+# -- Small utilities -----------------------------------------------------------
+
+`%||%` <- function(x, y) {
+  if (is.null(x) || length(x) == 0) y else x
+}
+
+first_nonmissing <- function(x) {
+  if (is.character(x)) {
+    keep <- !is.na(x) & nzchar(x)
+  } else {
+    keep <- !is.na(x)
+  }
+
+  if (any(keep)) {
+    x[which(keep)[1L]]
+  } else {
+    x[NA_integer_][1L]
+  }
+}
+
+safe_sum <- function(x) {
+  if (all(is.na(x))) NA_real_ else sum(x, na.rm = TRUE)
+}
+
+safe_mean <- function(x) {
+  if (all(is.na(x))) NA_real_ else mean(x, na.rm = TRUE)
+}
+
+safe_max_int <- function(x) {
+  x <- x[!is.na(x)]
+  if (length(x) == 0) NA_integer_ else as.integer(max(x))
+}
+
+safe_max_char <- function(x) {
+  x <- x[!is.na(x) & nzchar(x)]
+  if (length(x) == 0) NA_character_ else max(x)
+}
+
+spliced_source <- function(has_historical, has_new) {
+  if (has_historical && has_new) {
+    "historical_and_new"
+  } else if (has_historical) {
+    "historical"
+  } else if (has_new) {
+    "new"
+  } else {
+    NA_character_
+  }
+}
+
+derive_source <- function(x) {
+  x <- unique(x[!is.na(x) & nzchar(x)])
+
+  if (length(x) == 0) {
+    NA_character_
+  } else if (all(x == "historical")) {
+    "derived_historical_monthly"
+  } else if (all(x == "new")) {
+    "derived_new_monthly"
+  } else {
+    "derived_spliced_monthly"
+  }
+}
+
 virk_date <- function(x) {
   value <- virk_scalar(x)
 
@@ -119,7 +245,37 @@ virk_date <- function(x) {
   as.IDate(substr(value, 1L, 10L))
 }
 
-# Calendar start/end of a record's reporting period (annual/quarterly/monthly).
+period_contains <- function(record, date) {
+  if (is.na(date)) {
+    return(FALSE)
+  }
+
+  start <- virk_date(record$periode$gyldigFra)
+  end <- virk_date(record$periode$gyldigTil)
+
+  (is.na(start) || start <= date) && (is.na(end) || end >= date)
+}
+
+record_at_date <- function(records, date) {
+  if (is.null(records) || length(records) == 0 || is.na(date)) {
+    return(NULL)
+  }
+
+  matches <- vapply(records, period_contains, logical(1), date = date)
+  if (!any(matches)) {
+    return(NULL)
+  }
+
+  matching_records <- records[matches]
+  starts <- vapply(
+    matching_records,
+    function(record) as.character(virk_date(record$periode$gyldigFra)),
+    character(1)
+  )
+  starts[is.na(starts)] <- "0001-01-01"
+  matching_records[[which(starts == max(starts))[1L]]]
+}
+
 employment_period_bounds <- function(record, frequency) {
   year <- as.integer(virk_scalar(record$aar))
   quarter <- as.integer(virk_scalar(record$kvartal))
@@ -150,7 +306,24 @@ employment_period_bounds <- function(record, frequency) {
   )
 }
 
-# Firm existence (lifecycle) intervals, used by the "was it active?" checks.
+calendar_period_bounds <- function(year, frequency, quarter = NA_integer_) {
+  if (frequency == "quarterly_derived") {
+    quarter_start_month <- (quarter - 1L) * 3L + 1L
+    period_start <- as.IDate(sprintf("%04d-%02d-01", year, quarter_start_month))
+    period_end <- seq(period_start, by = "3 months", length.out = 2L)[2L] - 1L
+  } else {
+    period_start <- as.IDate(sprintf("%04d-01-01", year))
+    period_end <- as.IDate(sprintf("%04d-12-31", year))
+  }
+
+  list(
+    period_start = period_start,
+    period_end = period_end
+  )
+}
+
+# -- Company metadata parsing -------------------------------------------------
+
 extract_lifecycle_periods <- function(firm) {
   if (is.null(firm$livsforloeb) || length(firm$livsforloeb) == 0) {
     return(data.table(
@@ -171,7 +344,6 @@ extract_lifecycle_periods <- function(firm) {
   )
 }
 
-# Was the firm alive on a given date / at any point within a period?
 firm_exists_on <- function(lifecycle_periods, date) {
   if (is.na(date)) {
     return(NA)
@@ -196,53 +368,7 @@ firm_exists_during <- function(lifecycle_periods, period_start, period_end) {
   )
 }
 
-# Firm's registered status (active, bankrupt, ...) effective on a date.
-status_at_date <- function(firm, date) {
-  out <- list(
-    status_code = NA_character_,
-    status_text = NA_character_
-  )
-
-  if (is.null(firm$status) || length(firm$status) == 0 || is.na(date)) {
-    return(out)
-  }
-
-  status_periods <- rbindlist(
-    lapply(firm$status, function(record) {
-      data.table(
-        status_start = virk_date(record$periode$gyldigFra),
-        status_end = virk_date(record$periode$gyldigTil),
-        status_code = virk_scalar(record$statuskode),
-        status_text = virk_scalar(record$statustekst)
-      )
-    }),
-    use.names = TRUE,
-    fill = TRUE
-  )
-
-  matching_status <- status_periods[
-    !is.na(status_start) &
-      status_start <= date &
-      (is.na(status_end) | status_end >= date)
-  ]
-
-  if (nrow(matching_status) == 0) {
-    return(out)
-  }
-
-  list(
-    status_code = matching_status$status_code[1],
-    status_text = matching_status$status_text[1]
-  )
-}
-
-# Flatten one frequency's records into output rows, adding lifecycle + status.
-extract_employment_rows <- function(firm, records, frequency) {
-  if (is.null(records) || length(records) == 0) {
-    return(empty_employment_table())
-  }
-
-  lifecycle_periods <- extract_lifecycle_periods(firm)
+firm_lifecycle_bounds <- function(lifecycle_periods) {
   lifecycle_start_values <- lifecycle_periods$lifecycle_start[
     !is.na(lifecycle_periods$lifecycle_start)
   ]
@@ -250,88 +376,767 @@ extract_employment_rows <- function(firm, records, frequency) {
     !is.na(lifecycle_periods$lifecycle_end)
   ]
 
-  if (length(lifecycle_start_values) == 0) {
-    lifecycle_start <- as.IDate(NA_character_)
-  } else {
-    lifecycle_start <- min(lifecycle_start_values)
+  list(
+    lifecycle_start = if (length(lifecycle_start_values) == 0) {
+      as.IDate(NA_character_)
+    } else {
+      min(lifecycle_start_values)
+    },
+    lifecycle_end = if (length(lifecycle_end_values) == 0) {
+      as.IDate(NA_character_)
+    } else {
+      max(lifecycle_end_values)
+    }
+  )
+}
+
+status_at_date <- function(firm, date) {
+  out <- list(
+    status_code = NA_character_,
+    status_text = NA_character_
+  )
+  status_records <- firm$status %||% firm$virksomhedsstatus
+
+  if (is.null(status_records) || length(status_records) == 0 || is.na(date)) {
+    return(out)
   }
 
-  if (length(lifecycle_end_values) == 0) {
-    lifecycle_end <- as.IDate(NA_character_)
-  } else {
-    lifecycle_end <- max(lifecycle_end_values)
-  }
-  registration_date <- virk_scalar(firm$stiftelsesDato)
-
-  if (is.na(registration_date) || registration_date == "") {
-    registration_date <- as.character(lifecycle_start)
-  }
-
-  out <- rbindlist(
-    lapply(records, function(record) {
-      period_bounds <- employment_period_bounds(record, frequency)
-      status <- status_at_date(firm, period_bounds$period_end)
-
+  status_periods <- rbindlist(
+    lapply(status_records, function(record) {
       data.table(
-        cvr = format_virk_cvr(firm$cvrNummer),
-        firm_name = virk_scalar(firm$virksomhedMetadata$nyesteNavn$navn),
-        registration_date = registration_date,
-        frequency = frequency,
-        year = as.integer(virk_scalar(record$aar)),
-        quarter = as.integer(virk_scalar(record$kvartal)),
-        month = as.integer(virk_scalar(record$maaned)),
-        employees = as.numeric(virk_scalar(record$antalAnsatte)),
-        fte = as.numeric(virk_scalar(record$antalAarsvaerk)),
-        employees_including_owners = as.numeric(virk_scalar(record$antalInklusivEjere)),
-        employee_interval = virk_scalar(record$intervalKodeAntalAnsatte),
-        fte_interval = virk_scalar(record$intervalKodeAntalAarsvaerk),
-        employees_including_owners_interval = virk_scalar(record$intervalKodeAntalInklusivEjere),
-        period_start = as.character(period_bounds$period_start),
-        period_end = as.character(period_bounds$period_end),
-        lifecycle_start = as.character(lifecycle_start),
-        lifecycle_end = as.character(lifecycle_end),
-        exists_at_period_start = firm_exists_on(
-          lifecycle_periods,
-          period_bounds$period_start
-        ),
-        exists_at_period_end = firm_exists_on(
-          lifecycle_periods,
-          period_bounds$period_end
-        ),
-        exists_during_period = firm_exists_during(
-          lifecycle_periods,
-          period_bounds$period_start,
-          period_bounds$period_end
-        ),
-        status_code = status$status_code,
-        status_text = status$status_text,
-        updated_at = virk_scalar(record$sidstOpdateret)
+        status_start = virk_date(record$periode$gyldigFra),
+        status_end = virk_date(record$periode$gyldigTil),
+        status_code = virk_scalar(record$statuskode %||% record$status),
+        status_text = virk_scalar(record$statustekst %||% record$status)
       )
     }),
     use.names = TRUE,
     fill = TRUE
   )
 
+  matching_status <- status_periods[
+    (is.na(status_start) | status_start <= date) &
+      (is.na(status_end) | status_end >= date)
+  ]
+
+  if (nrow(matching_status) == 0) {
+    return(out)
+  }
+
+  setorder(matching_status, -status_start, na.last = TRUE)
+  list(
+    status_code = matching_status$status_code[1],
+    status_text = matching_status$status_text[1]
+  )
+}
+
+extract_attribute_periods <- function(firm, attribute_type) {
+  if (is.null(firm$attributter) || length(firm$attributter) == 0) {
+    return(data.table(
+      value = character(),
+      period_start = as.IDate(character()),
+      period_end = as.IDate(character())
+    ))
+  }
+
+  attrs <- firm$attributter[
+    vapply(
+      firm$attributter,
+      function(attribute) identical(virk_scalar(attribute$type), attribute_type),
+      logical(1)
+    )
+  ]
+
+  if (length(attrs) == 0) {
+    return(data.table(
+      value = character(),
+      period_start = as.IDate(character()),
+      period_end = as.IDate(character())
+    ))
+  }
+
+  rbindlist(
+    lapply(attrs, function(attribute) {
+      values <- attribute$vaerdier
+      if (is.null(values) || length(values) == 0) {
+        return(data.table())
+      }
+
+      rbindlist(
+        lapply(values, function(value_record) {
+          start <- virk_date(value_record$periode$gyldigFra)
+          end <- virk_date(value_record$periode$gyldigTil)
+
+          if (is.na(start)) {
+            start <- virk_date(attribute$periode$gyldigFra)
+          }
+          if (is.na(end)) {
+            end <- virk_date(attribute$periode$gyldigTil)
+          }
+
+          data.table(
+            value = virk_scalar(value_record$vaerdi),
+            period_start = start,
+            period_end = end
+          )
+        }),
+        use.names = TRUE,
+        fill = TRUE
+      )
+    }),
+    use.names = TRUE,
+    fill = TRUE
+  )
+}
+
+attribute_value_at <- function(attribute_periods, date) {
+  if (nrow(attribute_periods) == 0 || is.na(date)) {
+    return(NA_character_)
+  }
+
+  matches <- attribute_periods[
+    (is.na(period_start) | period_start <= date) &
+      (is.na(period_end) | period_end >= date)
+  ]
+
+  if (nrow(matches) == 0) {
+    return(NA_character_)
+  }
+
+  setorder(matches, -period_start, na.last = TRUE)
+  matches$value[1]
+}
+
+company_context <- function(firm) {
+  lifecycle_periods <- extract_lifecycle_periods(firm)
+  lifecycle_bounds <- firm_lifecycle_bounds(lifecycle_periods)
+  registration_date <- virk_scalar(firm$stiftelsesDato)
+
+  if (is.na(registration_date) || registration_date == "") {
+    registration_date <- as.character(lifecycle_bounds$lifecycle_start)
+  }
+
+  list(
+    cvr = format_virk_cvr(firm$cvrNummer),
+    firm_name = virk_scalar(firm$virksomhedMetadata$nyesteNavn$navn),
+    registration_date = registration_date,
+    lifecycle_periods = lifecycle_periods,
+    lifecycle_start = lifecycle_bounds$lifecycle_start,
+    lifecycle_end = lifecycle_bounds$lifecycle_end,
+    capital_periods = extract_attribute_periods(firm, "KAPITAL"),
+    capital_currency_periods = extract_attribute_periods(firm, "KAPITALVALUTA")
+  )
+}
+
+empty_company_context <- function(cvr) {
+  lifecycle_periods <- data.table(
+    lifecycle_start = as.IDate(NA_character_),
+    lifecycle_end = as.IDate(NA_character_)
+  )
+
+  list(
+    cvr = cvr,
+    firm_name = NA_character_,
+    registration_date = NA_character_,
+    lifecycle_periods = lifecycle_periods,
+    lifecycle_start = as.IDate(NA_character_),
+    lifecycle_end = as.IDate(NA_character_),
+    capital_periods = data.table(
+      value = character(),
+      period_start = as.IDate(character()),
+      period_end = as.IDate(character())
+    ),
+    capital_currency_periods = data.table(
+      value = character(),
+      period_start = as.IDate(character()),
+      period_end = as.IDate(character())
+    )
+  )
+}
+
+set_context_fields <- function(rows, firm, context) {
+  if (nrow(rows) == 0) {
+    return(rows)
+  }
+
+  for (i in seq_len(nrow(rows))) {
+    period_start <- as.IDate(rows$period_start[i])
+    period_end <- as.IDate(rows$period_end[i])
+    status <- if (is.null(firm)) {
+      list(status_code = NA_character_, status_text = NA_character_)
+    } else {
+      status_at_date(firm, period_end)
+    }
+
+    set(rows, i, "firm_name", context$firm_name)
+    set(rows, i, "registration_date", context$registration_date)
+    set(rows, i, "lifecycle_start", as.character(context$lifecycle_start))
+    set(rows, i, "lifecycle_end", as.character(context$lifecycle_end))
+    set(rows, i, "exists_at_period_start", firm_exists_on(context$lifecycle_periods, period_start))
+    set(rows, i, "exists_at_period_end", firm_exists_on(context$lifecycle_periods, period_end))
+    set(rows, i, "exists_during_period", firm_exists_during(
+      context$lifecycle_periods,
+      period_start,
+      period_end
+    ))
+    set(rows, i, "status_code", status$status_code)
+    set(rows, i, "status_text", status$status_text)
+
+    if (!is.null(firm)) {
+      form <- record_at_date(firm$virksomhedsform, period_end)
+      industry <- record_at_date(firm$hovedbranche, period_end)
+      secondary_1 <- record_at_date(firm$bibranche1, period_end)
+      secondary_2 <- record_at_date(firm$bibranche2, period_end)
+      secondary_3 <- record_at_date(firm$bibranche3, period_end)
+
+      set(rows, i, "legal_form_code", as.integer(virk_scalar(form$virksomhedsformkode)))
+      set(rows, i, "legal_form_short", virk_scalar(form$kortBeskrivelse))
+      set(rows, i, "legal_form_text", virk_scalar(form$langBeskrivelse))
+      set(rows, i, "industry_code", virk_scalar(industry$branchekode))
+      set(rows, i, "industry_text", virk_scalar(industry$branchetekst))
+      set(rows, i, "secondary_industry_1_code", virk_scalar(secondary_1$branchekode))
+      set(rows, i, "secondary_industry_1_text", virk_scalar(secondary_1$branchetekst))
+      set(rows, i, "secondary_industry_2_code", virk_scalar(secondary_2$branchekode))
+      set(rows, i, "secondary_industry_2_text", virk_scalar(secondary_2$branchetekst))
+      set(rows, i, "secondary_industry_3_code", virk_scalar(secondary_3$branchekode))
+      set(rows, i, "secondary_industry_3_text", virk_scalar(secondary_3$branchetekst))
+    }
+
+    capital_value <- attribute_value_at(context$capital_periods, period_end)
+    set(rows, i, "capital_amount", suppressWarnings(as.numeric(capital_value)))
+    set(rows, i, "capital_currency", attribute_value_at(
+      context$capital_currency_periods,
+      period_end
+    ))
+  }
+
+  rows
+}
+
+# -- Employment parsing --------------------------------------------------------
+
+extract_historical_employment_rows <- function(firm, records, frequency) {
+  if (is.null(records) || length(records) == 0) {
+    return(empty_employment_table())
+  }
+
+  context <- company_context(firm)
+  out <- rbindlist(
+    lapply(records, function(record) {
+      period_bounds <- employment_period_bounds(record, frequency)
+      employees <- as.numeric(virk_scalar(record$antalAnsatte))
+      fte <- as.numeric(virk_scalar(record$antalAarsvaerk))
+      employees_with_owners <- as.numeric(virk_scalar(record$antalInklusivEjere))
+      employee_interval <- virk_scalar(record$intervalKodeAntalAnsatte)
+      fte_interval <- virk_scalar(record$intervalKodeAntalAarsvaerk)
+      employees_with_owners_interval <- virk_scalar(record$intervalKodeAntalInklusivEjere)
+
+      data.table(
+        cvr = context$cvr,
+        firm_name = NA_character_,
+        registration_date = NA_character_,
+        frequency = frequency,
+        year = as.integer(virk_scalar(record$aar)),
+        quarter = as.integer(virk_scalar(record$kvartal)),
+        month = as.integer(virk_scalar(record$maaned)),
+        employees = employees,
+        fte = fte,
+        employees_including_owners = employees_with_owners,
+        employees_historical = employees,
+        fte_historical = fte,
+        employees_including_owners_historical = employees_with_owners,
+        employees_new = NA_real_,
+        fte_new = NA_real_,
+        employees_including_owners_new = NA_real_,
+        employee_interval = employee_interval,
+        fte_interval = fte_interval,
+        employees_including_owners_interval = employees_with_owners_interval,
+        employee_interval_historical = employee_interval,
+        fte_interval_historical = fte_interval,
+        employees_including_owners_interval_historical = employees_with_owners_interval,
+        employee_interval_new = NA_character_,
+        fte_interval_new = NA_character_,
+        employees_including_owners_interval_new = NA_character_,
+        employment_source = "historical",
+        has_historical_new_overlap = FALSE,
+        n_production_units_aggregated = NA_integer_,
+        n_production_units_nonmissing_employees = NA_integer_,
+        n_production_units_nonmissing_fte = NA_integer_,
+        period_start = as.character(period_bounds$period_start),
+        period_end = as.character(period_bounds$period_end),
+        lifecycle_start = NA_character_,
+        lifecycle_end = NA_character_,
+        exists_at_period_start = NA,
+        exists_at_period_end = NA,
+        exists_during_period = NA,
+        status_code = NA_character_,
+        status_text = NA_character_,
+        legal_form_code = NA_integer_,
+        legal_form_short = NA_character_,
+        legal_form_text = NA_character_,
+        industry_code = NA_character_,
+        industry_text = NA_character_,
+        secondary_industry_1_code = NA_character_,
+        secondary_industry_1_text = NA_character_,
+        secondary_industry_2_code = NA_character_,
+        secondary_industry_2_text = NA_character_,
+        secondary_industry_3_code = NA_character_,
+        secondary_industry_3_text = NA_character_,
+        capital_amount = NA_real_,
+        capital_currency = NA_character_,
+        derived_from_monthly = FALSE,
+        derived_months_observed = NA_integer_,
+        derived_months_expected = NA_integer_,
+        derived_period_complete = NA,
+        updated_at = virk_scalar(record$sidstOpdateret),
+        updated_at_historical = virk_scalar(record$sidstOpdateret),
+        updated_at_new = NA_character_
+      )
+    }),
+    use.names = TRUE,
+    fill = TRUE
+  )
+
+  set_context_fields(out, firm, context)
   setcolorder(out, names(empty_employment_table()))
   out
 }
 
-# All three frequencies (annual + quarterly + monthly) for one firm.
 extract_virk_employment_history <- function(firm) {
   rbindlist(
     list(
-      extract_employment_rows(firm, firm$aarsbeskaeftigelse, "annual"),
-      extract_employment_rows(firm, firm$kvartalsbeskaeftigelse, "quarterly"),
-      extract_employment_rows(firm, firm$maanedsbeskaeftigelse, "monthly")
+      extract_historical_employment_rows(firm, firm$aarsbeskaeftigelse, "annual"),
+      extract_historical_employment_rows(firm, firm$kvartalsbeskaeftigelse, "quarterly"),
+      extract_historical_employment_rows(firm, firm$maanedsbeskaeftigelse, "monthly")
     ),
     use.names = TRUE,
     fill = TRUE
   )
 }
 
-# ── Collect input CVRs and write output ──────────────────────────────────────
+production_unit_cvr_at <- function(unit, date) {
+  relation <- record_at_date(unit$virksomhedsrelation, date)
 
-# Unique, valid 8-digit CVRs across the four matched datasets.
+  if (is.null(relation) && !is.null(unit$virksomhedsrelation) &&
+      length(unit$virksomhedsrelation) > 0) {
+    relation <- unit$virksomhedsrelation[[1]]
+  }
+
+  format_virk_cvr(relation$cvrNummer)
+}
+
+extract_production_unit_new_employment <- function(unit) {
+  records <- unit$erstMaanedsbeskaeftigelse
+
+  if (is.null(records) || length(records) == 0) {
+    return(empty_production_unit_employment_table())
+  }
+
+  out <- rbindlist(
+    lapply(records, function(record) {
+      period_bounds <- employment_period_bounds(record, "monthly")
+      data.table(
+        cvr = production_unit_cvr_at(unit, period_bounds$period_end),
+        p_nummer = virk_scalar(unit$pNummer),
+        year = as.integer(virk_scalar(record$aar)),
+        month = as.integer(virk_scalar(record$maaned)),
+        employees_new = as.numeric(virk_scalar(record$antalAnsatte)),
+        fte_new = as.numeric(virk_scalar(record$antalAarsvaerk)),
+        employees_including_owners_new = as.numeric(virk_scalar(record$antalInklusivEjere)),
+        employee_interval_new = virk_scalar(record$intervalKodeAntalAnsatte),
+        fte_interval_new = virk_scalar(record$intervalKodeAntalAarsvaerk),
+        employees_including_owners_interval_new = virk_scalar(record$intervalKodeAntalInklusivEjere),
+        updated_at_new = virk_scalar(record$sidstOpdateret),
+        period_start = as.character(period_bounds$period_start),
+        period_end = as.character(period_bounds$period_end)
+      )
+    }),
+    use.names = TRUE,
+    fill = TRUE
+  )
+
+  out[!is.na(cvr) & grepl("^[0-9]{8}$", cvr)]
+}
+
+aggregate_production_unit_monthly <- function(production_units) {
+  if (length(production_units) == 0) {
+    return(data.table())
+  }
+
+  unit_rows <- rbindlist(
+    lapply(production_units, extract_production_unit_new_employment),
+    use.names = TRUE,
+    fill = TRUE
+  )
+
+  if (nrow(unit_rows) == 0) {
+    return(data.table())
+  }
+
+  unit_rows[
+    ,
+    .(
+      employees_new = safe_sum(employees_new),
+      fte_new = safe_sum(fte_new),
+      employees_including_owners_new = safe_sum(employees_including_owners_new),
+      employee_interval_new = if (uniqueN(p_nummer) == 1L) {
+        first_nonmissing(employee_interval_new)
+      } else {
+        NA_character_
+      },
+      fte_interval_new = if (uniqueN(p_nummer) == 1L) {
+        first_nonmissing(fte_interval_new)
+      } else {
+        NA_character_
+      },
+      employees_including_owners_interval_new = if (uniqueN(p_nummer) == 1L) {
+        first_nonmissing(employees_including_owners_interval_new)
+      } else {
+        NA_character_
+      },
+      n_production_units_aggregated = uniqueN(p_nummer),
+      n_production_units_nonmissing_employees = uniqueN(p_nummer[!is.na(employees_new)]),
+      n_production_units_nonmissing_fte = uniqueN(p_nummer[!is.na(fte_new)]),
+      updated_at_new = safe_max_char(updated_at_new)
+    ),
+    by = .(cvr, year, month, period_start, period_end)
+  ]
+}
+
+build_new_monthly_rows <- function(new_monthly, firms_by_cvr) {
+  if (nrow(new_monthly) == 0) {
+    return(empty_employment_table())
+  }
+
+  rows <- rbindlist(
+    lapply(split(new_monthly, by = "cvr", keep.by = TRUE), function(cvr_rows) {
+      cvr <- cvr_rows$cvr[1]
+      firm <- firms_by_cvr[[cvr]]
+      context <- if (is.null(firm)) empty_company_context(cvr) else company_context(firm)
+
+      out <- cvr_rows[
+        ,
+        .(
+          cvr = cvr,
+          firm_name = NA_character_,
+          registration_date = NA_character_,
+          frequency = "monthly",
+          year = year,
+          quarter = NA_integer_,
+          month = month,
+          employees = employees_new,
+          fte = fte_new,
+          employees_including_owners = employees_including_owners_new,
+          employees_historical = NA_real_,
+          fte_historical = NA_real_,
+          employees_including_owners_historical = NA_real_,
+          employees_new = employees_new,
+          fte_new = fte_new,
+          employees_including_owners_new = employees_including_owners_new,
+          employee_interval = employee_interval_new,
+          fte_interval = fte_interval_new,
+          employees_including_owners_interval = employees_including_owners_interval_new,
+          employee_interval_historical = NA_character_,
+          fte_interval_historical = NA_character_,
+          employees_including_owners_interval_historical = NA_character_,
+          employee_interval_new = employee_interval_new,
+          fte_interval_new = fte_interval_new,
+          employees_including_owners_interval_new = employees_including_owners_interval_new,
+          employment_source = "new",
+          has_historical_new_overlap = FALSE,
+          n_production_units_aggregated = n_production_units_aggregated,
+          n_production_units_nonmissing_employees = n_production_units_nonmissing_employees,
+          n_production_units_nonmissing_fte = n_production_units_nonmissing_fte,
+          period_start = period_start,
+          period_end = period_end,
+          lifecycle_start = NA_character_,
+          lifecycle_end = NA_character_,
+          exists_at_period_start = NA,
+          exists_at_period_end = NA,
+          exists_during_period = NA,
+          status_code = NA_character_,
+          status_text = NA_character_,
+          legal_form_code = NA_integer_,
+          legal_form_short = NA_character_,
+          legal_form_text = NA_character_,
+          industry_code = NA_character_,
+          industry_text = NA_character_,
+          secondary_industry_1_code = NA_character_,
+          secondary_industry_1_text = NA_character_,
+          secondary_industry_2_code = NA_character_,
+          secondary_industry_2_text = NA_character_,
+          secondary_industry_3_code = NA_character_,
+          secondary_industry_3_text = NA_character_,
+          capital_amount = NA_real_,
+          capital_currency = NA_character_,
+          derived_from_monthly = FALSE,
+          derived_months_observed = NA_integer_,
+          derived_months_expected = NA_integer_,
+          derived_period_complete = NA,
+          updated_at = updated_at_new,
+          updated_at_historical = NA_character_,
+          updated_at_new = updated_at_new
+        )
+      ]
+
+      set_context_fields(out, firm, context)
+    }),
+    use.names = TRUE,
+    fill = TRUE
+  )
+
+  setcolorder(rows, names(empty_employment_table()))
+  rows
+}
+
+collapse_employment_sources <- function(data) {
+  if (nrow(data) == 0) {
+    return(empty_employment_table())
+  }
+
+  key_cols <- c(
+    "cvr", "frequency", "year", "quarter", "month",
+    "period_start", "period_end"
+  )
+
+  collapse_cols <- setdiff(
+    names(empty_employment_table()),
+    c(
+      key_cols,
+      "employees", "fte", "employees_including_owners",
+      "employee_interval", "fte_interval", "employees_including_owners_interval",
+      "employment_source", "has_historical_new_overlap", "updated_at"
+    )
+  )
+
+  out <- data[
+    ,
+    lapply(.SD, first_nonmissing),
+    by = key_cols,
+    .SDcols = collapse_cols
+  ]
+
+  out[, employees := fifelse(!is.na(employees_historical), employees_historical, employees_new)]
+  out[, fte := fifelse(!is.na(fte_historical), fte_historical, fte_new)]
+  out[, employees_including_owners := fifelse(
+    !is.na(employees_including_owners_historical),
+    employees_including_owners_historical,
+    employees_including_owners_new
+  )]
+  out[, employee_interval := fifelse(
+    !is.na(employee_interval_historical),
+    employee_interval_historical,
+    employee_interval_new
+  )]
+  out[, fte_interval := fifelse(
+    !is.na(fte_interval_historical),
+    fte_interval_historical,
+    fte_interval_new
+  )]
+  out[, employees_including_owners_interval := fifelse(
+    !is.na(employees_including_owners_interval_historical),
+    employees_including_owners_interval_historical,
+    employees_including_owners_interval_new
+  )]
+  out[
+    ,
+    has_historical_new_overlap :=
+      (!is.na(employees_historical) | !is.na(fte_historical) |
+         !is.na(employees_including_owners_historical)) &
+      (!is.na(employees_new) | !is.na(fte_new) |
+         !is.na(employees_including_owners_new))
+  ]
+  out[
+    ,
+    employment_source := mapply(
+      spliced_source,
+      !is.na(employees_historical) | !is.na(fte_historical) |
+        !is.na(employees_including_owners_historical),
+      !is.na(employees_new) | !is.na(fte_new) |
+        !is.na(employees_including_owners_new)
+    )
+  ]
+  out[, updated_at := fifelse(
+    !is.na(updated_at_historical),
+    updated_at_historical,
+    updated_at_new
+  )]
+
+  setcolorder(out, names(empty_employment_table()))
+  out[]
+}
+
+make_derived_rows <- function(monthly_rows, firms_by_cvr, frequency) {
+  if (nrow(monthly_rows) == 0) {
+    return(empty_employment_table())
+  }
+
+  monthly <- copy(monthly_rows)
+
+  if (frequency == "quarterly_derived") {
+    monthly[, derived_quarter := as.integer((month - 1L) %/% 3L + 1L)]
+    grouping <- c("cvr", "year", "derived_quarter")
+    expected <- 3L
+  } else {
+    monthly[, derived_quarter := NA_integer_]
+    grouping <- c("cvr", "year")
+    expected <- 12L
+  }
+
+  derived <- monthly[
+    ,
+    .(
+      employees = safe_mean(employees),
+      fte = safe_mean(fte),
+      employees_including_owners = safe_mean(employees_including_owners),
+      employees_historical = safe_mean(employees_historical),
+      fte_historical = safe_mean(fte_historical),
+      employees_including_owners_historical = safe_mean(employees_including_owners_historical),
+      employees_new = safe_mean(employees_new),
+      fte_new = safe_mean(fte_new),
+      employees_including_owners_new = safe_mean(employees_including_owners_new),
+      employment_source = derive_source(employment_source),
+      has_historical_new_overlap = any(has_historical_new_overlap, na.rm = TRUE),
+      n_production_units_aggregated = safe_max_int(n_production_units_aggregated),
+      n_production_units_nonmissing_employees = safe_max_int(n_production_units_nonmissing_employees),
+      n_production_units_nonmissing_fte = safe_max_int(n_production_units_nonmissing_fte),
+      derived_months_observed = uniqueN(month),
+      updated_at_historical = safe_max_char(updated_at_historical),
+      updated_at_new = safe_max_char(updated_at_new)
+    ),
+    by = grouping
+  ]
+
+  if (frequency == "quarterly_derived") {
+    setnames(derived, "derived_quarter", "quarter")
+    derived[, month := NA_integer_]
+  } else {
+    derived[, quarter := NA_integer_]
+    derived[, month := NA_integer_]
+  }
+
+  derived[, frequency := frequency]
+  derived[, derived_from_monthly := TRUE]
+  derived[, derived_months_expected := expected]
+  derived[, derived_period_complete := derived_months_observed == expected]
+  derived[, employee_interval := NA_character_]
+  derived[, fte_interval := NA_character_]
+  derived[, employees_including_owners_interval := NA_character_]
+  derived[, employee_interval_historical := NA_character_]
+  derived[, fte_interval_historical := NA_character_]
+  derived[, employees_including_owners_interval_historical := NA_character_]
+  derived[, employee_interval_new := NA_character_]
+  derived[, fte_interval_new := NA_character_]
+  derived[, employees_including_owners_interval_new := NA_character_]
+  derived[, updated_at := fifelse(
+    !is.na(updated_at_historical),
+    updated_at_historical,
+    updated_at_new
+  )]
+
+  bounds <- mapply(
+    calendar_period_bounds,
+    derived$year,
+    derived$frequency,
+    derived$quarter,
+    SIMPLIFY = FALSE
+  )
+  derived[, period_start := vapply(bounds, function(x) as.character(x$period_start), character(1))]
+  derived[, period_end := vapply(bounds, function(x) as.character(x$period_end), character(1))]
+
+  derived[, `:=`(
+    firm_name = NA_character_,
+    registration_date = NA_character_,
+    lifecycle_start = NA_character_,
+    lifecycle_end = NA_character_,
+    exists_at_period_start = NA,
+    exists_at_period_end = NA,
+    exists_during_period = NA,
+    status_code = NA_character_,
+    status_text = NA_character_,
+    legal_form_code = NA_integer_,
+    legal_form_short = NA_character_,
+    legal_form_text = NA_character_,
+    industry_code = NA_character_,
+    industry_text = NA_character_,
+    secondary_industry_1_code = NA_character_,
+    secondary_industry_1_text = NA_character_,
+    secondary_industry_2_code = NA_character_,
+    secondary_industry_2_text = NA_character_,
+    secondary_industry_3_code = NA_character_,
+    secondary_industry_3_text = NA_character_,
+    capital_amount = NA_real_,
+    capital_currency = NA_character_
+  )]
+
+  out <- rbindlist(
+    lapply(split(derived, by = "cvr", keep.by = TRUE), function(cvr_rows) {
+      cvr <- cvr_rows$cvr[1]
+      firm <- firms_by_cvr[[cvr]]
+      context <- if (is.null(firm)) empty_company_context(cvr) else company_context(firm)
+      set_context_fields(cvr_rows, firm, context)
+    }),
+    use.names = TRUE,
+    fill = TRUE
+  )
+
+  setcolorder(out, names(empty_employment_table()))
+  out[]
+}
+
+add_derived_frequencies <- function(native_data, firms_by_cvr) {
+  monthly_rows <- native_data[frequency == "monthly"]
+
+  rbindlist(
+    list(
+      native_data,
+      make_derived_rows(monthly_rows, firms_by_cvr, "quarterly_derived"),
+      make_derived_rows(monthly_rows, firms_by_cvr, "annual_derived")
+    ),
+    use.names = TRUE,
+    fill = TRUE
+  )
+}
+
+# Splice the native and derived annual/quarterly series into a single continuous
+# per-firm series (annual_spliced / quarterly_spliced). For each period, prefer
+# the official native row where it exists; otherwise take the monthly-derived
+# row (which extends coverage past the native series' end, ~2019/2020 onward, and
+# fills any native gaps from 2015 on). The whole row is carried through, so
+# `derived_from_monthly` on a spliced row flags whether that observation came
+# from the derived series (TRUE) or the official native series (FALSE), and
+# `employment_source` keeps the underlying provenance.
+add_spliced_frequencies <- function(data) {
+  splice_one <- function(native_freq, derived_freq, out_freq, key) {
+    native  <- data[frequency == native_freq]
+    derived <- data[frequency == derived_freq]
+
+    if (nrow(native) == 0L && nrow(derived) == 0L) {
+      return(empty_employment_table())
+    }
+
+    # Derived rows for periods the native series does not already cover.
+    derived_fill <- if (nrow(native) == 0L) derived else derived[!native, on = key]
+
+    spliced <- rbindlist(list(native, derived_fill), use.names = TRUE, fill = TRUE)
+    spliced[, frequency := out_freq]
+    setcolorder(spliced, names(empty_employment_table()))
+    spliced
+  }
+
+  rbindlist(
+    list(
+      data,
+      splice_one("annual",    "annual_derived",    "annual_spliced",    c("cvr", "year")),
+      splice_one("quarterly", "quarterly_derived", "quarterly_spliced", c("cvr", "year", "quarter"))
+    ),
+    use.names = TRUE,
+    fill = TRUE
+  )
+}
+
+# -- Input CVRs and output writers --------------------------------------------
+
 read_matched_cvrs <- function(file_specs) {
   cvrs <- unlist(lapply(file_specs, function(spec) {
     if (!file.exists(spec$path)) {
@@ -355,7 +1160,6 @@ read_matched_cvrs <- function(file_specs) {
   sort(cvrs)
 }
 
-# Append rows to a CSV, writing the header only on the first write.
 append_employment_chunk <- function(data, path) {
   if (nrow(data) == 0) {
     return(invisible(NULL))
@@ -372,44 +1176,6 @@ append_employment_chunk <- function(data, path) {
   invisible(NULL)
 }
 
-# ── Build the Virk API request: fields to return + CVR term query ──
-virk_employment_source_fields <- function() {
-  c(
-    "Vrvirksomhed.cvrNummer",
-    "Vrvirksomhed.virksomhedMetadata.nyesteNavn",
-    "Vrvirksomhed.stiftelsesDato",
-    "Vrvirksomhed.livsforloeb",
-    "Vrvirksomhed.status",
-    "Vrvirksomhed.aarsbeskaeftigelse",
-    "Vrvirksomhed.kvartalsbeskaeftigelse",
-    "Vrvirksomhed.maanedsbeskaeftigelse"
-  )
-}
-
-virk_employment_query_body <- function(cvrs) {
-  body <- list(
-    size = length(cvrs),
-    query = list(
-      terms = setNames(
-        list(as.integer(cvrs)),
-        "Vrvirksomhed.cvrNummer"
-      )
-    )
-  )
-
-  body[["_source"]] <- virk_employment_source_fields()
-  body
-}
-
-# CVRs already recorded in the status file — used to resume an interrupted run.
-already_processed_cvrs <- function(path) {
-  if (!file.exists(path)) {
-    return(character())
-  }
-
-  unique(fread(path, select = "cvr", colClasses = "character")$cvr)
-}
-
 append_status_chunk <- function(data, path) {
   fwrite(
     data,
@@ -422,7 +1188,218 @@ append_status_chunk <- function(data, path) {
   invisible(NULL)
 }
 
-# ── Run: pull employment history in batches, writing results + status as we go ──
+already_processed_cvrs <- function(path) {
+  if (!file.exists(path)) {
+    return(character())
+  }
+
+  header <- names(fread(path, nrows = 0))
+  if (!"employment_pull_schema" %in% header) {
+    stop(
+      paste(
+        "Existing status file was created by an older employment pull schema:",
+        path,
+        "Set CVR_EMPLOYMENT_OVERWRITE=true or write to a new CVR_EMPLOYMENT_OUTPUT_FILE.",
+        sep = "\n"
+      ),
+      call. = FALSE
+    )
+  }
+
+  status <- fread(
+    path,
+    select = c("cvr", "employment_pull_schema"),
+    colClasses = "character"
+  )
+
+  unique(status[status$employment_pull_schema == employment_pull_schema, cvr])
+}
+
+validate_resume_state <- function(output_path, status_path, overwrite) {
+  if (overwrite) {
+    return(invisible(NULL))
+  }
+
+  if (file.exists(output_path) && !file.exists(status_path)) {
+    stop(
+      paste(
+        "Output exists but status file is missing:",
+        output_path,
+        "Set CVR_EMPLOYMENT_OVERWRITE=true or write to a new CVR_EMPLOYMENT_OUTPUT_FILE.",
+        sep = "\n"
+      ),
+      call. = FALSE
+    )
+  }
+
+  invisible(NULL)
+}
+
+# -- API query helpers ---------------------------------------------------------
+
+company_source_fields <- function() {
+  c(
+    "Vrvirksomhed.cvrNummer",
+    "Vrvirksomhed.virksomhedMetadata.nyesteNavn",
+    "Vrvirksomhed.stiftelsesDato",
+    "Vrvirksomhed.livsforloeb",
+    "Vrvirksomhed.status",
+    "Vrvirksomhed.virksomhedsstatus",
+    "Vrvirksomhed.aarsbeskaeftigelse",
+    "Vrvirksomhed.kvartalsbeskaeftigelse",
+    "Vrvirksomhed.maanedsbeskaeftigelse",
+    "Vrvirksomhed.virksomhedsform",
+    "Vrvirksomhed.hovedbranche",
+    "Vrvirksomhed.bibranche1",
+    "Vrvirksomhed.bibranche2",
+    "Vrvirksomhed.bibranche3",
+    "Vrvirksomhed.attributter"
+  )
+}
+
+company_query_body <- function(cvrs) {
+  body <- list(
+    size = length(cvrs),
+    query = list(
+      terms = setNames(
+        list(as.integer(cvrs)),
+        "Vrvirksomhed.cvrNummer"
+      )
+    )
+  )
+
+  body[["_source"]] <- company_source_fields()
+  body
+}
+
+production_unit_source_fields <- function() {
+  c(
+    "VrproduktionsEnhed.pNummer",
+    "VrproduktionsEnhed.virksomhedsrelation",
+    "VrproduktionsEnhed.erstMaanedsbeskaeftigelse"
+  )
+}
+
+production_unit_query_body <- function(cvrs, size) {
+  body <- list(
+    size = size,
+    query = list(
+      terms = setNames(
+        list(as.integer(cvrs)),
+        "VrproduktionsEnhed.virksomhedsrelation.cvrNummer"
+      )
+    ),
+    sort = list("_doc")
+  )
+
+  body[["_source"]] <- production_unit_source_fields()
+  body
+}
+
+virk_post_json_retry <- function(url,
+                                 body,
+                                 query = list(),
+                                 credentials,
+                                 max_attempts = 3L,
+                                 initial_sleep = 2) {
+  last_error <- NULL
+
+  for (attempt in seq_len(max_attempts)) {
+    result <- tryCatch(
+      virk_post_json(url, body, query = query, credentials = credentials),
+      error = function(error) {
+        last_error <<- error
+        NULL
+      }
+    )
+
+    if (!is.null(result)) {
+      return(result)
+    }
+
+    if (attempt < max_attempts) {
+      Sys.sleep(initial_sleep * attempt)
+    }
+  }
+
+  stop(last_error)
+}
+
+validate_search_result <- function(result, context) {
+  if (isTRUE(result$timed_out)) {
+    stop("Virk query timed out: ", context, call. = FALSE)
+  }
+
+  if (is.null(result$hits) || is.null(result$hits$hits)) {
+    stop("Unexpected Virk response structure: ", context, call. = FALSE)
+  }
+
+  invisible(TRUE)
+}
+
+fetch_companies <- function(cvrs, credentials) {
+  result <- virk_post_json_retry(
+    company_search_url,
+    company_query_body(cvrs),
+    credentials = credentials
+  )
+  validate_search_result(result, "company batch")
+
+  lapply(result$hits$hits, function(hit) {
+    hit$`_source`$Vrvirksomhed
+  })
+}
+
+fetch_production_units <- function(cvrs, credentials) {
+  result <- virk_post_json_retry(
+    production_unit_search_url,
+    production_unit_query_body(cvrs, scroll_size),
+    query = list(scroll = scroll_keepalive),
+    credentials = credentials
+  )
+  validate_search_result(result, "production-unit initial batch")
+
+  total_hits <- as.integer(result$hits$total %||% length(result$hits$hits))
+  scroll_id <- result$`_scroll_id`
+  hits <- result$hits$hits
+  all_hits <- hits
+
+  while (length(all_hits) < total_hits) {
+    if (is.null(scroll_id) || !nzchar(scroll_id)) {
+      stop("Missing scroll id before all production-unit hits were fetched.", call. = FALSE)
+    }
+
+    result <- virk_post_json_retry(
+      scroll_url,
+      list(scroll = scroll_keepalive, scroll_id = scroll_id),
+      credentials = credentials
+    )
+    validate_search_result(result, "production-unit scroll")
+
+    scroll_id <- result$`_scroll_id`
+    hits <- result$hits$hits
+
+    if (length(hits) == 0) {
+      break
+    }
+
+    all_hits <- c(all_hits, hits)
+  }
+
+  if (length(all_hits) != total_hits) {
+    stop(
+      "Production-unit scroll returned ", length(all_hits),
+      " hits, expected ", total_hits, ".",
+      call. = FALSE
+    )
+  }
+
+  lapply(all_hits, function(hit) {
+    hit$`_source`$VrproduktionsEnhed
+  })
+}
+
+# -- Run -----------------------------------------------------------------------
 
 all_cvrs <- read_matched_cvrs(matched_cvr_files)
 
@@ -440,6 +1417,8 @@ if (file.exists(status_file) && overwrite) {
   file.remove(status_file)
 }
 
+validate_resume_state(output_file, status_file, overwrite)
+
 processed_cvrs <- already_processed_cvrs(status_file)
 cvrs_to_pull <- setdiff(all_cvrs, processed_cvrs)
 
@@ -447,6 +1426,7 @@ cat("Matched CVRs found:", length(all_cvrs), "\n")
 cat("Already processed:", length(processed_cvrs), "\n")
 cat("Remaining CVRs to pull:", length(cvrs_to_pull), "\n")
 cat("Batch size:", batch_size, "\n")
+cat("Production-unit scroll size:", scroll_size, "\n")
 cat("Output file:", output_file, "\n")
 cat("Status file:", status_file, "\n")
 
@@ -455,24 +1435,38 @@ if (length(cvrs_to_pull) == 0) {
   quit(save = "no")
 }
 
-search_url <- "http://distribution.virk.dk/cvr-permanent/virksomhed/_search"
+company_search_url <- "http://distribution.virk.dk/cvr-permanent/virksomhed/_search"
+production_unit_search_url <- "http://distribution.virk.dk/cvr-permanent/produktionsenhed/_search"
+scroll_url <- "http://distribution.virk.dk/_search/scroll"
 credentials <- get_virk_credentials()
+
 timed <- system.time({
   for (start in seq(1L, length(cvrs_to_pull), by = batch_size)) {
     end <- min(start + batch_size - 1L, length(cvrs_to_pull))
     cvr_batch <- cvrs_to_pull[start:end]
 
-    result <- virk_post_json(
-      search_url,
-      virk_employment_query_body(cvr_batch),
-      credentials = credentials
-    )
+    firms <- fetch_companies(cvr_batch, credentials)
+    returned_cvrs <- vapply(firms, function(firm) {
+      format_virk_cvr(firm$cvrNummer)
+    }, character(1))
+    firms_by_cvr <- setNames(firms, returned_cvrs)
 
-    firms <- lapply(result$hits$hits, function(hit) {
-      hit$`_source`$Vrvirksomhed
-    })
+    production_units <- fetch_production_units(cvr_batch, credentials)
+    unit_cvrs <- vapply(production_units, function(unit) {
+      relation <- unit$virksomhedsrelation
+      if (is.null(relation) || length(relation) == 0) {
+        return(NA_character_)
+      }
+      format_virk_cvr(relation[[1]]$cvrNummer)
+    }, character(1))
+    production_units_by_cvr <- data.table(
+      cvr = unit_cvrs,
+      p_nummer = vapply(production_units, function(unit) {
+        virk_scalar(unit$pNummer)
+      }, character(1))
+    )[!is.na(cvr)]
 
-    employment_data <- if (length(firms) == 0) {
+    historical_data <- if (length(firms) == 0) {
       empty_employment_table()
     } else {
       rbindlist(
@@ -482,34 +1476,91 @@ timed <- system.time({
       )
     }
 
+    new_monthly <- aggregate_production_unit_monthly(production_units)
+    # Keep only CVRs in this batch. A shared/transferred production unit is
+    # matched under every CVR it was ever related to, and each month is
+    # attributed to the CVR that owned the unit then - which may be an
+    # out-of-batch CVR. Writing those out-of-batch rows here duplicates that
+    # CVR's employment when it is later processed in its own batch (its own
+    # batch already returns all its production units and attributes its own
+    # months). So drop the leaked, out-of-batch attributions.
+    if (nrow(new_monthly) > 0) {
+      new_monthly <- new_monthly[cvr %chin% cvr_batch]
+    }
+    new_monthly_data <- build_new_monthly_rows(new_monthly, firms_by_cvr)
+    native_data <- collapse_employment_sources(
+      rbindlist(
+        list(historical_data, new_monthly_data),
+        use.names = TRUE,
+        fill = TRUE
+      )
+    )
+    employment_data <- add_derived_frequencies(native_data, firms_by_cvr)
+    employment_data <- add_spliced_frequencies(employment_data)
+    setorder(employment_data, cvr, frequency, year, quarter, month)
+
     append_employment_chunk(employment_data, output_file)
 
-    # Per-CVR outcome for this batch (found in Virk?, rows written) -> status file.
-    returned_cvrs <- vapply(firms, function(firm) {
-      format_virk_cvr(firm$cvrNummer)
-    }, character(1))
-
-    employment_rows_by_cvr <- employment_data[, .(employment_rows = .N), by = cvr]
-    status_data <- data.table(cvr = cvr_batch)
-    status_data[, pulled_at := format(Sys.time(), "%Y-%m-%d %H:%M:%S")]
-    status_data[, found_in_virk := cvr %in% returned_cvrs]
-    status_data <- employment_rows_by_cvr[
-      status_data,
-      on = "cvr"
+    rows_by_cvr <- employment_data[
+      ,
+      .(
+        employment_rows = .N,
+        historical_rows = sum(
+          !is.na(employees_historical) |
+            !is.na(fte_historical) |
+            !is.na(employees_including_owners_historical)
+        ),
+        new_monthly_rows = sum(
+          frequency == "monthly" &
+            (!is.na(employees_new) |
+               !is.na(fte_new) |
+               !is.na(employees_including_owners_new))
+        ),
+        derived_rows = sum(frequency %chin% c("annual_derived", "quarterly_derived"))
+      ),
+      by = cvr
     ]
+    production_units_returned <- production_units_by_cvr[
+      ,
+      .(production_units_returned = uniqueN(p_nummer)),
+      by = cvr
+    ]
+
+    status_data <- data.table(cvr = cvr_batch)
+    schema_version <- employment_pull_schema
+    status_data[, pulled_at := format(Sys.time(), "%Y-%m-%d %H:%M:%S")]
+    status_data[, employment_pull_schema := schema_version]
+    status_data[, found_in_virk := cvr %in% returned_cvrs]
+    status_data[, found_in_production_units := cvr %in% production_units_by_cvr$cvr]
+    status_data <- rows_by_cvr[status_data, on = "cvr"]
+    status_data <- production_units_returned[status_data, on = "cvr"]
     status_data[is.na(employment_rows), employment_rows := 0L]
-    status_data <- status_data[, .(
-      cvr,
-      pulled_at,
-      found_in_virk,
-      employment_rows
-    )]
+    status_data[is.na(historical_rows), historical_rows := 0L]
+    status_data[is.na(new_monthly_rows), new_monthly_rows := 0L]
+    status_data[is.na(derived_rows), derived_rows := 0L]
+    status_data[is.na(production_units_returned), production_units_returned := 0L]
+    status_data <- status_data[
+      ,
+      .(
+        cvr,
+        pulled_at,
+        employment_pull_schema,
+        found_in_virk,
+        found_in_production_units,
+        employment_rows,
+        historical_rows,
+        new_monthly_rows,
+        derived_rows,
+        production_units_returned
+      )
+    ]
 
     append_status_chunk(status_data, status_file)
 
     cat(
       "Processed batch", start, "-", end,
       "| firms returned:", length(firms),
+      "| production units returned:", length(production_units),
       "| rows written:", nrow(employment_data), "\n"
     )
   }
