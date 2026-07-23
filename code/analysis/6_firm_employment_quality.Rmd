@@ -89,7 +89,7 @@ data_ot_buyers <- readRDS(file.path(clean_data_dir, "clean_buyer_data_ot_name_ma
 data_kfst_buyers <- readRDS(file.path(clean_data_dir, "clean_buyer_data_kfst_name_matched.rds")) %>% 
   mutate(data_source = "KFST")
 data_tender <- rbindlist(list(data_ot, data_kfst), fill = TRUE, ignore.attr = TRUE) %>% 
-  select(data_source, tender_id, lot_id, award_date, winner_cvr_final, tender_amount, lot_amount, contract_type, cpv_category, cpv_sector)
+  select(data_source, tender_id, lot_id, award_date, winner_cvr_final, tender_amount, lot_amount, contract_type, cpv_category, cpv_sector, flag_awarded)
 unique_cvrs <- unique(data_tender$winner_cvr_final)
 
 
@@ -248,9 +248,9 @@ plot_es <- function(models, main, xlab = "Quarters relative to contract win") {
 }
 ```
 
-## Annual {.tabset}
+## Annual (unbalanced) {.tabset}
 
-Event studies around the **first** tender award (employment relative to the award year). Click through the tabs for each sample.
+Event studies around the **first** tender award (employment relative to the award year). Click through the tabs for each sample. These use an **unbalanced** panel — the set of firms identifying each event-year coefficient shrinks as you move away from the award, which widens the confidence intervals at the window edges.
 
 ```{r tender-award-estudy-data, include=FALSE}
 
@@ -258,7 +258,12 @@ Event studies around the **first** tender award (employment relative to the awar
 ## Get unique events
 setDT(data_tender)
 setorder(data_tender, winner_cvr_final, data_source, award_date)
-valid_winner_events <- data_tender[winner_cvr_final %in% coverage_cvrs[firm_role == "Winner"]$cvr, ]
+## Awarded contracts only: drop tenders that were annulled / never awarded
+## (flag_awarded is a tender/lot-level flag from the processing scripts). Applied
+## to the event universe here, so it propagates to every event study below
+## (annual estudy_data and quarterly estudy_all_events).
+valid_winner_events <- data_tender[winner_cvr_final %in% coverage_cvrs[firm_role == "Winner"]$cvr &
+                                     flag_awarded == TRUE, ]
 valid_winner_events <- unique(valid_winner_events, by = c("winner_cvr_final", "award_date"))
 
 ## Create event identifier (chronological: event_id == 1 is the earliest award).
@@ -283,16 +288,18 @@ valid_winner_events[, isolated_event := (is.na(gap_prev) | gap_prev > 4) &
 firm_data[, winner_cvr_final := sprintf("%08d", as.integer(cvr))]
 
 ## Join every event to each firms employment history
-firm_data_annual <- firm_data[frequency == "annual", ]
+## Use the spliced annual series (official native <=2018, monthly-derived after),
+## so post-award coverage runs to ~2026 instead of dying at 2018.
+firm_data_annual <- firm_data[frequency == "annual_spliced", ]
 estudy_data <- firm_data_annual[valid_winner_events, on = "winner_cvr_final", allow.cartesian = TRUE]
 
 ## Create event time
 estudy_data[, award_year := year(award_date)]
 estudy_data[, event_year := year - award_year]
 estudy_data[, event_year_binned := fcase(
-  event_year <= -5, -5,
-  event_year >= 5, 5,
-  default = event_year  
+  event_year <= -5, -5L,
+  event_year >= 5, 5L,
+  default = as.integer(event_year)
 )]
 
 ## Order more nicely
@@ -462,7 +469,10 @@ Quarterly event studies. The **First award** tab uses the first award per firm; 
 ```{r qtr-estudy_data, include=FALSE}
 
 ## Join every event to each firms employment history
-firm_data_qtr <- firm_data[frequency == "quarterly", ]
+## Spliced quarterly series (native <=2019, monthly-derived after). NB: native
+## quarterly rarely reports headcount, so quarterly_spliced FTE is continuous but
+## headcount is sparse before 2020 (see report).
+firm_data_qtr <- firm_data[frequency == "quarterly_spliced", ]
 estudy_data <- firm_data_qtr[valid_winner_events,
                                 on = "winner_cvr_final",
                                 allow.cartesian = TRUE]
@@ -479,9 +489,9 @@ estudy_data[, event_quarter       := obs_quarter_index - award_quarter_index]
 
 # Bin
 estudy_data[, event_quarter_binned := fcase(
-  event_quarter >= 8, 8,
-  event_quarter <= -8, -8,
-  default = event_quarter
+  event_quarter >= 8, 8L,
+  event_quarter <= -8, -8L,
+  default = as.integer(event_quarter)
 )]
 
 ```
@@ -529,7 +539,7 @@ models_asinh  <- feols(c(asinh_fte, asinh_emp) ~ i(event_quarter, ref = -1) |
                        cluster = ~winner_cvr_final, data = estudy_all_events)
 ```
 
-### First award
+### First award (unbalanced)
 
 Employment tends to fall after the first tender award. This is likely biased by firms dying as time passes.
 
@@ -545,7 +555,7 @@ plot_es(models, "Effect on employment",
         xlab = "Quarters relative to first contract win")
 ```
 
-### By agreement type
+### By agreement type (unbalanced)
 Compares across framework agreements and public contracts. I hypothesise that Services behaves more like a demand shock that Works or Supplies, since it is likely more labour intensive.
 
 ```{r contract-type-estudy-qtr}
@@ -572,7 +582,7 @@ plot_es(models_by_type[sample = "Public contract"],
 
 ```
 
-### By work category
+### By work category (unbalanced)
 Compares across tenders for 'Works', 'Services' and 'Supplies'. I hypothesise that Services and Works behaves more like a demand shock than Supplies, since they are likely more labour intensive.
 
 ```{r work-category-estudy-qtr}
@@ -604,21 +614,230 @@ plot_es(models_by_work_cat[sample = "Supplies"],
 ```
 
 
-### All isolated events — levels
+### All isolated events — levels (balanced)
 
 ```{r qtr-es-levels, fig.align='center'}
 plot_es(models_levels, "Effect on employment (levels); all isolated events")
 ```
 
-### All isolated events — log
+### All isolated events — log (balanced)
 
 ```{r qtr-es-log, fig.align='center'}
 plot_es(models_log, "Effect on log employment; all isolated events")
 ```
 
-### All isolated events — asinh
+### All isolated events — asinh (balanced)
 
 ```{r qtr-es-asinh, fig.align='center'}
 plot_es(models_asinh, "Effect on asinh(employment); all isolated events")
+```
+
+## Balanced — isolated events, all awards {.tabset}
+
+These event studies use **all** tender awards (every award per firm, not only the
+first). An award enters only if it satisfies all three
+conditions:
+
+1. **Isolated** — the firm has no *other* award inside the event window on either
+   side (annual: no other award within 1 year; quarterly: within 4 quarters), so
+   the window reflects this one award rather than a pile-up of nearby awards.
+2. **Fully in-sample** — the award's entire window falls inside the observed
+   employment panel, dropping events near the start or end of the sample where the
+   window would be truncated.
+3. **Balanced with positive employment** — the firm is observed with **FTE > 0 and
+   headcount > 0 in every period** of the window. This delivers a truly balanced
+   panel and, by construction, drops any event with a zero-employment period.
+
+The annual study uses a short ±1-year window (event years −1, 0, +1 only), so the
+coefficients come from a simple, well-populated regression; the quarterly study
+uses a ±4-quarter window. Firm and calendar fixed effects match the corresponding unbalanced studies
+above (annual: firm + year; quarterly: firm + year + quarter-of-year), with
+standard errors clustered by firm.
+
+```{r balanced-isolated-setup, include=FALSE}
+## Rebuild the annual and quarterly firm-data splits (the shared `estudy_data`
+## object was repurposed by the quarterly chunk above).
+firm_data_annual <- firm_data[frequency == "annual_spliced", ]
+firm_data_qtr    <- firm_data[frequency == "quarterly_spliced", ]
+
+## Award year on the event universe. award_qidx / gap_* were computed when the
+## universe was built; here we add a year-based spacing for the annual window.
+valid_winner_events[, award_year := year(award_date)]
+setorder(valid_winner_events, winner_cvr_final, award_year, award_date)
+valid_winner_events[, ygap_prev := award_year - shift(award_year), by = winner_cvr_final]
+valid_winner_events[, ygap_next := shift(award_year, type = "lead") - award_year, by = winner_cvr_final]
+
+## Isolated for the annual (+/-1y) window: no other award by the same firm within
+## 1 year on either side (an award exactly 1 year away lands on the window edge,
+## so isolation requires a gap strictly greater than 1 year).
+valid_winner_events[, isolated_event_annual :=
+                      (is.na(ygap_prev) | ygap_prev > 1) &
+                      (is.na(ygap_next) | ygap_next > 1)]
+
+## Helper: from a stacked (firm x event x period) table, keep only events observed
+## with strictly positive employment in EVERY period of `window`, and return the
+## balanced rows. This enforces balance and the "no zero-employment period" rule
+## in one step (a zero/NA period is dropped, so the event then fails the count).
+balance_positive <- function(dt, period_col, window) {
+  d <- dt[get(period_col) %in% window]
+  d[, ok := !is.na(fte) & !is.na(employees) & fte > 0 & employees > 0]
+  keep <- d[ok == TRUE, .(n = uniqueN(get(period_col))), by = event_uid][n == length(window)]
+  d[ok == TRUE][event_uid %in% keep$event_uid]
+}
+
+# ---- Annual, isolated, balanced, +/-1 year ---------------------------------
+window_years <- -2:2
+ann_bounds   <- range(firm_data_annual$year, na.rm = TRUE)
+
+ann <- firm_data_annual[valid_winner_events, on = "winner_cvr_final", allow.cartesian = TRUE]
+ann <- ann[!is.na(year)]
+ann[, event_year := year - award_year]
+ann[, event_uid  := paste(winner_cvr_final, event_id, sep = "_")]
+
+## (1) isolated + (2) full window inside the observed panel
+ann <- ann[isolated_event_annual == TRUE &
+             award_year - max(window_years) >= ann_bounds[1] &
+             award_year + max(window_years) <= ann_bounds[2]]
+
+## (3) balanced with positive employment in every window year
+ann_balanced <- balance_positive(ann, "event_year", window_years)
+
+m_ann_balanced <- feols(c(log(fte), log(employees)) ~ i(event_year, ref = -1) |
+                          year + winner_cvr_final,
+                        cluster = ~winner_cvr_final, data = ann_balanced)
+
+# ---- Quarterly, isolated, balanced, +/-4 quarters --------------------------
+window_quarters <- -4:4
+qtr_bounds <- range(firm_data_qtr$year * 4 + firm_data_qtr$quarter, na.rm = TRUE)
+
+qtr <- firm_data_qtr[valid_winner_events, on = "winner_cvr_final", allow.cartesian = TRUE]
+qtr <- qtr[!is.na(year)]
+qtr[, obs_qidx      := year * 4 + quarter]
+qtr[, award_qidx_e  := award_year * 4 + quarter(award_date)]
+qtr[, event_quarter := obs_qidx - award_qidx_e]
+qtr[, event_uid     := paste(winner_cvr_final, event_id, sep = "_")]
+
+## (1) isolated (reuse the +/-4 quarter isolated_event) + (2) window in-sample
+qtr <- qtr[isolated_event == TRUE &
+             award_qidx_e - max(window_quarters) >= qtr_bounds[1] &
+             award_qidx_e + max(window_quarters) <= qtr_bounds[2]]
+
+## (3) balanced with positive employment in every window quarter
+qtr_balanced <- balance_positive(qtr, "event_quarter", window_quarters)
+
+m_qtr_balanced <- feols(c(log(fte), log(employees)) ~ i(event_quarter, ref = -1) |
+                          winner_cvr_final + year + quarter,
+                        cluster = ~winner_cvr_final, data = qtr_balanced)
+
+## Retained sample sizes for the two balanced, isolated-event panels
+balanced_sizes <- data.table(
+  Sample = c("Annual (+/-1 year)", "Quarterly (+/-4 quarters)"),
+  Events = c(uniqueN(ann_balanced$event_uid),        uniqueN(qtr_balanced$event_uid)),
+  Firms  = c(uniqueN(ann_balanced$winner_cvr_final), uniqueN(qtr_balanced$winner_cvr_final)),
+  Obs    = c(nrow(ann_balanced),                     nrow(qtr_balanced))
+)
+```
+
+```{r balanced-isolated-sizes}
+kable(balanced_sizes,
+      caption = "Balanced, isolated-event samples (all awards, positive employment throughout the window)")
+```
+
+
+### Annual (±1 year)
+
+Balanced only on event years −1, 0, +1 (positive employment in all three), so the coefficients on years 0 and +1 (relative to −1) come from a simple, fixed-composition regression.
+
+```{r balanced-annual-es, fig.align='center'}
+plot_es(m_ann_balanced,
+        "Effect on employment; balanced isolated events (all awards)",
+        xlab = "Years relative to contract win")
+```
+
+### Quarterly (±4 quarters)
+
+```{r balanced-qtr-es, fig.align='center'}
+plot_es(m_qtr_balanced,
+        "Effect on employment; balanced isolated events (all awards)",
+        xlab = "Quarters relative to contract win")
+```
+
+## Balanced — all awards, overlaps allowed {.tabset}
+
+Same balanced construction as the section above — all awards; **FTE > 0 and headcount > 0 in every window period**; events whose window would run past the sample edges are dropped — **but without the isolation requirement**. An award is kept even if the same firm won other tenders inside the window. This substantially expands the sample; the trade-off is that a given window can be contaminated by the firm's other awards. The annual window is **±2 years**; the quarterly window stays at ±4 quarters. Fixed effects and clustering are unchanged (annual: firm + year; quarterly: firm + year + quarter-of-year; clustered by firm).(A wider annual window is not viable here: the annual employment series ends in 2018 while awards are concentrated in 2016 and later, so requiring several years of *post*-award annual data leaves almost no balanced events beyond ±2.)
+
+```{r balanced-nonisolated-setup, include=FALSE}
+## Non-isolated counterpart of the section above: same balance + in-sample
+## screens, but no isolation filter, so overlapping award windows are allowed.
+## Reuses balance_positive(), firm_data_annual/qtr, valid_winner_events (with
+## award_year) and the panel bounds computed in the isolated setup chunk.
+
+# ---- Annual, all awards (overlaps allowed), balanced, +/-2 years -----------
+window_years_all <- -2:2
+
+ann_all <- firm_data_annual[valid_winner_events, on = "winner_cvr_final", allow.cartesian = TRUE]
+ann_all <- ann_all[!is.na(year)]
+ann_all[, event_year := year - award_year]
+ann_all[, event_uid  := paste(winner_cvr_final, event_id, sep = "_")]
+
+## full window inside the observed panel (no isolation filter)
+ann_all <- ann_all[award_year - max(window_years_all) >= ann_bounds[1] &
+                     award_year + max(window_years_all) <= ann_bounds[2]]
+
+ann_balanced_all <- balance_positive(ann_all, "event_year", window_years_all)
+
+m_ann_balanced_all <- feols(c(log(fte), log(employees)) ~ i(event_year, ref = -1) |
+                              year + winner_cvr_final,
+                            cluster = ~winner_cvr_final, data = ann_balanced_all)
+
+# ---- Quarterly, all awards (overlaps allowed), balanced, +/-4 quarters -----
+window_quarters_all <- -4:4
+
+qtr_all <- firm_data_qtr[valid_winner_events, on = "winner_cvr_final", allow.cartesian = TRUE]
+qtr_all <- qtr_all[!is.na(year)]
+qtr_all[, obs_qidx      := year * 4 + quarter]
+qtr_all[, award_qidx_e  := award_year * 4 + quarter(award_date)]
+qtr_all[, event_quarter := obs_qidx - award_qidx_e]
+qtr_all[, event_uid     := paste(winner_cvr_final, event_id, sep = "_")]
+
+qtr_all <- qtr_all[award_qidx_e - max(window_quarters_all) >= qtr_bounds[1] &
+                    award_qidx_e + max(window_quarters_all) <= qtr_bounds[2]]
+
+qtr_balanced_all <- balance_positive(qtr_all, "event_quarter", window_quarters_all)
+
+m_qtr_balanced_all <- feols(c(log(fte), log(employees)) ~ i(event_quarter, ref = -1) |
+                             winner_cvr_final + year + quarter,
+                           cluster = ~winner_cvr_final, data = qtr_balanced_all)
+
+## Retained sample sizes for the two balanced, all-award panels
+balanced_all_sizes <- data.table(
+  Sample = c("Annual (+/-2 years)", "Quarterly (+/-4 quarters)"),
+  Events = c(uniqueN(ann_balanced_all$event_uid),        uniqueN(qtr_balanced_all$event_uid)),
+  Firms  = c(uniqueN(ann_balanced_all$winner_cvr_final), uniqueN(qtr_balanced_all$winner_cvr_final)),
+  Obs    = c(nrow(ann_balanced_all),                     nrow(qtr_balanced_all))
+)
+```
+
+```{r balanced-nonisolated-sizes}
+kable(balanced_all_sizes,
+      caption = "Balanced samples, all awards (overlaps allowed, positive employment throughout the window)")
+```
+
+### Annual (±2 years)
+
+Balanced on event years −2…+2 (positive employment in all five), all awards, overlaps allowed.
+
+```{r balanced-annual-all-es, fig.align='center'}
+plot_es(m_ann_balanced_all,
+        "Effect on log(e); balanced, all awards (overlaps allowed)",
+        xlab = "Years relative to contract win")
+```
+
+### Quarterly (±4 quarters)
+
+```{r balanced-qtr-all-es, fig.align='center'}
+plot_es(m_qtr_balanced_all,
+        "Effect on log(e); balanced, all awards (overlaps allowed)",
+        xlab = "Quarters relative to contract win")
 ```
 
