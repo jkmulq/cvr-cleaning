@@ -575,7 +575,8 @@ clean_winner_data <- clean_winner_data %>%
 clean_winner_data <- clean_winner_data %>%
   mutate(
     flag_foreign_winner = coalesce(
-      !is.na(winner_country) & winner_country != "" & winner_country != "DK",
+      !is.na(winner_country) & trimws(winner_country) != "" &
+        toupper(trimws(winner_country)) != "DK",
       FALSE
     )
   )
