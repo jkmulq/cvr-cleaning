@@ -77,7 +77,19 @@ remaining_original <- remaining
 
 # Table to append matches at each step.
 # Matched rows are removed from remaining (just as in matching.ipynb).
-matched <- data.table()
+# Initialised with the full output schema (not a bare data.table()) so the
+# update-join onto winner_data below still works when every step finds zero
+# matches: the *_name_match* columns are then created as typed NA.
+matched <- data.table(
+  match_row_id            = integer(0),
+  cvr_name_match          = character(0),
+  registered_name_match   = character(0),
+  name_match_source       = character(0),
+  name_match_step         = integer(0),
+  name_match_method       = character(0),
+  name_match_score        = numeric(0),
+  name_match_n_candidates = integer(0)
+)
 
 # 3 Exact matching
 ## 3.1 Match on lightly prepared name and firm type
