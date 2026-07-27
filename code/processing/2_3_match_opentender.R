@@ -354,6 +354,13 @@ name_partition_summary <- rbindlist(
   fill = TRUE
 )
 
+# NOTE (replication): this assumes at least one eligible winner produced a
+# partition, which holds for the current data. If a future/subset input yields
+# NO partitions, partition_tables is empty and this rbindlist returns a
+# 0-column table, so the segment-preparation block below (segment_text,
+# segment_match_id, match_date) would error with "object not found". If that
+# happens, guard the segment stage with `if (nrow(name_partition_segments) > 0)`
+# and seed empty unique_partition_ids / separated_name_segments tables.
 name_partition_segments <- rbindlist(
   partition_tables,
   use.names = TRUE,
