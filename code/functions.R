@@ -729,9 +729,20 @@ select_preferred_exact_match <- function(candidates, step) {
   # Remove candidates whose registered-name dates are incompatible
   candidates <- keep_valid_dates(candidates)
   
-  # If empty return an empty data.table
+  # If empty, return an empty table WITH the output schema (not a bare
+  # data.table()), so downstream anti-joins on `match_row_id` and rbinds still
+  # work when a step finds no candidates.
   if (nrow(candidates) == 0) {
-    return(data.table())
+    return(data.table(
+      match_row_id = integer(0),
+      cvr_name_match = character(0),
+      registered_name_match = character(0),
+      name_match_source = character(0),
+      name_match_step = integer(0),
+      name_match_method = character(0),
+      name_match_score = numeric(0),
+      name_match_n_candidates = integer(0)
+    ))
   }
   
   # Record whether the CVR name was active on the tender date
