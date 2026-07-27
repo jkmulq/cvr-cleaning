@@ -17,12 +17,72 @@ export PROJECT_DIR
 
 cd "$PROJECT_DIR"
 
+# ── Run log + timing ─────────────────────────────────────────────────────────
+# Mirror all stdout/stderr to a timestamped log under logs/ (override with
+# LOG_DIR=...), and time the whole pipeline plus each step. A summary of per-step
+# timings and the total runtime is printed on exit (success, early exit, or
+# failure) via an EXIT trap.
+LOG_DIR="${LOG_DIR:-$PROJECT_DIR/logs}"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/replication_$(date +%Y%m%d_%H%M%S).log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+PIPELINE_START_EPOCH=$(date +%s)
+
+# Parallel arrays recording each pipeline step and its wall-clock seconds.
+STEP_NAMES=()
+STEP_SECONDS=()
+
+# Seconds -> "1h 05m 03s" / "5m 03s" / "42s".
+format_duration() {
+  local total="$1" h m s
+  h=$(( total / 3600 ))
+  m=$(( (total % 3600) / 60 ))
+  s=$(( total % 60 ))
+  if (( h > 0 )); then
+    printf '%dh %02dm %02ds' "$h" "$m" "$s"
+  elif (( m > 0 )); then
+    printf '%dm %02ds' "$m" "$s"
+  else
+    printf '%ds' "$s"
+  fi
+}
+
+print_step_summary() {
+  (( ${#STEP_NAMES[@]} == 0 )) && return 0
+  echo
+  echo "----------------------------------------------------------------"
+  echo "Step timings"
+  echo "----------------------------------------------------------------"
+  local i
+  for i in "${!STEP_NAMES[@]}"; do
+    printf '  %-46s %s\n' "${STEP_NAMES[$i]}" "$(format_duration "${STEP_SECONDS[$i]}")"
+  done
+}
+
+# Runs on any exit: prints the per-step summary and the total pipeline runtime.
+on_exit() {
+  local status=$?
+  print_step_summary
+  local total=$(( $(date +%s) - PIPELINE_START_EPOCH ))
+  echo "----------------------------------------------------------------"
+  if (( status == 0 )); then
+    echo "Total pipeline time: $(format_duration "$total")"
+  else
+    echo "Pipeline FAILED (exit $status) after $(format_duration "$total")"
+  fi
+  echo "Log file: $LOG_FILE"
+  echo "----------------------------------------------------------------"
+}
+trap on_exit EXIT
+
+echo "Run started:      $(date '+%Y-%m-%d %H:%M:%S')"
 echo "Project directory: $PROJECT_DIR"
 echo "Rscript: $RSCRIPT"
 echo "Run matching: $RUN_MATCHING"
 echo "Build CVR lookup from Virk API: $BUILD_CVR_LOOKUP"
 echo "Build employment history from Virk API: $BUILD_EMPLOYMENT_HISTORY"
 echo "Extract TED notices: $EXTRACT_TED_NOTICES"
+echo "Log file: $LOG_FILE"
 
 if ! command -v "$RSCRIPT" > /dev/null 2>&1; then
   echo "Could not find Rscript command: $RSCRIPT" >&2
@@ -66,12 +126,31 @@ if [[ "${RESTORE_RENV:-false}" == "true" ]]; then
   "$RSCRIPT" --vanilla -e 'renv::restore(prompt = FALSE)'
 fi
 
+# Runs one pipeline R script, timing it and recording the duration for the
+# end-of-run summary. Timing is captured even if the script fails.
 run_r_script() {
   local script_path="$1"
+  local start end elapsed rc
 
   echo
-  echo "Running $script_path"
+  echo "==> Running $script_path"
+  start=$(date +%s)
+  set +e
   "$RSCRIPT" --vanilla "$script_path"
+  rc=$?
+  set -e
+  end=$(date +%s)
+  elapsed=$(( end - start ))
+
+  STEP_NAMES+=("$script_path")
+  STEP_SECONDS+=("$elapsed")
+
+  if (( rc == 0 )); then
+    echo "    done in $(format_duration "$elapsed")"
+  else
+    echo "    FAILED after $(format_duration "$elapsed") (exit $rc)" >&2
+    return "$rc"
+  fi
 }
 
 run_r_script "code/processing/1_1_process_kfst.R"
