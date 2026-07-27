@@ -111,8 +111,10 @@ prepare_winner_summary_data <- function(path, source_label) {
       winner_cvr_clean = as.character(winner_cvr_clean),
       winner_cvr_final = as.character(winner_cvr_final),
       winner_cvr = coalesce(winner_cvr_final, winner_cvr_clean),
-      tender_amount = suppressWarnings(as.numeric(tender_amount)),
-      lot_amount = suppressWarnings(as.numeric(lot_amount)),
+      # Use the EUR amounts so KFST (native DKK) and OpenTender (native EUR) are
+      # on a common currency; KFST is converted at the fixed ERM II peg upstream.
+      tender_amount = suppressWarnings(as.numeric(tender_amount_eur)),
+      lot_amount = suppressWarnings(as.numeric(lot_amount_eur)),
       n_bidders = suppressWarnings(as.numeric(n_bidders))
     ) %>%
     select(any_of(winner_summary_cols))
@@ -138,8 +140,10 @@ prepare_buyer_summary_data <- function(path, source_label) {
       buyer_cvr_clean = as.character(buyer_cvr_clean),
       buyer_cvr_final = as.character(buyer_cvr_final),
       buyer_cvr = coalesce(buyer_cvr_final, buyer_cvr_clean),
-      tender_amount = suppressWarnings(as.numeric(tender_amount)),
-      lot_amount = suppressWarnings(as.numeric(lot_amount)),
+      # Use the EUR amounts so KFST (native DKK) and OpenTender (native EUR) are
+      # on a common currency; KFST is converted at the fixed ERM II peg upstream.
+      tender_amount = suppressWarnings(as.numeric(tender_amount_eur)),
+      lot_amount = suppressWarnings(as.numeric(lot_amount_eur)),
       n_bidders = suppressWarnings(as.numeric(n_bidders))
     ) %>%
     select(any_of(buyer_summary_cols))
@@ -269,7 +273,7 @@ tbody tr:nth-child(even) {
 
 This note gives a first-pass set of descriptive statistics for the cleaned and matched KFST and OpenTender tender data. It is intended as an exploratory companion to the cleaning pipeline rather than a data quality report.
 
-Tender and lot amount fields are source-specific. The tender-size summaries below use the natural log of positive numeric amounts. 
+Tender and lot amounts are shown in **EUR** so KFST and OpenTender are comparable: KFST's native DKK amounts are converted at Denmark's fixed ERM II central rate (7.46038 DKK per EUR), and OpenTender is already in EUR. The tender-size summaries below use the natural log of positive EUR amounts.
 
 ## Measurement of tender amounts
 **For KFST**, there are four measures of tender/lot amount.
@@ -680,8 +684,8 @@ kable(
 histogram_with_inset(
   lot_data,
   value_col = "log_tender_amount",
-  x_label = "Log tender amount",
-  title = "Distribution of log tender amounts"
+  x_label = "Log tender amount (EUR)",
+  title = "Distribution of log tender amounts (EUR)"
 )
 ```
 
@@ -689,8 +693,8 @@ histogram_with_inset(
 histogram_with_inset(
   lot_data,
   value_col = "log_lot_amount",
-  x_label = "Log lot amount",
-  title = "Distribution of log lot amounts"
+  x_label = "Log lot amount (EUR)",
+  title = "Distribution of log lot amounts (EUR)"
 )
 ```
 
