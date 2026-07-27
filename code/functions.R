@@ -810,8 +810,21 @@ find_fuzzy_matches <- function(
     firm_type_column,
     step
 ) {
-  if (nrow(rows) == 0) return(data.table())
-  
+  # Typed empty result so callers that rbind/join on the output keep working
+  # even when no rows are supplied, or when every candidate row is skipped in
+  # the loop below (a bare data.table() would have no columns to join on).
+  empty_result <- data.table(
+    match_row_id = integer(0),
+    fuzzy_candidate_cvr = character(0),
+    fuzzy_candidate_name = character(0),
+    fuzzy_candidate_source = character(0),
+    fuzzy_candidate_step = integer(0),
+    fuzzy_candidate_score = numeric(0),
+    fuzzy_candidate_rank = integer(0),
+    n_top_score_candidates = integer(0)
+  )
+  if (nrow(rows) == 0) return(empty_result)
+
   required_row_columns <- c(
     "match_row_id",
     "match_date",
@@ -909,13 +922,28 @@ find_fuzzy_matches <- function(
     )]
   }
   
-  rbindlist(found, use.names = TRUE, fill = TRUE)
+  result <- rbindlist(found, use.names = TRUE, fill = TRUE)
+  if (nrow(result) == 0) return(empty_result)
+  result
 }
 
 # Accept candidate 1 only when it exceeds the threshold and no other CVR has
 # the same top score. Tied top candidates cannot be distinguished reliably.
 accept_fuzzy_match <- function(candidates, threshold) {
-  if (nrow(candidates) == 0) return(data.table())
+  # Typed empty result matching the non-empty branch below, so callers can
+  # rbind/join the output even when no candidate clears the threshold.
+  if (nrow(candidates) == 0) {
+    return(data.table(
+      match_row_id = integer(0),
+      cvr_name_match = character(0),
+      registered_name_match = character(0),
+      name_match_source = character(0),
+      name_match_step = integer(0),
+      name_match_method = character(0),
+      name_match_score = numeric(0),
+      name_match_n_candidates = integer(0)
+    ))
+  }
   
   candidates[
     fuzzy_candidate_rank == 1 &
