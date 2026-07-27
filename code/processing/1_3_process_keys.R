@@ -106,10 +106,17 @@ rm(key_names_prepared, key_data)
 gc()
 
 # 2 Process alternative CVR names
+# Same date handling as the main name key above: force the validity-window
+# columns to character and parse the first 10 characters into IDate.
 alt_name_data <- data.table::fread(
   cvr_biname_key_file,
-  encoding = "UTF-8"
+  encoding = "UTF-8",
+  colClasses = c(gyldigfra = "character", gyldigtil = "character")
 )
+alt_name_data[, `:=`(
+  gyldigfra = as.IDate(substr(gyldigfra, 1, 10)),
+  gyldigtil = as.IDate(substr(gyldigtil, 1, 10))
+)]
 
 # Prepare names and make distinct (like above)
 binavn_prepared <- prepare_cvr_name(alt_name_data$binavn)
