@@ -654,14 +654,7 @@ clean_winner_data <- clean_winner_data %>%
 # 3 Buyers
 ## Buyers do not have CVR numbers, but they have names.
 buyer_data <- data %>%
-  select(tender_id, lot_id, buyer_name, joint_tender) %>%
-  mutate(
-    joint_tender = case_when(
-      joint_tender == "Enkelt" ~ "single",
-      joint_tender == "Fælles" ~ "joint",
-      TRUE ~ NA_character_
-    )
-  )
+  select(tender_id, lot_id, buyer_name, joint_tender) # joint_tender already recoded to English above
 original_buyer_data <- buyer_data # Store original for later joining
 
 ## 3.1 Separate into single and multiple buyer tenders
