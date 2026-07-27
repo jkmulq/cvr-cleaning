@@ -54,7 +54,22 @@ cat("Using CVR name key:", basename(cvr_name_key_file), "\n")
 cat("Using CVR alternative-name key:", basename(cvr_biname_key_file), "\n")
 
 # 1 Process main CVR names
-key_data <- data.table::fread(cvr_name_key_file, encoding = "UTF-8")
+# Read the validity-window dates (gyldigfra/gyldigtil) as text and parse the
+# first 10 characters (YYYY-MM-DD) into IDate. fread's own date detection is
+# skipped on these columns on purpose: a single full-ISO-timestamp value would
+# auto-type the whole column to POSIXct, and keep_valid_dates()'s "- 730L" would
+# then subtract 730 SECONDS instead of 730 days, silently shrinking the +/-2yr
+# match window. colClasses = "IDate" cannot fix this (fread refuses to
+# down-type an auto-detected POSIXct), so we force character and coerce here.
+key_data <- data.table::fread(
+  cvr_name_key_file,
+  encoding = "UTF-8",
+  colClasses = c(gyldigfra = "character", gyldigtil = "character")
+)
+key_data[, `:=`(
+  gyldigfra = as.IDate(substr(gyldigfra, 1, 10)),
+  gyldigtil = as.IDate(substr(gyldigtil, 1, 10))
+)]
 
 key_names_prepared <- prepare_cvr_name(key_data$name)
 setDT(key_names_prepared)
