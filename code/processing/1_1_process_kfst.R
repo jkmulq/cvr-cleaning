@@ -55,6 +55,18 @@ data <- data %>%
          contract_duration_months_min = `Varighed af kontrakten i måneder (min)`,
          contract_duration_months_max = `Varighed af kontrakten i måneder (max)`)
 
+# Recode the joint/single-tender indicator to English on the source data up
+# front, so the value is consistent everywhere it propagates (tender/lot data,
+# and the winner and buyer tables through the joins below).
+data <- data %>%
+  mutate(
+    joint_tender = case_when(
+      joint_tender == "Enkelt" ~ "single",
+      joint_tender == "Fælles" ~ "joint",
+      TRUE ~ NA_character_
+    )
+  )
+
 # Standardise tender-level fields before they are joined onto buyer/winner rows.
 ## Tender/lot amount. KFST amounts are in DKK; add the EUR counterpart at
 ## Denmark's fixed ERM II central rate (7.46038 DKK per EUR, +/-2.25% band).
