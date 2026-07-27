@@ -753,11 +753,24 @@ clean_buyer_data <- clean_buyer_data %>%
 clean_buyer_data <- clean_buyer_data %>% 
   mutate(flag_check_fuzzy_match = coalesce(!flag_missing_buyer_name, FALSE))
 
-# Check that amount fields are present in both saved KFST outputs.
-required_amount_cols <- c("tender_amount", "lot_amount")
+# Ensure natural row grains for each of winner/buyer side
+# Not strictly necessary for KFST data, but done here for consistency with 
+# OpenTender data cleaning.
+# winner = tender-lot-winner
+# buyer = tender-lot-buyer
+clean_winner_data <- clean_winner_data %>%
+  distinct(tender_id, lot_id, winner_number, winner_cvr_clean, .keep_all = TRUE)
+clean_buyer_data <- clean_buyer_data %>%
+  distinct(tender_id, lot_id, buyer_number, .keep_all = TRUE)
+
+# Check that amount fields (incl. the EUR/DKK versions carried through the joins)
+# are present in both saved KFST outputs.
+required_amount_cols <- c("tender_amount", "lot_amount",
+                          "tender_amount_eur", "tender_amount_dkk",
+                          "lot_amount_eur", "lot_amount_dkk")
 stopifnot(all(required_amount_cols %in% names(clean_winner_data)))
 stopifnot(all(required_amount_cols %in% names(clean_buyer_data)))
 
-# 4 Save 
+# 4 Save
 saveRDS(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_kfst.rds"))
 saveRDS(clean_buyer_data, file.path(dirs$clean_data, "clean_buyer_data_kfst.rds"))
