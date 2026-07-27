@@ -591,7 +591,7 @@ clean_winner_data <- clean_winner_data %>%
 
 # Foreign winner
 clean_winner_data <- clean_winner_data %>%
-  mutate(flag_foreign_winner = coalesce(winner_country != "DK", FALSE))
+  mutate(flag_foreign_winner = coalesce(toupper(trimws(winner_country)) != "DK", FALSE))
 
 # Missing country
 clean_winner_data <- clean_winner_data %>%
