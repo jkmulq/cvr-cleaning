@@ -115,7 +115,11 @@ original_tender_data <- data %>%
     )
   )
 
-## Tender/lot amount
+## Tender/lot amount. OpenTender amounts are already in EUR; add the DKK
+## counterpart at Denmark's fixed ERM II central rate (7.46038 DKK per EUR,
+## +/-2.25% band). Created here on the tender/lot-level data so the EUR/DKK
+## columns propagate to the winner and buyer tables through the joins below.
+dkk_per_eur <- 7.46038
 original_tender_data <- original_tender_data %>%
   mutate(
     tender_amount = coalesce(
@@ -126,7 +130,11 @@ original_tender_data <- original_tender_data %>%
       parse_number(bid_price_EUR),
       parse_number(lot_estimatedPrice_EUR)
     ),
-    bid_amount = parse_number(bid_price_EUR)
+    bid_amount = parse_number(bid_price_EUR),
+    tender_amount_eur = tender_amount,
+    lot_amount_eur    = lot_amount,
+    tender_amount_dkk = tender_amount * dkk_per_eur,
+    lot_amount_dkk    = lot_amount    * dkk_per_eur
   )
 
 ## Number of bidders

@@ -56,7 +56,11 @@ data <- data %>%
          contract_duration_months_max = `Varighed af kontrakten i måneder (max)`)
 
 # Standardise tender-level fields before they are joined onto buyer/winner rows.
-## Tender/lot amount
+## Tender/lot amount. KFST amounts are in DKK; add the EUR counterpart at
+## Denmark's fixed ERM II central rate (7.46038 DKK per EUR, +/-2.25% band).
+## Created here on the tender/lot-level data so the EUR/DKK columns propagate to
+## the winner and buyer tables through the joins below.
+dkk_per_eur <- 7.46038
 data <- data %>%
   mutate(
     tender_amount = coalesce(
@@ -66,7 +70,11 @@ data <- data %>%
     lot_amount = coalesce(
       as.numeric(final_lot_amount),
       as.numeric(estimated_lot_amount)
-    )
+    ),
+    tender_amount_dkk = tender_amount,
+    lot_amount_dkk    = lot_amount,
+    tender_amount_eur = tender_amount / dkk_per_eur,
+    lot_amount_eur    = lot_amount    / dkk_per_eur
   )
 
 ## Number of bidders
@@ -245,7 +253,9 @@ tender_lot_data <- data %>%
   select(any_of(c(
     "tender_id", "lot_id", "contract_type", "lot_number", "buyer_name",
     "n_lots", "n_lots_contracted", "n_lot_winners", "n_bids_received",
-    "tender_amount", "lot_amount", "n_bidders",
+    "tender_amount", "lot_amount",
+    "tender_amount_eur", "tender_amount_dkk", "lot_amount_eur", "lot_amount_dkk",
+    "n_bidders",
     "pub_date", "award_date", "submit_date",
     "divided_tender", "joint_tender", "consortium_winner",
     "cpv_code", "cpv_code_first", "cpv_division", "cpv_division_name",
