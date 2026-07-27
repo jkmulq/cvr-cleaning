@@ -502,8 +502,14 @@ clean_winner_data <- clean_winner_data %>%
                                             !is.na(winner_cvr_valid_from_same_name) &
                                             winner_cvr_valid_from_same_name != "", 
                                           FALSE))
-clean_winner_data <- clean_winner_data %>% 
-  mutate(winner_cvr_clean = ifelse(flag_fill_missing_cvr, winner_cvr_valid_from_same_name, winner_cvr_clean))
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    winner_cvr_clean = ifelse(flag_fill_missing_cvr, winner_cvr_valid_from_same_name, winner_cvr_clean),
+    # Keep source provenance only on rows whose CVR was actually filled (mirrors
+    # the buyer path). Winner's row_id_borrowed_from is a ';'-collapsed string,
+    # so reset to NA_character_.
+    row_id_borrowed_from = ifelse(flag_fill_missing_cvr, row_id_borrowed_from, NA_character_)
+  )
 
 # Update valid CVR flag
 clean_winner_data <- clean_winner_data %>% 
