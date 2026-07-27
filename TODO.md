@@ -43,6 +43,11 @@ This file tracks development work against the current codebase and the project b
   - Report counts and proportions for exact agreement, fuzzy agreement, a CVR found with a different name, and a CVR not found in the provided keys.
   - Report results separately by dataset and cleaning source, and keep `tender_id`, `lot_id`, `winner_number`, the original values, and the cleaned values for review.
   - Add the results and representative disagreements to the quality analysis report.
+- [ ] Speed up matching by matching distinct CVR names, then joining back.
+  - The costly fuzzy step runs per row, but most rows repeat the same winner/buyer name. Reduce to the set of distinct prepared names, fuzzy-match each once, then expand the matches back onto every original row.
+  - Draft implementations in `code/drafts/` (`2_1_match_kfst_distinct_winners_draft.R`, `2_2_match_kfst_buyers_distinct_names_draft.R`), each with a `*_normal_benchmark_draft.R` counterpart to confirm the distinct-name outputs match the row-level results.
+  - Target: once outputs are confirmed identical to the benchmark, fold the distinct-name approach into the production matching scripts (`2_1`-`2_4`) for both KFST and OpenTender.
+
 ## OpenTender Cleaning
 
 - [x] Implement conservative multiple-name partition rule.
@@ -78,6 +83,10 @@ This file tracks development work against the current codebase and the project b
 - [x] Expand OpenTender multi-identifier fields.
   - Target: ensure cleaned data contain at most one bidder or buyer CVR per row when the source field contains multiple identifiers.
   - Conclusion: this is done in the matching script
+- [x] De-duplicate the buyer-dimension explosion (tender-lot-entity grain).
+  - Finding: OpenTender stores a fully exploded (tender x buyer x lot x bid x bidder) table, so joint-procurement / multi-buyer notices repeat every award once per buyer with identical amounts. ~28% of OpenTender winner rows were buyer-duplicates (up to 8x within multi-buyer tenders). Confirmed against TED notice 12607-2020: one real contracting authority but two "buyers" (Aura Energi + covered entity Dinel A/S), giving 30 rows for 15 real lot-winner records.
+  - Fix (source; `1_1` and `1_2`): collapse before saving to one row per winner and per buyer within a tender-lot - winners on `(tender_id, lot_id, winner_number, winner_cvr_clean)`, buyers on `(tender_id, lot_id, buyer_number[, buyer_cvr_clean])`. `distinct(.keep_all = TRUE)`, no schema change. Applied symmetrically to KFST (a no-op there - already at grain).
+  - Effect: OpenTender winner 161,510 -> 115,876; OpenTender buyer 163,103 -> 121,441; KFST unchanged. Event studies were already safe (they dedup by firm + award_date), but row-level award counts and amount sums were inflated ~28%. Propagated to the `*_name_matched.rds` outputs by the 2026-07-23 full run.
 - [ ] Clean OpenTender tender- and lot-level variables.
   - Target: review and standardize dates, counts, amounts, indicators, and other tender fields while retaining the original source variables.
 - [ ] Add reproducible OpenTender outputs and diagnostics.
@@ -91,7 +100,31 @@ This file tracks development work against the current codebase and the project b
 
 ## Overall cleaning
 - [ ] Fix typos in the final cleaned and matched dataset. I'll define typo as a CVR number only different from another CVR attached to the same firm name, where one appears in the CVR key and the other doesn't.
-- [ ] Convert to common currency for tender/lot amounts. KFST has amounts quoted in DKK while OpenTender uses Euro. Ideally we would have both currencies for both datasets (DKK->EURO for KFST and EURO->DKK for OpenTender).
+- [x] Convert tender/lot amounts to a common currency (EUR and DKK). KFST amounts are DKK; OpenTender amounts are already EUR (built from the `_EUR` columns), so pooling them (e.g. `data_tender` in the employment report) previously mixed currencies.
+  - Done: added `tender_amount_eur`/`tender_amount_dkk` and `lot_amount_eur`/`lot_amount_dkk` to both the winner and buyer tables in `1_1` (KFST) and `1_2` (OpenTender), using Denmark's fixed ERM II central rate (7.46038 DKK per EUR, +/-2.25% band; https://economy-finance.ec.europa.eu/euro/eu-countries-and-euro/denmark-and-euro_en). Propagated to the matched outputs by the 2026-07-23 full run (all four columns present in `*_name_matched.rds`).
+  - Possible future refinement (not needed given the peg): contract-date daily EUR/DKK rates joined on `award_date` differ <1% from the fixed peg. Not yet converted: `bid_amount` and the annualised amounts (they inherit their source currency). And OpenTender's EUR was itself converted from native by OpenTender, so EUR->DKK double-converts DKK-native OT tenders - re-deriving from OT native `tender_finalPrice` + currency is the faithful fix if ever needed.
+
+## Code robustness (from July 2026 systematic review)
+None of these fire on the current data/API (the 2026-07-23 full run completed cleanly), but the High items are latent crashes that abort under other inputs/environments (a subset run, different data vintage, an API format change) - so they matter for replication-readiness.
+
+### High (latent crashes)
+- [ ] Guard the empty-`matched` update-join in every matching script (`2_1:315/369`, `2_2:305/346`, `2_3:802`, `2_4:814`). If zero rows match across all steps (realistic on a small/sample input), `matched` stays column-less and `winner_data[matched, on="match_row_id", :=…]` errors. Fix: `if (nrow(matched) > 0)` + pre-init the `*_name_match*` columns to typed NA when empty.
+- [ ] Guard the OpenTender segment/partition stage against a 0-column `rbindlist` (`2_3:377`, `2_4:389`). When no eligible row yields a partition, `segment_remaining <- name_partition_segments[, .(…, match_date)]` throws `object 'match_date' not found`. Fix: short-circuit when `nrow(name_partition_segments)==0`, or seed a typed empty prototype.
+- [ ] Fix the OpenTender multi-CVR split crash (`1_2:342` winners, `:755` buyers). Two CVRs joined by hyphen/period/`samt`/`and` aren't standardised to `;`, so `map_chr(extract_valid_cvr_candidates)` gets length 2 and aborts ("Result must be length 1, not 2"). Fix: split on any non-digit boundary (matching the multi-CVR counter), or extend the delimiter regex and `map()`+unnest.
+- [ ] Harden the employment-pull production-unit scroll (`scraping/1_build_cvr_employment_history.R:1362`). `as.integer(hits.total)` crashes on an ES7 object total (`{value,relation}` → length-2 → "condition has length > 1") and silently under-collects if total is capped at 10k. Fix: `if (is.list(tot)) tot$value else tot`, and scroll until an empty page rather than trusting `total`.
+
+### Medium
+- [ ] Make the employment-pull resume atomic (`scraping/1_build_cvr_employment_history.R:1502/1558`). Data rows are appended before the status row; a crash between them re-pulls & duplicates rows on resume (a second duplicate source beyond the fixed cross-batch leakage). Fix: write status first (or temp+rename), or dedupe on read by `(cvr, frequency, year, quarter, month)`.
+- [ ] Fix the isolated-annual event-study window (`6_firm_employment_quality.Rmd:708`). `window_years <- -2:2` but the prose/tab/labels say ±1 and isolation only requires gap `>1`, so ±2-edge awards contaminate "isolated" windows. Fix: set `-1:1`, or commit to ±2 and update isolation (`>2`) + all labels.
+- [ ] `flag_joint_unlisted_buyers` is always FALSE (`1_1:711`) - tests `joint_tender=="joint"` but the recoded value lives in `joint_tender_original` (join suffix). Fix: test `joint_tender_original`.
+- [ ] Normalise country in `flag_foreign_winner/buyer` (`1_1:572`, `1_2:564/1037`) with `toupper(trimws())`, matching every other script (raw `!= "DK"` mis-flags `"dk"`/`" DK"`).
+- [ ] Reset OpenTender `row_id_borrowed_from` to NA on non-filled rows (`1_2:487`), as KFST and the OT buyer path already do (currently falsely implies a borrow).
+- [ ] Concordance join can cartesian-explode (`5_cvr_key_concordance.Rmd:162`) - join on `.(cvr, name)` like the alt-names chunk, or add `allow.cartesian=TRUE`.
+- [ ] Return the full empty schema from `find_fuzzy_matches`/`accept_fuzzy_match` (`functions.R:813/918`) - same latent bare-`data.table()` pattern as the already-fixed exact helper (guarded by callers today).
+- [ ] Coerce CVR-key dates to IDate explicitly in `1_3_process_keys.R:57/94` (`as.IDate(substr(...,1,10))`) - currently relies on `fread` auto-typing; a full ISO timestamp would shrink the ±2-year match window to ±730 seconds.
+
+### Low (bundle - full line refs in the review report)
+- [ ] Sweep the low-severity items: dead code (`6_firm:79-80/311-326`, `7_tender_amounts:86`, KFST dead flags), stale comment (`1_2:161` framework anchor), missing `na.rm` (`3_quality:508`), `flag_awarded` NA-not-FALSE (`1_2:224`), `parse_summary_date` serial branch (`4_summary:83`), leading-zero `%in%` (`6_firm:99`), `combn` single-file guard (`1_2:39`), TED retry sleep-on-last-attempt + dead `n_missing`, `run_replication.sh:28` tee-flush. One-liners; none change results materially.
 
 ## Replication readiness
 - [ ] Document data provenance for the raw inputs (KFST `udbudsdata_kfst.xlsx`, OpenTender CSVs, Virk CVR keys). Ask PI's coauthors where each source comes from and how a replicator obtains access, then add a "Data availability" section to the README.
