@@ -1052,7 +1052,8 @@ clean_buyer_data <- clean_buyer_data %>%
 clean_buyer_data <- clean_buyer_data %>%
   mutate(
     flag_foreign_buyer = coalesce(
-      !is.na(buyer_country) & buyer_country != "" & buyer_country != "DK",
+      !is.na(buyer_country) & trimws(buyer_country) != "" &
+        toupper(trimws(buyer_country)) != "DK",
       FALSE
     )
   )
