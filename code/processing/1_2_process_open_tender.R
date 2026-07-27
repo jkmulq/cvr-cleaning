@@ -300,16 +300,20 @@ cat("Number of formatted winner CVRs recovered:",
 ## 2.2 Standardise CVR number delimiters
 winner_data <- winner_data %>%
   mutate(
-    # Collapse any run of non-digit characters sitting between two digits into a
-    # single ';' separator. This mirrors the multi-CVR counter
-    # (extract_valid_cvr_candidates), which extracts every 8-digit run whatever
-    # joins them, so a row flagged as multi-CVR always splits into exactly that
-    # many single-CVR tokens. The old enumerated delimiter list missed some
-    # separators (hyphen, period, "samt"/"and", stray letters), leaving two CVRs
-    # glued together and crashing map_chr() with "Result must be length 1, not 2".
+    # Standardise the delimiters between multiple CVRs to ';'. Same enumerated
+    # list as the buyer path, extended with hyphen and period. It must cover
+    # every separator that can join two CVRs; a separator missing here leaves two
+    # CVRs glued in one token and crashes map_chr() with "Result must be length
+    # 1, not 2". We deliberately do NOT split on arbitrary digit boundaries,
+    # because firm names can contain digits (e.g. "5E Byg A/S") and would be
+    # fragmented into spurious tokens.
     winner_cvr = ifelse(
       flag_row_multiple_valid_cvr,
-      str_replace_all(winner_cvr, "(?<=[0-9])[^0-9;]+(?=[0-9])", ";"),
+      str_replace_all(
+        winner_cvr,
+        regex("\\s*(,|;|\\||/|&|-|\\.|\\bog\\b|\\bsamt\\b|\\band\\b|(?<=[\\d\\)])og(?=[[:alnum:]])|(?<=\\d)samt(?=\\d)|(?<=\\d)and(?=\\d))\\s*", ignore_case = TRUE),
+        ";"
+      ),
       winner_cvr
     ),
     winner_cvr = str_replace_all(winner_cvr, ";+", ";")
@@ -724,16 +728,17 @@ cat("Number of formatted buyer CVRs recovered:",
 ## 3.2 Standardise CVR number delimiters
 buyer_data <- buyer_data %>%
   mutate(
-    # Collapse any run of non-digit characters sitting between two digits into a
-    # single ';' separator. This mirrors the multi-CVR counter
-    # (extract_valid_cvr_candidates), which extracts every 8-digit run whatever
-    # joins them, so a row flagged as multi-CVR always splits into exactly that
-    # many single-CVR tokens. The old enumerated delimiter list missed some
-    # separators (hyphen, period, stray letters), leaving two CVRs glued
-    # together and crashing map_chr() with "Result must be length 1, not 2".
+    # Standardise the delimiters between multiple CVRs to ';' (same list as the
+    # winner path, extended with hyphen and period). See the winner note: we do
+    # NOT split on arbitrary digit boundaries, to avoid fragmenting firm names
+    # that contain digits.
     buyer_cvr = ifelse(
       flag_row_multiple_valid_cvr,
-      str_replace_all(buyer_cvr, "(?<=[0-9])[^0-9;]+(?=[0-9])", ";"),
+      str_replace_all(
+        buyer_cvr,
+        regex("\\s*(,|;|\\||/|&|-|\\.|\\bog\\b|\\bsamt\\b|\\band\\b|(?<=[\\d\\)])og(?=[[:alnum:]])|(?<=\\d)samt(?=\\d)|(?<=\\d)and(?=\\d))\\s*", ignore_case = TRUE),
+        ";"
+      ),
       buyer_cvr
     ),
     buyer_cvr = str_replace_all(buyer_cvr, ";+", ";")
