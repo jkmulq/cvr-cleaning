@@ -871,15 +871,15 @@ histogram_with_inset(
 ```{r multi-winner-lots}
 multi_winner_lots <- winner_data %>%
   summarise(
-    n_winners = n(),
+    n_valid_winners = uniqueN(winner_cvr_final[flag_valid_winner_cvr]),
     .by = c(data_source, tender_id, lot_id)
   )
 
 histogram_with_inset(
   multi_winner_lots,
-  value_col = "n_winners",
-  x_label = "Winners per tender lot",
-  title = "Distribution of winners per tender lot"
+  value_col = "n_valid_winners",
+  x_label = "Valid winners per tender lot",
+  title = "Distribution of valid winners per tender lot"
 )
 ```
 
@@ -887,8 +887,8 @@ histogram_with_inset(
 multi_winner_lot_summary <- multi_winner_lots %>%
   summarise(
     n_lots = n(),
-    n_multi_winner_lots = sum(n_winners > 1),
-    share_multi_winner_lots = mean(n_winners > 1),
+    n_multi_winner_lots = sum(n_valid_winners > 1),
+    share_multi_winner_lots = mean(n_valid_winners > 1),
     .by = data_source
   )
 
@@ -902,7 +902,7 @@ kable(
 ```{r multi-winner-tenders}
 multi_winner_tender_summary <- multi_winner_lots %>%
   summarise(
-    tender_has_multiple_winners = any(n_winners > 1),
+    tender_has_multiple_winners = any(n_valid_winners > 1),
     .by = c(data_source, tender_id)
   ) %>%
   summarise(
