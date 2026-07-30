@@ -174,6 +174,7 @@ lot_data <- winner_data %>%
     )
   )
 
+# Graph settings
 theme_set(theme_light())
 theme_update(plot.title = element_text(hjust = 0.5, face = "bold"))
 theme_update(plot.subtitle = element_text(hjust = 0.5))
@@ -271,9 +272,9 @@ tbody tr:nth-child(even) {
 
 # Introduction
 
-This note gives a first-pass set of descriptive statistics for the cleaned and matched KFST and OpenTender tender data. It is intended as an exploratory companion to the cleaning pipeline rather than a data quality report.
+This note gives a first-pass set of descriptive statistics for the cleaned and matched KFST and OpenTender tender data. 
 
-Tender and lot amounts are shown in **EUR** so KFST and OpenTender are comparable: KFST's native DKK amounts are converted at Denmark's fixed ERM II central rate (7.46038 DKK per EUR), and OpenTender is already in EUR. The tender-size summaries below use the natural log of positive EUR amounts.
+Tender and lot amounts are shown in **EUR** so KFST and OpenTender are comparable: KFST's native DKK amounts are converted at Denmark's fixed ERM II central rate (7.46038 DKK per EUR), and OpenTender is already in EUR. The tender-size summaries below use the natural log of positive EUR amounts, but I also show the levels.
 
 ## Measurement of tender amounts
 **For KFST**, there are four measures of tender/lot amount.
@@ -367,28 +368,26 @@ log_value_summary <- lot_data %>%
   )
 
 # Mean level value
+denom <- 1e6 
 level_value_summary <- lot_data %>%
   summarise(
-    mean_tender_amount = mean(tender_amount, na.rm = TRUE),
-    sd_tender_amount = sd(tender_amount, na.rm = TRUE),
-    mean_lot_amount = mean(lot_amount, na.rm = TRUE),
-    sd_lot_amount = sd(lot_amount, na.rm = TRUE),
+    mean_tender_amount = mean(tender_amount, na.rm = TRUE) / denom,
+    sd_tender_amount = sd(tender_amount, na.rm = TRUE) / denom,
+    mean_lot_amount = mean(lot_amount, na.rm = TRUE) / denom,
+    sd_lot_amount = sd(lot_amount, na.rm = TRUE) / denom,
     .by = data_source
   )
 
-# Buyer CVR summayr
+# Buyer CVR summary
 buyer_cvr_summary <- buyer_data %>%
   summarise(
-    unique_buyers_by_cvr = if_else(
-      sum(flag_valid_buyer_cvr) > 0,
-      n_distinct(buyer_cvr[flag_valid_buyer_cvr]),
-      NA_integer_
-    ),
+    unique_buyers_by_cvr = n_distinct(buyer_cvr[flag_valid_buyer_cvr]),
     .by = data_source
   )
 
+# Number of tenders per buyer
 tenders_per_buyer_cvr <- buyer_data %>%
-  filter(valid_cvr(buyer_cvr)) %>%
+  filter(flag_valid_buyer_cvr) %>%
   distinct(data_source, buyer_cvr, tender_id) %>%
   count(data_source, buyer_cvr, name = "n_tenders")
 
@@ -448,18 +447,28 @@ kable(
 ```
 
 ```{r winner-overview-groups}
+
+# Breakdowns by sample groups
 winner_summary_groups <- bind_rows(
+  
+  # Full sample
   winner_data %>%
     mutate(`Winner sample` = "Whole sample"),
+  
+  # Valid CVRs that didn't need matching
   winner_data %>%
     filter(
       valid_cvr(winner_cvr_clean),
       !coalesce(flag_name_match_found, FALSE)
     ) %>%
     mutate(`Winner sample` = "Original CVRs only"),
+  
+  # Matched CVRs from exact steps 1-3 (most reliable matches)
   winner_data %>%
     filter(name_match_method == "exact", name_match_step %in% 1:3) %>%
     mutate(`Winner sample` = "Exact match steps 1-3"),
+  
+  # Matched CVRs from other matching steps
   winner_data %>%
     filter(
       coalesce(flag_name_match_found, FALSE),
@@ -479,6 +488,7 @@ winner_summary_groups <- bind_rows(
     )
   )
 
+# Amounts by sample type
 winner_group_lot_data <- winner_summary_groups %>%
   distinct(data_source, `Winner sample`, tender_id, lot_id, .keep_all = TRUE) %>%
   mutate(
@@ -494,6 +504,7 @@ winner_group_lot_data <- winner_summary_groups %>%
     )
   )
 
+# Year span for each sample
 winner_group_year_span <- winner_group_lot_data %>%
   mutate(year = lubridate::year(award_date)) %>%
   filter(!is.na(year)) %>%
@@ -502,6 +513,7 @@ winner_group_year_span <- winner_group_lot_data %>%
     .by = c(data_source, `Winner sample`)
   )
 
+# Winner cvr summary by sample
 winner_group_cvr_summary <- winner_summary_groups %>%
   summarise(
     valid_winner_cvr_rows = sum(flag_valid_winner_cvr),
@@ -509,6 +521,7 @@ winner_group_cvr_summary <- winner_summary_groups %>%
     .by = c(data_source, `Winner sample`)
   )
 
+# Tenders per firm by sample type
 winner_group_tenders_per_firm <- winner_summary_groups %>%
   filter(flag_valid_winner_cvr) %>%
   distinct(data_source, `Winner sample`, winner_cvr, tender_id) %>%
@@ -519,6 +532,7 @@ winner_group_tenders_per_firm <- winner_summary_groups %>%
     .by = c(data_source, `Winner sample`)
   )
 
+# Tender amounts by sample type
 winner_group_log_value_summary <- winner_group_lot_data %>%
   summarise(
     mean_log_tender_amount = mean(log_tender_amount, na.rm = TRUE),
@@ -577,15 +591,15 @@ winner_cvr_intersection <- unique_valid_winner_cvr %>%
   purrr::reduce(intersect) %>%
   length()
 
-# In KFST, not in OpenTender 
-winner_cvr_kfst_only <- unique_valid_winner_cvr[[1]] %>%
-  setdiff(unique_valid_winner_cvr[[2]]) %>%
+# KFST \ OpenTender
+winner_cvr_kfst_only <- unique_valid_winner_cvr[["KFST"]] %>%
+  setdiff(unique_valid_winner_cvr[["OpenTender"]]) %>%
   length() 
 
-# In OpenTender, not in KFST 
-winner_cvr_ot_only <- unique_valid_winner_cvr[[2]] %>%
-  setdiff(unique_valid_winner_cvr[[1]]) %>%
-  length() 
+# OpenTender \ KFST
+winner_cvr_ot_only <- unique_valid_winner_cvr[["OpenTender"]] %>%
+  setdiff(unique_valid_winner_cvr[["KFST"]]) %>%
+  length()
 
 # Create table
 winner_partition <- tibble::tibble(
@@ -611,14 +625,14 @@ buyer_cvr_intersection <- unique_valid_buyer_cvr %>%
   purrr::reduce(intersect) %>%
   length()
 
-# In KFST, not in OpenTender 
-buyer_cvr_kfst_only <- unique_valid_buyer_cvr[[1]] %>%
-  setdiff(unique_valid_buyer_cvr[[2]]) %>%
+# KFST \ OpenTender
+buyer_cvr_kfst_only <- unique_valid_buyer_cvr[["KFST"]] %>%
+  setdiff(unique_valid_buyer_cvr[["OpenTender"]]) %>%
   length() 
 
-# In OpenTender, not in KFST 
-buyer_cvr_ot_only <- unique_valid_buyer_cvr[[2]] %>%
-  setdiff(unique_valid_buyer_cvr[[1]]) %>%
+# OpenTender \ KFST
+buyer_cvr_ot_only <- unique_valid_buyer_cvr[["OpenTender"]] %>%
+  setdiff(unique_valid_buyer_cvr[["KFST"]]) %>%
   length() 
 
 # Create table
@@ -647,17 +661,19 @@ bind_rows(winner_partition, buyer_partition) %>%
 ```{r amount-coverage-table}
 amount_coverage <- bind_rows(
   lot_data %>%
+    distinct(data_source, tender_id, award_date, .keep_all = TRUE) %>% 
     summarise(
       variable = "Tender amount",
-      n_lots = n(),
+      n = n(),
       n_nonmissing = sum(!is.na(tender_amount)),
       n_positive = sum(!is.na(tender_amount) & tender_amount > 0),
       .by = data_source
     ),
   lot_data %>%
+    distinct(data_source, tender_id, lot_id, award_date, .keep_all = TRUE) %>% 
     summarise(
       variable = "Lot amount",
-      n_lots = n(),
+      n = n(),
       n_nonmissing = sum(!is.na(lot_amount)),
       n_positive = sum(!is.na(lot_amount) & lot_amount > 0),
       .by = data_source
@@ -666,11 +682,11 @@ amount_coverage <- bind_rows(
   transmute(
     `Data source` = data_source,
     `Amount variable` = variable,
-    `Tender lots` = format_int(n_lots),
+    `Tender lots` = format_int(n),
     `Non-missing` = format_int(n_nonmissing),
-    `Non-missing share` = format_percent(n_nonmissing / n_lots),
+    `Non-missing share` = format_percent(n_nonmissing / n),
     `Positive for log` = format_int(n_positive),
-    `Positive share` = format_percent(n_positive / n_lots)
+    `Positive share` = format_percent(n_positive / n)
   )
 
 kable(
@@ -810,12 +826,22 @@ winner_lots_per_firm <- winner_data %>%
   distinct(data_source, winner_cvr, lot_id) %>%
   count(data_source, winner_cvr, name = "n_lots")
 
-histogram_with_inset(
-  winner_lots_per_firm,
-  value_col = "n_lots",
-  x_label = "Tender lots per winner firm",
-  title = "Distribution of tender lots per winner firm"
-)
+# Lots per firm is strongly right-skewed (most firms win one lot, a few win
+# many), so the y-axis is log10 to keep the box readable; drop scale_y_log10()
+# for a linear axis. The diamond marks the mean (the box shows median & IQR).
+ggplot(winner_lots_per_firm, aes(x = data_source, y = n_lots)) +
+  geom_boxplot(fill = "#2f6f9f", outlier.alpha = 0.25, outlier.size = 0.8) +
+  stat_summary(
+    fun = mean, geom = "point",
+    shape = 23, size = 2.5, fill = "white", color = "#17324d"
+  ) +
+  scale_y_log10() +
+  labs(
+    title = "Distribution of tender lots per winner firm",
+    subtitle = "Box = median & IQR; diamond = mean (y on log scale)",
+    x = NULL,
+    y = "Tender lots per winner firm"
+  )
 ```
 
 # Tenders per Firm
@@ -826,12 +852,22 @@ tenders_per_firm <- winner_data %>%
   distinct(data_source, winner_cvr, tender_id) %>%
   count(data_source, winner_cvr, name = "n_tenders")
 
-histogram_with_inset(
-  tenders_per_firm,
-  value_col = "n_tenders",
-  x_label = "Tenders per winner firm",
-  title = "Distribution of tenders per winner firm"
-)
+# Tenders per firm is strongly right-skewed (most firms win one tender, a few
+# win many), so the y-axis is log10 to keep the box readable; drop
+# scale_y_log10() for a linear axis. The diamond marks the mean (box = median & IQR).
+ggplot(tenders_per_firm, aes(x = data_source, y = n_tenders)) +
+  geom_boxplot(fill = "#2f6f9f", outlier.alpha = 0.25, outlier.size = 0.8) +
+  stat_summary(
+    fun = mean, geom = "point",
+    shape = 23, size = 2.5, fill = "white", color = "#17324d"
+  ) +
+  scale_y_log10() +
+  labs(
+    title = "Distribution of tenders per winner firm",
+    subtitle = "Box = median & IQR; diamond = mean (y on log scale)",
+    x = NULL,
+    y = "Tenders per winner firm"
+  )
 ```
 
 # Buyer Side
@@ -858,12 +894,22 @@ tenders_per_buyer <- buyer_data %>%
   distinct(data_source, buyer_cvr, tender_id) %>%
   count(data_source, buyer_cvr, name = "n_tenders")
 
-histogram_with_inset(
-  tenders_per_buyer,
-  value_col = "n_tenders",
-  x_label = "Tenders per buyer name",
-  title = "Distribution of tenders per buyer name"
-)
+# Tenders per firm is strongly right-skewed (most firms win one tender, a few
+# win many), so the y-axis is log10 to keep the box readable; drop
+# scale_y_log10() for a linear axis. The diamond marks the mean (box = median & IQR).
+ggplot(tenders_per_buyer, aes(x = data_source, y = n_tenders)) +
+  geom_boxplot(fill = "#2f6f9f", outlier.alpha = 0.25, outlier.size = 0.8) +
+  stat_summary(
+    fun = mean, geom = "point",
+    shape = 23, size = 2.5, fill = "white", color = "#17324d"
+  ) +
+  scale_y_log10() +
+  labs(
+    title = "Distribution of tenders per winner firm",
+    subtitle = "Box = median & IQR; diamond = mean (y on log scale)",
+    x = NULL,
+    y = "Tenders per winner firm"
+  )
 ```
 
 # Multi-Winner Tenders
@@ -871,16 +917,23 @@ histogram_with_inset(
 ```{r multi-winner-lots}
 multi_winner_lots <- winner_data %>%
   summarise(
-    n_valid_winners = uniqueN(winner_cvr_final[flag_valid_winner_cvr]),
+    n_valid_winners = n_distinct(winner_cvr_final[flag_valid_winner_cvr]),
     .by = c(data_source, tender_id, lot_id)
   )
 
-histogram_with_inset(
-  multi_winner_lots,
-  value_col = "n_valid_winners",
-  x_label = "Valid winners per tender lot",
-  title = "Distribution of valid winners per tender lot"
-)
+ggplot(multi_winner_lots, aes(x = data_source, y = n_valid_winners)) +
+  geom_boxplot(fill = "#2f6f9f", outlier.alpha = 0.25, outlier.size = 0.8) +
+  stat_summary(
+    fun = mean, geom = "point",
+    shape = 23, size = 2.5, fill = "white", color = "#17324d"
+  ) +
+  scale_y_log10() +
+  labs(
+    title = "Distribution of tenders per winner firm",
+    subtitle = "Box = median & IQR; diamond = mean (y on log scale)",
+    x = NULL,
+    y = "Tenders per winner firm"
+  )
 ```
 
 ```{r multi-winner-lot-summary}
