@@ -42,17 +42,17 @@ cvr-cleaning/
 │   │   ├── 2_1_match_kfst.R
 │   │   ├── 2_2_match_kfst_buyers.R
 │   │   ├── 2_3_match_opentender.R
-│   │   └── 2_4_match_opentender_buyers.R
+│   │   ├── 2_4_match_opentender_buyers.R
+│   │   └── 2_5_augment_matched_variables.R
 │   ├── analysis/                        # R Markdown quality/analysis reports
 │   │   ├── 3_quality_analysis.Rmd
 │   │   ├── 4_summary_stats.Rmd
 │   │   ├── 5_cvr_key_concordance.Rmd
 │   │   ├── 6_firm_employment_quality.Rmd
 │   │   └── 7_tender_amounts_eu.Rmd
-│   ├── scraping/                        # optional web/API pulls (run after matching)
-│   │   ├── 1_build_cvr_employment_history.R
-│   │   └── 2_extract_ted_notices.R
-│   └── drafts/
+│   └── scraping/                        # optional web/API pulls (run after matching)
+│       ├── 1_build_cvr_employment_history.R
+│       └── 2_extract_ted_notices.R
 ├── docs/
 │   ├── cleaning_flags.md
 │   └── 3_quality_analysis.html
@@ -81,12 +81,13 @@ report is generated separately.
 | [code/functions.R](code/functions.R) | Shared helper functions for CVR extraction, CVR formatting, name preparation, name partitioning, and matching support. | No direct output. |
 | [code/processing/0_build_cvr_lookup.R](code/processing/0_build_cvr_lookup.R) | Optional script for users with Virk system-to-system API access. Builds CVR official-name and alternative-name lookup CSVs, or runs a small API timing sample. | Timestamped `cvr_names_virk_*.csv` and `cvr_binavne_virk_*.csv`, or sample CSVs. |
 | [code/processing/1_1_process_kfst.R](code/processing/1_1_process_kfst.R) | Cleans KFST winner and buyer data. Splits multi-winner and multi-buyer rows where possible, standardises winner CVRs, creates matching-ready name fields, and saves clean KFST objects. | `clean_winner_data_kfst.rds`, `clean_buyer_data_kfst.rds`. |
-| [code/processing/1_2_process_open_tender.R](code/processing/1_2_process_open_tender.R) | Reads all annual OpenTender CSVs present in `data/raw/OpenTender/`, checks column-name concordance before binding, keeps source-file and source-row provenance, cleans winner and buyer CVR fields, removes non-CVR tokens from multi-CVR buyer rows, prepares matching-ready names, and saves clean OpenTender objects with the original tender fields attached. | `clean_winner_data_ot.rds`, `clean_buyer_data_ot.rds`. |
+| [code/processing/1_2_process_open_tender.R](code/processing/1_2_process_open_tender.R) | Reads all annual OpenTender CSVs present in `data/raw/OpenTender/`, checks column-name concordance before binding, keeps source-file and source-row provenance, derives tender/lot amount and framework-duration variables, cleans winner and buyer CVR fields, removes non-CVR tokens from multi-CVR buyer rows, fills some missing CVRs when the same firm name appears elsewhere with one valid CVR, prepares matching-ready names, and saves clean OpenTender objects with the original tender fields attached. | `clean_winner_data_ot.rds`, `clean_buyer_data_ot.rds`. |
 | [code/processing/1_3_process_keys.R](code/processing/1_3_process_keys.R) | Cleans the CVR register name keys used for later matching. It prepares both official names and alternative names. | `clean_cvr_name_key.rds`, `clean_cvr_biname_key.rds`. |
 | [code/processing/2_1_match_kfst.R](code/processing/2_1_match_kfst.R) | Matches missing KFST winner CVRs against the prepared CVR-name keys. | `clean_winner_data_kfst_name_matched.rds`, `manual_name_review_kfst.rds`. |
 | [code/processing/2_2_match_kfst_buyers.R](code/processing/2_2_match_kfst_buyers.R) | Matches KFST buyer names to CVRs, since KFST buyer CVRs are not supplied in the raw source. | `clean_buyer_data_kfst_name_matched.rds`, `manual_buyer_name_review_kfst.rds`. |
 | [code/processing/2_3_match_opentender.R](code/processing/2_3_match_opentender.R) | Matches missing OpenTender winner CVRs and records ambiguous or fuzzy cases for review. Also writes winner-name partition diagnostics. | `clean_winner_data_ot_name_matched.rds`, `manual_name_review_ot.rds`, `winner_name_partition_diagnostics_ot.rds`. |
 | [code/processing/2_4_match_opentender_buyers.R](code/processing/2_4_match_opentender_buyers.R) | Matches missing OpenTender buyer CVRs and records ambiguous or fuzzy cases for review. Also writes buyer-name partition diagnostics. | `clean_buyer_data_ot_name_matched.rds`, `manual_buyer_name_review_ot.rds`, `buyer_name_partition_diagnostics_ot.rds`. |
+| [code/processing/2_5_augment_matched_variables.R](code/processing/2_5_augment_matched_variables.R) | Maintenance utility for additive tender/lot-level updates. Re-attaches newly created variables from the clean datasets onto the existing `*_name_matched.rds` files without re-running the slow name-matching scripts. Use only when the cleaning changes are add-only and do not alter names, CVRs, or row expansion. | refreshed `*_name_matched.rds` files in place. |
 | [code/analysis/3_quality_analysis.Rmd](code/analysis/3_quality_analysis.Rmd) | Builds the match-quality and data-quality report from the cleaned and matched outputs. | `docs/3_quality_analysis.html`. |
 
 The [code/scraping/](code/scraping) folder holds optional web/API data pulls
@@ -101,10 +102,6 @@ need network access and are off by default:
 Enable them in a run with `BUILD_EMPLOYMENT_HISTORY=true` and/or
 `EXTRACT_TED_NOTICES=true` (see [Replication](#replication)). Both are resumable
 and can also be run on their own with `Rscript` once the matched datasets exist.
-
-The [code/drafts/](code/drafts) folder contains experimental or benchmark
-scripts. These are useful for development, but they are not part of the default
-replication workflow.
 
 ## Required local inputs
 
@@ -125,8 +122,9 @@ Expected source files:
 
 The OpenTender script reads all semicolon-delimited CSV files present in
 `data/raw/OpenTender/`, checks that their column names concord, and then binds
-them into one cleaning dataset. The replication sample is therefore determined
-by the files placed in that folder.
+them into one cleaning dataset with a source-file identifier (`dataset`) and a
+stable source-row identifier (`row_id`). The replication sample is therefore
+determined by the files placed in that folder.
 
 ## Configuration
 
@@ -264,24 +262,37 @@ code/scraping/1_build_cvr_employment_history.R  # only if BUILD_EMPLOYMENT_HISTO
 code/scraping/2_extract_ted_notices.R           # only if EXTRACT_TED_NOTICES=true
 ```
 
+The default replication script does **not** run
+`code/processing/2_5_augment_matched_variables.R`. That script is a targeted
+maintenance utility for cases where `1_1_process_kfst.R` or
+`1_2_process_open_tender.R` gained new tender/lot-level variables and you want
+to refresh existing matched datasets without re-running the buyer-matching
+steps. It is only valid when those processing changes are additive.
+
 Outputs are written to `data/clean/` (and, for the optional TED pull,
 `data/intermediates/`).
 
-Expected run time depends on the machine, but the main distinction is between
-cleaning and name matching:
+Expected run time depends on the machine. The figures below are from a full
+reference run (2026-07-29, **1h 41m** total); they scale with the hardware but the
+shape holds — name matching dominates, and buyer matching most of all. (The
+matching scripts fuzzy-match distinct names once and join the results back, which
+roughly halved the pipeline from an earlier ~3h 32m.)
+
+Reference machine: Apple M2 (8-core), 24 GB RAM, macOS 15.7.4 (Sequoia, arm64),
+R 4.5.1.
 
 | Stage | Scripts | Approximate run time |
 |---|---|---|
 | Input checks | built into `run_replication.sh` | seconds |
 | Environment restore, if `RESTORE_RENV=true` | `renv::restore()` | depends on whether packages are already installed |
-| Cleaning only | `code/processing/1_1_process_kfst.R`, `code/processing/1_2_process_open_tender.R` | minutes |
-| CVR-name-key preparation | `code/processing/1_3_process_keys.R` | minutes |
-| Winner matching | `code/processing/2_1_match_kfst.R`, `code/processing/2_3_match_opentender.R` | slower than cleaning, but not usually the main bottleneck |
-| Buyer matching | `code/processing/2_2_match_kfst_buyers.R`, `code/processing/2_4_match_opentender_buyers.R` | the main bottleneck; this is where most of the few-hour full-run time is spent |
+| Cleaning only | `code/processing/1_1_process_kfst.R`, `code/processing/1_2_process_open_tender.R` | ~2 minutes (22s + 1m 34s) |
+| CVR-name-key preparation | `code/processing/1_3_process_keys.R` | ~3.5 minutes (3m 38s) |
+| Winner matching | `code/processing/2_1_match_kfst.R`, `code/processing/2_3_match_opentender.R` | ~17 minutes (1m 23s + 16m; mostly OpenTender) |
+| Buyer matching | `code/processing/2_2_match_kfst_buyers.R`, `code/processing/2_4_match_opentender_buyers.R` | ~1h 18m — still the main bottleneck (KFST 23m 31s, OpenTender 54m 54s) |
 
 For a quick check that the cleaning scripts still run, use `RUN_MATCHING=false`.
-For a full matched dataset, plan for a few hours and expect most of that time to
-come from the buyer-matching scripts.
+For a full matched dataset, plan for roughly **1h 45m**, most of it in the
+buyer-matching scripts (the OpenTender buyer match alone is ~55m).
 
 ### 5. Run cleaning only
 
@@ -334,12 +345,25 @@ clean_buyer_data_ot.rds
 
 The OpenTender clean files now keep the bound source-file identifier
 (`dataset`), a stable source-row identifier (`row_id`), the original tender
-fields joined back onto the cleaned winner and buyer rows, and the derived
-amount fields `tender_amount`, `lot_amount`, and `bid_amount`. They also record
-when a missing OpenTender CVR was filled from another row with the same firm
-name (`row_id_borrowed_from` and `flag_fill_missing_cvr`); on the buyer side,
-the cleaning output also flags invalid multi-CVR tokens that were dropped before
-name matching (`flag_non_cvr_identifier`).
+fields joined back onto the cleaned winner and buyer rows, and derived
+tender-level variables including `tender_amount`, `lot_amount`, `bid_amount`,
+their EUR/DKK counterparts (`tender_amount_eur`, `tender_amount_dkk`,
+`lot_amount_eur`, `lot_amount_dkk`), `flag_awarded`,
+`framework_start_anchor`, `framework_duration_days`,
+`framework_end_date`, `annualised_tender_amount`, and
+`annualised_lot_amount`. They also record when a missing OpenTender CVR was
+recovered from formatting alone (`*_cvr_recovered_from_formatting` and
+`flag_cvr_recovered_from_formatting`) or filled from another row with the same
+firm name (`row_id_borrowed_from` and `flag_fill_missing_cvr`); on the buyer
+side, the cleaning output also flags invalid multi-CVR tokens that were dropped
+before name matching (`flag_non_cvr_identifier`).
+
+If you add tender/lot-level variables like these after matched files already
+exist, either re-run the full matching workflow or run
+`code/processing/2_5_augment_matched_variables.R` after regenerating the clean
+files. That utility updates the matched `*_name_matched.rds` files in place by
+joining on stable row keys; it is not a substitute for re-running matching when
+the cleaning logic changes names, CVRs, or row expansion.
 
 Matched data:
 
