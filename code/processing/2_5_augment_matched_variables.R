@@ -41,7 +41,11 @@ vars <- c(
   "contract_duration_months_min",   # KFST
   "contract_duration_months_max",   # KFST
   "annualised_tender_amount",
-  "annualised_lot_amount"
+  "annualised_lot_amount",
+  "tender_amount_eur",              # both sources (EUR/DKK at the fixed ERM II peg)
+  "tender_amount_dkk",
+  "lot_amount_eur",
+  "lot_amount_dkk"
 )
 
 # Each matched file, its clean-data source, and the row key that links them.
