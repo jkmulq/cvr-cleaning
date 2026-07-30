@@ -39,6 +39,7 @@ rm(list = ls())
 library(here)
 library(data.table)
 library(knitr)
+library(ggplot2)
 
 # Paths
 report_project_dir <- local({
@@ -53,6 +54,14 @@ knitr::opts_knit$set(root.dir = report_project_dir)
 report_cvr_key_dir <- file.path(report_project_dir, "data", "cvr_matching_data")
 
 source(file.path(report_project_dir, "config.R"))
+
+# Matching helpers (prepare_cvr_name, levenshtein_ratio) reused for the
+# fuzzy-quality check on the residual match failures below.
+source(file.path(report_project_dir, "code", "functions.R"))
+
+theme_set(theme_light())
+theme_update(plot.title = element_text(hjust = 0.5, face = "bold"),
+             plot.subtitle = element_text(hjust = 0.5))
 
 # Input files
 official_old_file <- file.path(report_cvr_key_dir, "cvr_names_full.csv")
@@ -158,32 +167,128 @@ The below table summarises the how many firm names are exactly equal between the
 ```{r name-concordance}
 
 # Use the old key as the reference
-official_old[, cvr_in_new_key := cvr %in% official_new_cvrs]
-official_join <- official_new[official_old, on = "cvr"]
-
-# Test equality of name
-official_join[, firm_name_equal := new_name == old_name]
+official_old[, pair_in_new_key := cvr %in% official_new_cvrs]
+official_join <- official_old[official_new, on = .(cvr, old_name == new_name)]
+official_join[is.na(pair_in_new_key), pair_in_new_key := FALSE]
 
 # Create summary table
 official_name_concordance <- data.table(
   measure = c(
     "old CVR-name pairs",
-    "old CVR-name pairs where CVR is in new key",
-    "old CVR-name pairs with exact same name after CVR join"
+    "old CVR-name pairs where CVR is in new key"
   ),
   n = c(
     nrow(official_old),
-    official_old[cvr_in_new_key == TRUE, .N],
-    official_join[firm_name_equal == TRUE, .N]
+    nrow(official_join[pair_in_new_key == TRUE, ])
   )
 )
-official_name_concordance[
-  ,
-  share_of_old_pairs := scales::percent(n / nrow(official_old), accuracy = 0.1)
-]
+official_name_concordance[,
+  share_of_old_pairs := scales::percent(n / nrow(official_old), accuracy = 0.01)
+  ]
 
 kable(official_coverage)
 kable(official_name_concordance)
+
+```
+
+### Match failures
+A cursory analysis shows that there's a few failures. But the problem is that one CVR number corresponds to multiple firm names in the keys. This means a pair-match failure might just mean the firm is no longer listed under that name. I find this to be the case in the overwhelming majority of match failures: if a pair didn't match, the CVR number in that pair matched to some other firm name in the new key.
+```{r match-failures}
+
+# Create summary table of match failure counts
+official_failures <- data.table(
+  measure = c(
+    "n. pairs didn't match",
+    "n. unique cvrs",
+    "shared cvrs"
+  ),
+  n = c(
+    nrow(official_join[pair_in_new_key == FALSE, ]),
+    official_join[pair_in_new_key == FALSE, uniqueN(cvr)],
+    length(intersect(
+      unique(official_join[pair_in_new_key == FALSE, ]$cvr), 
+      unique(official_old$cvr))
+      )
+  )
+)
+
+# Diagnose match failures
+shared_cvr_failures <- intersect(
+  unique(official_join[pair_in_new_key == FALSE, ]$cvr), 
+  unique(official_old$cvr)
+  )
+
+# Flag whether CVR number matches in some other pair
+official_join[cvr %in% shared_cvr_failures, 
+              any_match := sum(pair_in_new_key) >= 1, 
+              by = cvr]
+
+# Cross-tabulate
+match_failure_source <- official_join[cvr %in% shared_cvr_failures, 
+                                      .N, 
+                                      by = .(pair_in_new_key, any_match)]
+kable(match_failure_source, 
+      caption = "For CVRs that list at least one pair match failure, almost all matched to another pair")
+```
+
+The remaining failed pairs have CVR numbers in both the old and new keys. The match failures come from differences in name. Below I show that the fuzzy match quality between the two is bimodal, with about half exceeding the fuzzy match thresholds used in the matching scripts. The poorer matches seem to come from sole proprietorships that no longer use the owner's name in the firm name. 
+```{r failure-fuzzy-match-quality}
+# Residual failures: CVRs in both keys where NO name matched exactly
+# (any_match == FALSE). For each such CVR, score its old names against its new
+# names with the same Levenshtein ratio the matching scripts use, after
+# preparing both names the same way (compare on the cleaned name_clean).
+target_cvrs <- unique(
+  official_join[pair_in_new_key == FALSE & any_match == FALSE, cvr]
+)
+
+old_sub <- unique(official_old[cvr %in% target_cvrs, .(cvr, name = old_name)])
+new_sub <- unique(official_new[cvr %in% target_cvrs, .(cvr, name = new_name)])
+
+old_sub[, prep := prepare_cvr_name(name)$name_clean]
+new_sub[, prep := prepare_cvr_name(name)$name_clean]
+old_sub <- old_sub[!is.na(prep) & prep != ""]
+new_sub <- new_sub[!is.na(prep) & prep != ""]
+
+# For each old name, the best Levenshtein ratio against its CVR's new names.
+new_by_cvr <- new_sub[, .(new_names = list(unique(prep))), by = cvr]
+old_sub <- old_sub[new_by_cvr, on = "cvr", nomatch = 0]
+old_sub[, best_score := mapply(
+  function(o, nn) max(levenshtein_ratio(o, nn)),
+  prep, new_names
+)]
+
+# Fuzzy-accept thresholds imposed when matching tender names to the CVR key
+# (steps 5/6 in 2_1-2_4: scores must EXCEED 85, 86, or 89 to be accepted).
+fuzzy_thresholds <- c(85, 86, 89)
+
+# How many of these "failures" would actually clear the fuzzy bar.
+failure_fuzzy_summary <- data.table(
+  measure = c(
+    "old names scored",
+    "median best score",
+    paste0("share with best score > ", fuzzy_thresholds)
+  ),
+  value = c(
+    format(nrow(old_sub), big.mark = ","),
+    sprintf("%.1f", median(old_sub$best_score)),
+    scales::percent(
+      vapply(fuzzy_thresholds, function(t) mean(old_sub$best_score > t), numeric(1)),
+      accuracy = 0.1
+    )
+  )
+)
+kable(failure_fuzzy_summary,
+      caption = "Fuzzy quality of unmatched old names vs their CVR's new names")
+
+ggplot(old_sub, aes(x = best_score)) +
+  geom_histogram(fill = "#2f6f9f", alpha = 0.6, color = "#17324d") +
+  geom_vline(xintercept = fuzzy_thresholds, linetype = "dashed", color = "#b3452f") +
+  labs(
+    title = "Fuzzy match quality of unmatched old names",
+    subtitle = "Best Levenshtein ratio to a new name for the same CVR; dashed = fuzzy-accept thresholds (85/86/89)",
+    x = "Levenshtein ratio (0-100)",
+    y = "Density"
+  )
 
 ```
 
@@ -233,7 +338,7 @@ alternative_coverage <- data.table(
 
 ### Firm name concordance
 The below table summarises the how many firm names are exactly equal between the old and new alternative name keys, conditional on the CVR number being the same.
-```{r alt-name-concordance}
+```{r alt-name-concordance, fig.align='center'}
 
 # Use the old key as the reference. Join to the new key on both CVR and the raw
 # alternative name, so each old CVR-name pair is only counted once.
