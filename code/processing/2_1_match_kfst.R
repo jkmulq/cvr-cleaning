@@ -164,10 +164,32 @@ cat("Step 4 matches:", nrow(new_matches), "\n")
 rm(new_matches, cvr_key)
 gc()
 
+# Speed-up: fuzzy match each distinct winner-name problem once, then expand the
+# results back onto every original row. Keep match_date because CVR names are
+# filtered by tender publication date inside the fuzzy step, so two rows with the
+# same name but different dates are legitimately different problems.
+fuzzy_match_cols <- c(
+  "winner_name_match",
+  "winner_name_broad",
+  "winner_firm_type",
+  "match_date"
+)
+remaining[, fuzzy_match_id := .GRP, by = fuzzy_match_cols]
+fuzzy_row_lookup <- remaining[, .(match_row_id, fuzzy_match_id)]
+remaining <- remaining[, .SD[1], by = fuzzy_match_id]
+remaining[, match_row_id := fuzzy_match_id]
+remaining_original <- remaining
+cat("No. distinct observations to fuzzy match:", nrow(remaining), "\n")
+
 
 # 4 Fuzzy matching
 # Create storage table
 fuzzy_candidates <- data.table()
+
+# All matches so far (exact) are keyed by the real match_row_id. Snapshot them so
+# the fuzzy join-back below is a plain rbind onto this table, instead of filtering
+# the fuzzy rows back out of a mixed table.
+matched_prefuzzy <- copy(matched)
 
 ## 4.1 Main name key, full winner name
 # Find top 5 fuzzy matches
@@ -269,6 +291,35 @@ cat("Number of fuzzy matches", nrow(new_matches), "\n")
 
 rm(new_matches, step_candidates, name_key, biname_key)
 gc()
+
+
+# Expand distinct-name fuzzy results back to every original winner row before the
+# rank/dcast and the update-join, so both are keyed by the real match_row_id.
+if (nrow(fuzzy_candidates) > 0) {
+  setnames(fuzzy_candidates, "match_row_id", "fuzzy_match_id")
+  fuzzy_candidates <- fuzzy_row_lookup[
+    fuzzy_candidates,
+    on = "fuzzy_match_id",
+    allow.cartesian = TRUE
+  ]
+  fuzzy_candidates[, fuzzy_match_id := NULL]
+}
+
+# Pull the fuzzy matches (keyed by group id) into their own table, expand each
+# group's match onto every original winner row, then recombine with the pre-fuzzy
+# (exact) matches, which are already keyed by real ids.
+fuzzy_matched <- matched[name_match_method == "fuzzy"]
+fuzzy_matched <- fuzzy_row_lookup[
+  fuzzy_matched,
+  on = .(fuzzy_match_id = match_row_id),
+  allow.cartesian = TRUE
+][, fuzzy_match_id := NULL]
+
+matched <- rbindlist(
+  list(matched_prefuzzy, fuzzy_matched),
+  use.names = TRUE,
+  fill = TRUE
+)
 
 
 # 5 Join matches back to the full KFST winner data

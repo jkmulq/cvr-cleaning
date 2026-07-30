@@ -658,8 +658,29 @@ rm(complete_summary, cvr_key)
 gc()
 
 # 6 Fuzzy matching
+# For faster runtime, I fuzzy match each distinct buyer once, since firms buy multiple times.
+# We will join the matches back onto the original data after matching is done.
+fuzzy_match_cols <- c(
+  "buyer_name_match",
+  "buyer_name_broad",
+  "buyer_firm_type",
+  "match_date"
+)
+remaining[, fuzzy_match_id := .GRP, by = fuzzy_match_cols] # Create group ID
+fuzzy_row_lookup <- remaining[, .(match_row_id, fuzzy_match_id)]
+remaining <- remaining[, .SD[1], by = fuzzy_match_id] # Select first entry for each group ID
+remaining[, match_row_id := fuzzy_match_id]
+remaining_original <- remaining
+cat("No. distinct observations to fuzzy match:", nrow(remaining), "\n")
+
+
 # Create storage table
 fuzzy_candidates <- data.table()
+
+# All matches so far (exact + consortium) are keyed by the real match_row_id.
+# Snapshot them so the fuzzy join-back below is a plain rbind onto this table,
+# instead of filtering the fuzzy rows back out of a mixed table.
+matched_prefuzzy <- copy(matched)
 
 ## 6.1 Main name key, full buyer name
 # Find top 5 fuzzy matches
@@ -761,6 +782,36 @@ cat("Number of fuzzy matches", nrow(new_matches), "\n")
 
 rm(new_matches, step_candidates, name_key, biname_key)
 gc()
+
+
+# Expand distinct-name fuzzy results back to every original buyer row before the
+# rank/dcast and the update-join, so both are keyed by the real match_row_id.
+if (nrow(fuzzy_candidates) > 0) {
+  setnames(fuzzy_candidates, "match_row_id", "fuzzy_match_id")
+  fuzzy_candidates <- fuzzy_row_lookup[
+    fuzzy_candidates,
+    on = "fuzzy_match_id",
+    allow.cartesian = TRUE
+  ]
+  fuzzy_candidates[, fuzzy_match_id := NULL]
+}
+
+# The fuzzy steps appended their matches to `matched` keyed by the group id
+# (fuzzy_match_id). Pull those into their own table, expand each group's match
+# onto every original buyer row (via fuzzy_row_lookup), then recombine with the
+# pre-fuzzy (exact + consortium) matches, which are already keyed by real ids.
+fuzzy_matched <- matched[name_match_method == "fuzzy"]
+fuzzy_matched <- fuzzy_row_lookup[
+  fuzzy_matched,
+  on = .(fuzzy_match_id = match_row_id),
+  allow.cartesian = TRUE
+][, fuzzy_match_id := NULL]
+
+matched <- rbindlist(
+  list(matched_prefuzzy, fuzzy_matched),
+  use.names = TRUE,
+  fill = TRUE
+)
 
 
 # 7 Join matches back to the full OpenTender buyer data
