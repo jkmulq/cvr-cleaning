@@ -68,11 +68,7 @@ data <- data %>%
   )
 
 # Standardise tender-level fields before they are joined onto buyer/winner rows.
-## Tender/lot amount. KFST amounts are in DKK; add the EUR counterpart at
-## Denmark's fixed ERM II central rate (7.46038 DKK per EUR, +/-2.25% band).
-## Created here on the tender/lot-level data so the EUR/DKK columns propagate to
-## the winner and buyer tables through the joins below.
-dkk_per_eur <- 7.46038
+## Tender/lot amount. 
 data <- data %>%
   mutate(
     tender_amount = coalesce(
@@ -82,7 +78,27 @@ data <- data %>%
     lot_amount = coalesce(
       as.numeric(final_lot_amount),
       as.numeric(estimated_lot_amount)
-    ),
+    )
+  )
+
+## Fill missing amounts
+# Equally split tender over all lots, if all lot amounts are unavailable
+data <- data %>%
+  mutate(lot_amount_orig = lot_amount,
+         flag_all_orig_lot_amt_missing = all(is.na(lot_amount_orig)),
+         lot_amount = ifelse(flag_all_orig_lot_amt_missing,
+                             tender_amount / n_distinct(lot_id),
+                             lot_amount_orig),
+         .by = tender_id)
+
+## Add the EUR counterpart at Denmark's fixed ERM II central rate (7.46038 DKK
+## per EUR, +/-2.25% band). Derived after the amount fill so imputed values are
+## included, and on the tender/lot-level data so the EUR/DKK columns propagate to
+## the winner and buyer tables through the joins below.
+# KFST amounts are in DKK.
+dkk_per_eur <- 7.46038
+data <- data %>%
+  mutate(
     tender_amount_dkk = tender_amount,
     lot_amount_dkk    = lot_amount,
     tender_amount_eur = tender_amount / dkk_per_eur,
@@ -267,6 +283,7 @@ tender_lot_data <- data %>%
     "n_lots", "n_lots_contracted", "n_lot_winners", "n_bids_received",
     "tender_amount", "lot_amount",
     "tender_amount_eur", "tender_amount_dkk", "lot_amount_eur", "lot_amount_dkk",
+    "lot_amount_orig", "flag_all_orig_lot_amt_missing",
     "n_bidders",
     "pub_date", "award_date", "submit_date",
     "divided_tender", "joint_tender", "consortium_winner",
