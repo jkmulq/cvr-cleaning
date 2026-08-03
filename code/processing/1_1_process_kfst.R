@@ -294,7 +294,8 @@ tender_lot_data <- data %>%
     "annualised_tender_amount", "annualised_lot_amount",
     "n_lot_id"
   ))) %>%
-  arrange(tender_id, lot_id, lot_number)
+  arrange(tender_id, lot_id, lot_number) %>% 
+  distinct(tender_id, lot_id, lot_number, .keep_all = TRUE)
 
 
 # 2 Winners
