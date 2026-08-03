@@ -269,6 +269,17 @@ data <- data %>%
                              lot_amount_orig),
          .by = tender_id)
 
+# Framework/DPS pre-awards (PREAWARDED) are a single synthetic lot shared by all
+# qualified suppliers, so the equal-split above gave each row the FULL framework
+# ceiling. Re-split it equally across the qualified suppliers as an expected
+# per-firm slice, and flag it (an estimated ceiling split, not a realised award).
+data <- data %>%
+  mutate(flag_framework_prequalified = (lot_status == "PREAWARDED"),
+         lot_amount = ifelse(flag_framework_prequalified & !is.na(tender_amount),
+                             tender_amount / n_distinct(winner_name_original),
+                             lot_amount),
+         .by = c(tender_id, lot_id))
+
 ## Add the DKK counterpart at Denmark's fixed ERM II central rate (7.46038 DKK
 ## per EUR, +/-2.25% band). Derived after the amount fill so imputed values are
 ## included, and on the tender/lot-level data so the EUR/DKK columns propagate to
