@@ -109,12 +109,31 @@ data <- data %>%
     )
   )
 
-## Tender/lot amount. OpenTender amounts are already in EUR; add the DKK
-## counterpart at Denmark's fixed ERM II central rate (7.46038 DKK per EUR,
-## +/-2.25% band). Created here on the tender/lot-level data so the EUR/DKK
-## columns propagate to the winner and buyer tables through the joins below.
-dkk_per_eur <- 7.46038
-original_tender_data <- original_tender_data %>%
+# Remove non-awarded tenders/lots, and cancelled tenders
+data <- data %>% 
+  filter(tender_isAwarded != "no", 
+         lot_isAwarded != "no",
+         !tender_cancelled)
+
+# Rearrange so easier to keep good data entries and dedup
+# Also keep a stable reference to the original OpenTender row.
+# This lets expanded winner rows point back to the raw bid row.
+data <- data %>% 
+  arrange(tender_id, lot_id, 
+          buyer_name_original, desc(buyer_cvr_original),
+          winner_name_original, desc(winner_cvr_original), 
+          desc(bid_isWinning == "yes")) %>%
+  mutate(row_id = row_number()) %>% 
+  select(row_id, everything())
+
+# Only keep valid tender-lot-winner-buyer matches
+data <- data %>%
+  distinct(tender_id, lot_id, 
+           winner_cvr_original, winner_name_original, 
+           buyer_cvr_original, buyer_name_original, .keep_all = TRUE)
+
+## Tender/lot amount. 
+data <- data %>%
   mutate(
     tender_amount = coalesce(
       parse_number(tender_finalPrice_EUR),
