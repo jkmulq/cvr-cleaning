@@ -78,16 +78,10 @@ data <- rbindlist(
 
 data <- as_tibble(data)
 
-# Keep a stable reference to the original OpenTender row.
-# This lets expanded winner rows point back to the raw bid row.
-data <- data %>%
-  mutate(row_id = row_number()) %>% 
-  select(row_id, everything())
-
-## 1.3 Original tender data
+## 1.3 Basic munging
 ## Keep all OpenTender source fields, but rename the variables that clearly
 ## correspond to the KFST naming convention.
-original_tender_data <- data %>%
+data <- data %>%
   rename(
     lot_id = lot_lotId,
     lot_number = lot_lotNumber,
