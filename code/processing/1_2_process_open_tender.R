@@ -109,10 +109,11 @@ data <- data %>%
     )
   )
 
-# Remove non-awarded tenders/lots, and cancelled tenders
-data <- data %>% 
-  filter(tender_isAwarded != "no", 
-         lot_isAwarded != "no",
+# Keep only the awarded sample: real awards (AWARDED) plus framework/DPS
+# qualification panels (PREAWARDED). Drops ANNOUNCED/PREPARED (pre-award) and
+# CANCELLED lots, none of which have a winner. Also drop cancelled tenders.
+data <- data %>%
+  filter(lot_status %in% c("AWARDED", "PREAWARDED"),
          !tender_cancelled)
 
 # Rearrange so easier to keep good data entries and dedup
