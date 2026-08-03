@@ -23,6 +23,8 @@ This file tracks development work against the current codebase and the project b
 - [x] Add reproducible KFST outputs.
   - Target: write final cleaned data and diagnostics to `data/clean/`, including a compact summary of cleaning outcomes.
   - **Conclusion**: Will put separate tables for `clean_winnner_data` and `clean_buyer_data`. `clean_winner_data` will contain buyer-winner matches, but it won't have multiple buyers separated out row-by-row.
+- [ ] Review multi-buyer lots in the KFST dataset.
+  - Check how tender-lots procured jointly by multiple buyers (`joint_tender` / Fælles) are represented, and whether the tender-lot grain and the buyer table handle them correctly (cf. the OpenTender buyer-dimension explosion fix under OpenTender Cleaning, which was treated as a no-op for KFST — confirm that assumption holds).
 
 ## Buyer And Name Matching
 
