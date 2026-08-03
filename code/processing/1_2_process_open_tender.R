@@ -289,7 +289,7 @@ data <- data %>%
 # framework_duration_days is the same duration used for framework_end_date above.
 # Framework agreements only, and only where the amount and a positive duration
 # are both present (the > 0 guard avoids divide-by-zero).
-original_tender_data <- original_tender_data %>%
+data <- data %>%
   mutate(
     annualised_tender_amount = if_else(
       contract_type == "Framework agreement" &
@@ -310,8 +310,8 @@ original_tender_data <- original_tender_data %>%
 ## keep the first listed code and map it to its EU CPV division (the broadest
 ## interpretable grouping). OpenTender spans many years, so codes mix the CPV
 ## 2003 and CPV 2008 vocabularies; clean_cpv_code() handles both.
-cpv_prepared <- clean_cpv_code(original_tender_data$cpv_code)
-original_tender_data <- original_tender_data %>%
+cpv_prepared <- clean_cpv_code(data$cpv_code)
+data <- data %>%
   mutate(
     cpv_code_first = cpv_prepared$code_first,
     cpv_division = cpv_prepared$division,
@@ -324,16 +324,18 @@ original_tender_data <- original_tender_data %>%
 ## Tender awarded
 # Make a flag at the lot level for whether the lot is awarded.
 # I am strict here: only say TRUE if "yes", otherwise false
-original_tender_data <- original_tender_data %>% 
+data <- data %>% 
   mutate(flag_awarded = ifelse(tender_isAwarded == "yes", TRUE, FALSE))
 
 ## 1.4 Separate winners/buyers/original data
-winner_data_original <- data %>% 
-  select(row_id, tender_id, bidder_bodyIds, bidder_name, bidder_country) %>% 
-  rename(winner_cvr = bidder_bodyIds, winner_name = bidder_name, winner_country = bidder_country)
-buyer_data_original <- data %>% 
-  select(row_id, tender_id, buyer_bodyIds, buyer_name, buyer_country) %>% 
-  rename(buyer_cvr = buyer_bodyIds)
+winner_data_original <- data %>%
+  mutate(winner_cvr = winner_cvr_original,
+         winner_name = winner_name_original,
+         winner_country = winner_country_original)
+buyer_data_original <- data %>%
+  mutate(buyer_cvr = buyer_cvr_original,
+         buyer_name = buyer_name_original,
+         buyer_country = buyer_country_original)
 
 
 # 2 Winner data
@@ -546,11 +548,8 @@ single_winner_data <- single_winner_data %>%
 clean_winner_data <- bind_rows(single_winner_data, multi_winner_data_long) %>%
   arrange(row_id, winner_number) 
 
-## 2.7 Join original tender data
-## This keeps the full OpenTender row attached to the cleaned winner rows, so
-## replication checks can always go back to the source fields.
-clean_winner_data <- left_join(clean_winner_data, original_tender_data,
-                               by = c("row_id", "tender_id"))
+## 2.7 No tender-data join needed: the winner table is seeded from the full `data`,
+## so the tender/lot/amount fields already ride along with each cleaned row.
 
 # Rearrange columns 
 clean_winner_data <- clean_winner_data %>%
@@ -970,11 +969,8 @@ single_buyer_data <- single_buyer_data %>%
 clean_buyer_data <- bind_rows(single_buyer_data, multi_buyer_data_long) %>%
   arrange(row_id, buyer_number) 
 
-## 3.7 Join original tender data
-## This keeps the full OpenTender row attached to the cleaned buyer rows, so
-## replication checks can always go back to the source fields.
-clean_buyer_data <- left_join(clean_buyer_data, original_tender_data,
-                               by = c("row_id", "tender_id"))
+## 3.7 No tender-data join needed: the buyer table is seeded from the full `data`,
+## so the tender/lot/amount fields already ride along with each cleaned row.
 
 # Rearrange columns 
 clean_buyer_data <- clean_buyer_data %>%
@@ -1202,7 +1198,6 @@ clean_buyer_data <- clean_buyer_data %>%
 # Flag if observation will need CVR fuzzy match 
 clean_buyer_data <- clean_buyer_data %>%
   mutate(flag_check_fuzzy_match = coalesce(buyer_name != "" & is.na(buyer_cvr_clean), FALSE))
-
 
 # Ensure natural row grains for each of winner/buyer side
 # OpenTender expands every row across the buyer dimension, where
