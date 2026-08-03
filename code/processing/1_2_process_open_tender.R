@@ -143,29 +143,25 @@ data <- data %>%
       parse_number(bid_price_EUR),
       parse_number(lot_estimatedPrice_EUR)
     ),
-    bid_amount = parse_number(bid_price_EUR),
-    tender_amount_eur = tender_amount,
-    lot_amount_eur    = lot_amount,
-    tender_amount_dkk = tender_amount * dkk_per_eur,
-    lot_amount_dkk    = lot_amount    * dkk_per_eur
+    bid_amount = parse_number(bid_price_EUR)
   )
 
 ## Number of bidders
-original_tender_data <- original_tender_data %>%
+data <- data %>%
   mutate(n_bidders = parse_number(n_bids_received))
 
 ## Award date
-original_tender_data <- original_tender_data %>%
+data <- data %>%
   mutate(award_date = as.Date(award_date))
 
-original_tender_data <- original_tender_data %>%
+data <- data %>%
   mutate(award_date = dplyr::if_else(is.na(award_date),
                                      lubridate::ymd(tender_publications_firstdContractAwardDate),
                                      award_date))
 
 
 ## Framework agreement
-original_tender_data <- original_tender_data %>%
+data <- data %>%
   mutate(contract_type = case_when(
     contract_type == "yes" ~ "Framework agreement",
     contract_type == "no" ~ "Public contract"
@@ -177,7 +173,7 @@ original_tender_data <- original_tender_data %>%
 # duration to a start anchor (planned start date, else award date). The duration
 # falls back from the most to least granular unit (days, then months, then
 # years). Populated for framework agreements only.
-original_tender_data <- original_tender_data %>%
+data <- data %>%
   mutate(
     framework_start_anchor = coalesce(
       award_date,
