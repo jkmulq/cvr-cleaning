@@ -195,6 +195,93 @@ data <- data %>%
     )
   ) 
 
+## Fill missing amounts
+# Check whether tenders with multiple rows disagree across tender amounts
+tender_variance <- data %>% 
+  summarise(tvals = n_distinct(tender_amount), 
+            n = n(), 
+            .by = tender_id) %>% 
+  filter(n > 1) %>% 
+  arrange(-tvals)
+
+check <- (tender_variance$tvals == 1)
+if (!all(check)) { 
+  stop("some tender IDs have more than one row with different listed amounts.")
+}
+
+# Lot amount variance check
+# The following row is not present in the TED notice:
+# (tender_id, lot_id, winner_name, lot_amount) = 
+# (b96cecee-2793-471d-896e-1c88e1feca56, group_EU_tender_7b094b56ffad217bea213493b5bf7460f52036da_3,
+# ISS Facility Services A/S, 2769258)
+# The real row has a lot amount = 1846172 Euros. 
+# See the TED notice here: http://ted.europa.eu/udl?uri=TED:NOTICE:166156-2017:TEXT:EN:HTML
+# Section V, second lot lists the lot amount as 13,744,732 DKK (roughly 1846172 Euros)
+# I remove it before the check below, but if the check below fails again must investigate other failures.
+data <- data %>%
+  filter(!(tender_id == "b96cecee-2793-471d-896e-1c88e1feca56" &
+             lot_id == "group_EU_tender_7b094b56ffad217bea213493b5bf7460f52036da_3" &
+             winner_name_original == "ISS Facility Services A/S" &
+             round(lot_amount, 0) == 2769258))
+
+# Create check for lot amount
+lot_variance <- data %>% 
+  summarise(lvals = n_distinct(lot_amount), 
+            n = n(), 
+            rows = paste(row_id, collapse = ", "),
+            # Note: Adds winner_name_original because many lots are genuinely multi-winner lots
+            .by = c(tender_id, lot_id, winner_name_original)) %>% 
+  filter(n > 1) %>% 
+  arrange(-lvals)
+
+check <- (lot_variance$lvals == 1)
+if (!all(check)) { 
+  check_failures <- lot_variance %>% filter(lvals > 1)
+  print(check_failures)
+  stop("some lot-winner pairs have multiple rows with different listed amounts. they are printed above.")
+}
+
+# Fill a missing tender amount with the sum over its distinct lot IDs, but only
+# when every lot amount is present. Summing over distinct lot_ids (not distinct
+# amounts, and not raw rows) counts each lot exactly once despite the OT explosion
+# (a lot repeats across buyer/bid rows) and despite two lots sharing an amount.
+data <- data %>%
+  mutate(tender_amount_orig = tender_amount,
+         tender_amount = if (all(is.na(tender_amount)) & all(!is.na(lot_amount))) {
+           sum(lot_amount[!duplicated(lot_id)])
+         } else {
+           tender_amount
+         },
+         .by = tender_id)
+
+# Equally split tender over all lots, if all lot amounts are unavailable
+data <- data %>%
+  mutate(lot_amount_orig = lot_amount,
+         flag_all_orig_lot_amt_missing = all(is.na(lot_amount_orig)),
+         # Genuine cross-lot split: a multi-lot tender with a tender amount to
+         # divide. (Single-lot tenders trivially get lot_amount = tender_amount;
+         # tenders with no tender amount stay NA -- neither is a synthetic split.)
+         flag_lot_amt_equal_split = flag_all_orig_lot_amt_missing &
+           n_distinct(lot_id) > 1 & !is.na(tender_amount),
+         lot_amount = ifelse(flag_all_orig_lot_amt_missing,
+                             tender_amount / n_distinct(lot_id),
+                             lot_amount_orig),
+         .by = tender_id)
+
+## Add the DKK counterpart at Denmark's fixed ERM II central rate (7.46038 DKK
+## per EUR, +/-2.25% band). Derived after the amount fill so imputed values are
+## included, and on the tender/lot-level data so the EUR/DKK columns propagate to
+## the winner and buyer tables through the joins below.
+# OT amounts are in Euros.
+dkk_per_eur <- 7.46038
+data <- data %>%
+  mutate(
+    tender_amount_eur = tender_amount,
+    lot_amount_eur    = lot_amount,
+    tender_amount_dkk = tender_amount * dkk_per_eur,
+    lot_amount_dkk    = lot_amount    * dkk_per_eur
+  )
+
 ## Annualised framework amounts
 # A framework agreement's amount covers its whole (multi-year) duration, so the
 # headline total is not comparable to a single-year contract. Annualise it:
