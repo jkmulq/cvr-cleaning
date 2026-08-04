@@ -340,6 +340,8 @@ matches_with_context <- add_entity_context_to_matches(
 
 **Used for:** KFST and OpenTender winner matching scripts.
 
+**Used in:** `2_1_match_kfst.R`, `2_3_match_opentender.R`.
+
 **Example:**
 
 ```r
@@ -353,6 +355,8 @@ By default, this looks for `remaining_original` in the parent environment.
 **Purpose:** Buyer-specific wrapper around `add_entity_context_to_matches()`.
 
 **Used for:** KFST and OpenTender buyer matching scripts.
+
+**Used in:** `2_2_match_kfst_buyers.R`, `2_4_match_opentender_buyers.R`.
 
 **Example:**
 
@@ -370,6 +374,9 @@ By default, this looks for `remaining_original` in the parent environment.
 labels.
 
 **Used for:** Name preparation and multiple-name partition detection.
+
+**Used in:** Internal — called by `prepare_cvr_name()` and
+`make_name_partitions()`; no direct pipeline-script call sites.
 
 **How it works:**
 
@@ -516,6 +523,11 @@ compatible with the tender date.
 
 **Used for:** Exact and fuzzy matching.
 
+**Used in:** `1_3_process_keys.R` directly; also used indirectly by all four
+matching scripts (`2_1_match_kfst.R`, `2_2_match_kfst_buyers.R`,
+`2_3_match_opentender.R`, `2_4_match_opentender_buyers.R`) via
+`select_preferred_exact_match()` and `find_fuzzy_matches()`.
+
 **How it works:**
 
 - Keeps candidates if `match_date` is missing.
@@ -552,6 +564,9 @@ keep_valid_dates(candidates)
 more possible CVRs.
 
 **Used for:** Exact matching steps in all winner and buyer matching scripts.
+
+**Used in:** `2_1_match_kfst.R`, `2_2_match_kfst_buyers.R`,
+`2_3_match_opentender.R`, `2_4_match_opentender_buyers.R`.
 
 **How it works:**
 
@@ -600,6 +615,9 @@ is retained but `name_match_n_candidates` records that ambiguity.
 
 **Used for:** Fuzzy matching.
 
+**Used in:** `code/analysis/5_cvr_key_concordance.Rmd`; also called internally by
+`find_fuzzy_matches()`, so it is used indirectly by all four matching scripts.
+
 **How it works:**
 
 - Uses base R's `adist()` to calculate Levenshtein distance.
@@ -624,6 +642,9 @@ c(100, 59.3)
 entity.
 
 **Used for:** Fuzzy matching in all winner and buyer matching scripts.
+
+**Used in:** `2_1_match_kfst.R`, `2_2_match_kfst_buyers.R`,
+`2_3_match_opentender.R`, `2_4_match_opentender_buyers.R`.
 
 **How it works:**
 
@@ -694,6 +715,9 @@ automatically.
 
 **Used for:** Fuzzy matching after each call to `find_fuzzy_matches()`.
 
+**Used in:** `2_1_match_kfst.R`, `2_2_match_kfst_buyers.R`,
+`2_3_match_opentender.R`, `2_4_match_opentender_buyers.R`.
+
 **How it works:**
 
 - Keeps only the first-ranked candidate.
@@ -726,6 +750,9 @@ new_matches <- accept_fuzzy_match(
 them from the remaining unmatched rows.
 
 **Used for:** Exact and fuzzy matching scripts.
+
+**Used in:** `2_1_match_kfst.R`, `2_2_match_kfst_buyers.R`,
+`2_3_match_opentender.R`, `2_4_match_opentender_buyers.R`.
 
 **How it works:**
 
@@ -770,6 +797,66 @@ and `remaining` no longer contains `match_row_id == 1`:
 original notebook workflow but means the matching scripts need those object
 names to exist before calling it.
 
+## CPV Classification
+
+Map procurement CPV (Common Procurement Vocabulary) codes to coarse category and
+sector labels for the cleaned tender data.
+
+### `clean_cpv_code()`
+
+**Purpose:** Normalize a raw CPV code and derive coarse category + sector labels.
+
+**Used in:** `1_1_process_kfst.R`, `1_2_process_open_tender.R`.
+
+**How it works:** Extracts the division (leading digits) from a raw CPV code,
+then calls `cpv_division_to_sector()` and `cpv_division_to_category()`. Returns a
+list of parallel vectors (mirrors `prepare_cvr_name()`) so the caller can bind
+several derived columns at once.
+
+### `cpv_division_to_category()`
+
+**Purpose:** Map a CPV division to a coarse category — works, services, or
+supplies (goods). Kept deliberately broad so each group is large enough for
+regressions; returns `NA` for a missing division.
+
+**Used in:** Internal — called only by `clean_cpv_code()`; no direct
+pipeline-script call sites.
+
+### `cpv_division_to_sector()`
+
+**Purpose:** Map a CPV division to a sector label (aligned to CPV 2008
+successors); divisions not listed fall through to manufactured goods/supplies.
+
+**Used in:** Internal — called only by `clean_cpv_code()`; no direct
+pipeline-script call sites.
+
+## Virk CVR-Lookup Builder
+
+Helpers that build (and spot-check) the CVR name/lifecycle lookup by querying the
+Danish CVR register (Virk / Erhvervsstyrelsen distribution API). Documented more
+lightly than the functions above — purpose and call sites only.
+
+**Entry points (called from scripts):**
+
+- `generate_cvr_lookup_from_virk()` — **Used in:** `0_build_cvr_lookup.R`. Pages
+  through the Virk API to build the CVR → registered-name / binavne (alternative
+  names) / lifecycle lookup that the matching stage joins against.
+- `test_cvr_lookup_sample()` — **Used in:** `0_build_cvr_lookup.R`. Runs the
+  lookup on a small sample of CVRs as a quick sanity check.
+
+**Virk API helpers** — **Used in:** `code/scraping/1_build_cvr_employment_history.R`
+and internally by `generate_cvr_lookup_from_virk()`: `get_virk_credentials()`
+(reads API credentials), `virk_post_json()` (POSTs a query, returns parsed JSON),
+`virk_scalar()` (safely pulls a scalar field), `format_virk_cvr()` (normalizes a
+CVR for the query).
+
+**Internal Virk helpers** — no direct pipeline-script call sites; invoked within
+`generate_cvr_lookup_from_virk()` / the Virk pipeline:
+`load_virk_renviron_files()`, `extract_virk_period()`, `empty_virk_name_table()`,
+`bind_virk_name_tables()`, `extract_virk_lifecycle_summary()`,
+`extract_virk_main_names()`, `extract_virk_binavne()`, `append_virk_lookup_chunk()`,
+`virk_lookup_source_fields()`, `virk_lookup_query_body()`.
+
 ## Function Groups By Pipeline Stage
 
 | Pipeline stage | Functions |
@@ -780,6 +867,59 @@ names to exist before calling it.
 | Exact matching | `keep_valid_dates()`, `select_preferred_exact_match()`, `keep_step_matches()` |
 | Fuzzy matching | `levenshtein_ratio()`, `find_fuzzy_matches()`, `accept_fuzzy_match()`, `keep_step_matches()` |
 | Review context | `add_entity_context_to_matches()`, `add_winner_context_to_matches()`, `add_buyer_context_to_matches()` |
+| CPV classification | `clean_cpv_code()`, `cpv_division_to_category()`, `cpv_division_to_sector()` |
+| Virk CVR-lookup build | `generate_cvr_lookup_from_virk()`, `test_cvr_lookup_sample()`, `get_virk_credentials()`, `virk_post_json()`, `virk_scalar()`, `format_virk_cvr()`, + 10 internal Virk helpers |
+
+## Function Reference: Scripts By Function
+
+Direct call sites for every function in `code/functions.R`. "internal" means the
+function is only invoked by another function in `code/functions.R`. Script codes:
+`0` = `processing/0_build_cvr_lookup.R`; `1_1` = `1_1_process_kfst.R`;
+`1_2` = `1_2_process_open_tender.R`; `1_2b` = `1_2b_recover_ted_winners.R`;
+`1_3` = `1_3_process_keys.R`; `2_1`–`2_4` = the four matching scripts;
+`scrape/1` = `scraping/1_build_cvr_employment_history.R`;
+`an/3` = `analysis/3_quality_analysis.Rmd`;
+`an/5` = `analysis/5_cvr_key_concordance.Rmd`.
+
+| Function | Used in (direct call sites) |
+|---|---|
+| `extract_multiple_cvr()` | `1_1` |
+| `clean_cvr_candidate()` | internal (`extract_valid_cvr_candidates()`) |
+| `extract_valid_cvr_candidates()` | `1_2`, `1_2b` (+ internal: `compute_distinct_valid_cvr()`) |
+| `compute_distinct_valid_cvr()` | `1_2` |
+| `known_invalid_cvr_numbers()` | `1_2`, `1_2b` (+ internal) |
+| `recover_formatted_danish_cvr()` | `1_2` |
+| `add_entity_context_to_matches()` | internal (winner/buyer wrappers) |
+| `add_winner_context_to_matches()` | `2_1`, `2_3` |
+| `add_buyer_context_to_matches()` | `2_2`, `2_4` |
+| `cvr_firm_type_patterns()` | internal (`prepare_cvr_name()`, `make_name_partitions()`) |
+| `prepare_cvr_name()` | `1_1`, `1_2`, `1_2b`, `1_3`, `2_3`, `2_4`, `an/5` |
+| `make_name_partitions()` | `2_3`, `2_4`, `an/3` |
+| `keep_valid_dates()` | `1_3` (+ indirect `2_1`–`2_4`) |
+| `select_preferred_exact_match()` | `2_1`, `2_2`, `2_3`, `2_4` |
+| `levenshtein_ratio()` | `an/5` (+ internal: `find_fuzzy_matches()`) |
+| `find_fuzzy_matches()` | `2_1`, `2_2`, `2_3`, `2_4` |
+| `accept_fuzzy_match()` | `2_1`, `2_2`, `2_3`, `2_4` |
+| `keep_step_matches()` | `2_1`, `2_2`, `2_3`, `2_4` |
+| `clean_cpv_code()` | `1_1`, `1_2` |
+| `cpv_division_to_category()` | internal (`clean_cpv_code()`) |
+| `cpv_division_to_sector()` | internal (`clean_cpv_code()`) |
+| `generate_cvr_lookup_from_virk()` | `0` |
+| `test_cvr_lookup_sample()` | `0` |
+| `get_virk_credentials()` | `scrape/1` (+ internal) |
+| `virk_post_json()` | `scrape/1` (+ internal) |
+| `virk_scalar()` | `scrape/1` (+ internal) |
+| `format_virk_cvr()` | `scrape/1` (+ internal) |
+| `load_virk_renviron_files()` | internal |
+| `extract_virk_period()` | internal |
+| `empty_virk_name_table()` | internal |
+| `bind_virk_name_tables()` | internal |
+| `extract_virk_lifecycle_summary()` | internal |
+| `extract_virk_main_names()` | internal |
+| `extract_virk_binavne()` | internal |
+| `append_virk_lookup_chunk()` | internal |
+| `virk_lookup_source_fields()` | internal |
+| `virk_lookup_query_body()` | internal |
 
 ## Design Principles
 
