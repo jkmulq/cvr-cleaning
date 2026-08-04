@@ -477,16 +477,19 @@ multi_winner_data_long <- multi_winner_data_long %>%
       winner_cvr_clean
     ),
     
-    # Remove white space
+    # Candidate had whitespace
     flag_cvr_ws = coalesce(str_detect(winner_cvr_candidate, "\\s"), FALSE),
 
-    # Remove alphabetical letters
+    # Candidate had alphabetical letters
     flag_cvr_alphabet = coalesce(str_detect(winner_cvr_candidate, "[[:alpha:]]"), FALSE),
 
-    # Remove all punctuation
+    # Candidate had punctuation
     flag_cvr_punct = coalesce(str_detect(winner_cvr_candidate, "[[:punct:]]"), FALSE),
 
-    # Flag if any standardisation performed
+    # Candidate had any of the above. NB: these flags only record what the raw
+    # candidate contained - the removal itself happens at the extraction step
+    # (extract_valid_cvr_candidates), not explicitly here. A TRUE flag whose
+    # winner/buyer_cvr_clean is a clean 8-digit CVR means that character was removed.
     flag_cvr_standardised = coalesce(
       flag_cvr_ws | flag_cvr_alphabet | flag_cvr_punct,
       FALSE
@@ -535,16 +538,19 @@ single_winner_data <- single_winner_data %>%
            winner_cvr_clean
          ),
          
-         # Remove white space
+         # Candidate had whitespace
          flag_cvr_ws = coalesce(str_detect(winner_cvr_candidate, "\\s"), FALSE),
 
-         # Remove alphabetical letters
+         # Candidate had alphabetical letters
          flag_cvr_alphabet = coalesce(str_detect(winner_cvr_candidate, "[[:alpha:]]"), FALSE),
 
-         # Remove all punctuation
+         # Candidate had punctuation
          flag_cvr_punct = coalesce(str_detect(winner_cvr_candidate, "[[:punct:]]"), FALSE),
 
-         # Flag if any standardisation performed
+         # Candidate had any of the above. NB: these flags only record what the raw
+         # candidate contained - the removal itself happens at the extraction step
+         # (extract_valid_cvr_candidates), not explicitly here. A TRUE flag whose
+         # winner/buyer_cvr_clean is a clean 8-digit CVR means that character was removed.
          flag_cvr_standardised = coalesce(
            flag_cvr_ws | flag_cvr_alphabet | flag_cvr_punct, FALSE
          ))
@@ -898,16 +904,19 @@ multi_buyer_data_long <- multi_buyer_data_long %>%
       buyer_cvr_clean
     ),
     
-    # Remove white space
+    # Candidate had whitespace
     flag_cvr_ws = coalesce(str_detect(buyer_cvr_candidate, "\\s"), FALSE),
     
-    # Remove alphabetical letters
+    # Candidate had alphabetical letters
     flag_cvr_alphabet = coalesce(str_detect(buyer_cvr_candidate, "[[:alpha:]]"), FALSE),
     
-    # Remove all punctuation
+    # Candidate had punctuation
     flag_cvr_punct = coalesce(str_detect(buyer_cvr_candidate, "[[:punct:]]"), FALSE),
     
-    # Flag if any standardisation performed
+    # Candidate had any of the above. NB: these flags only record what the raw
+    # candidate contained - the removal itself happens at the extraction step
+    # (extract_valid_cvr_candidates), not explicitly here. A TRUE flag whose
+    # winner/buyer_cvr_clean is a clean 8-digit CVR means that character was removed.
     flag_cvr_standardised = coalesce(
       flag_cvr_ws | flag_cvr_alphabet | flag_cvr_punct,
       FALSE
@@ -956,16 +965,19 @@ single_buyer_data <- single_buyer_data %>%
       buyer_cvr_clean
     ),
     
-    # Remove white space
+    # Candidate had whitespace
     flag_cvr_ws = coalesce(str_detect(buyer_cvr_candidate, "\\s"), FALSE),
     
-    # Remove alphabetical letters
+    # Candidate had alphabetical letters
     flag_cvr_alphabet = coalesce(str_detect(buyer_cvr_candidate, "[[:alpha:]]"), FALSE),
     
-    # Remove all punctuation
+    # Candidate had punctuation
     flag_cvr_punct = coalesce(str_detect(buyer_cvr_candidate, "[[:punct:]]"), FALSE),
     
-    # Flag if any standardisation performed
+    # Candidate had any of the above. NB: these flags only record what the raw
+    # candidate contained - the removal itself happens at the extraction step
+    # (extract_valid_cvr_candidates), not explicitly here. A TRUE flag whose
+    # winner/buyer_cvr_clean is a clean 8-digit CVR means that character was removed.
     flag_cvr_standardised = coalesce(
       flag_cvr_ws | flag_cvr_alphabet | flag_cvr_punct, FALSE
     ))
