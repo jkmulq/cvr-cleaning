@@ -6,13 +6,26 @@ for, how it works, what it returns, and where it appears in the pipeline.
 
 Most functions are used by the staged scripts:
 
+- `code/processing/0_build_cvr_lookup.R`
 - `code/processing/1_1_process_kfst.R`
 - `code/processing/1_2_process_open_tender.R`
+- `code/processing/1_2b_recover_ted_winners.R`
 - `code/processing/1_3_process_keys.R`
 - `code/processing/2_1_match_kfst.R`
 - `code/processing/2_2_match_kfst_buyers.R`
 - `code/processing/2_3_match_opentender.R`
 - `code/processing/2_4_match_opentender_buyers.R`
+
+A few are also called by the scraping script
+`code/scraping/1_build_cvr_employment_history.R` and the analysis notebooks
+`code/analysis/3_quality_analysis.Rmd` and `code/analysis/5_cvr_key_concordance.Rmd`.
+
+Each function entry lists the scripts it is **Used in** (direct call sites).
+"Internal" means the function is only invoked by another function in
+`code/functions.R`, not called directly by a pipeline script. Script names are
+under `code/processing/` unless another path is given. A consolidated
+[Scripts By Function](#function-reference-scripts-by-function) table at the end
+maps every function in `code/functions.R` to its call sites.
 
 The examples assume the same packages used by the pipeline scripts are already
 loaded, especially `tidyverse` and `data.table`, and that `code/functions.R`
@@ -27,6 +40,8 @@ wide columns, so it can later be pivoted into one row per entity.
 
 **Used for:** KFST winner rows where CVRs, names, or countries may contain more
 than one winner.
+
+**Used in:** `1_1_process_kfst.R`.
 
 **How it works:**
 
@@ -78,6 +93,9 @@ example above shows the main columns used by the later pivoting step.
 
 **Used for:** Low-level CVR extraction inside `extract_valid_cvr_candidates()`.
 
+**Used in:** Internal — called only by `extract_valid_cvr_candidates()`; no
+direct pipeline-script call sites.
+
 **How it works:**
 
 - Converts the input to character.
@@ -108,13 +126,36 @@ regular expression used later.
 **Used for:** OpenTender winner and buyer CVR cleaning, and helper functions
 that count CVRs.
 
+**Used in:** `1_2_process_open_tender.R`, `1_2b_recover_ted_winners.R`; also
+called internally by `compute_distinct_valid_cvr()` (and, in `1_2b`, by the
+recovered-TED CVR cleaner `ted_cvr_to_clean()`).
+
 **How it works:**
 
-- First calls `clean_cvr_candidate()`.
-- Searches for exactly eight digits.
-- Uses digit lookarounds so longer numbers are not mistakenly treated as CVRs.
-  For example, a nine-digit number is not counted as an eight-digit CVR.
+- First calls `clean_cvr_candidate()` to strip whitespace.
+- Uses the regex `(?<!\d)\d{8}(?!\d)` with `str_extract_all()` to pull out every
+  run of exactly eight digits that is not touching another digit, returning all
+  matches (one candidate string can legitimately contain more than one CVR).
 - Returns `NA` if no eight-digit candidate is found.
+
+**Character handling — what is removed vs. kept when extracting the CVR:**
+
+- **Whitespace is removed.** `clean_cvr_candidate()` strips leading, trailing,
+  *and internal* whitespace (`\s+`) before matching, so a spaced CVR such as
+  `"DK55 77 52 14"` collapses to `"DK55775214"` and is read as one CVR.
+- **Letters are NOT removed.** They stay in the string but act as non-digit
+  boundaries, so prefixes/labels like `"DK"` or `"CVR:"` don't block the match —
+  `"DK23456789"` and `"CVR: 23456789"` both yield `23456789`.
+- **Punctuation is NOT removed.** Symbols such as `:` `-` `/` `.` are likewise
+  treated as boundaries rather than stripped, so `"12345678-87654321"` yields
+  *two* CVRs (`12345678` and `87654321`).
+- **Digit-run length is enforced.** The lookarounds require exactly eight digits
+  with a non-digit (or the string edge) on each side, so a seven- or nine-digit
+  number such as `"111151609"` is ignored, and a 16-digit run is never split into
+  two eight-digit CVRs.
+
+In short: only whitespace is deleted; letters and punctuation are left in place
+and simply serve as delimiters around the eight-digit CVR(s).
 
 **Example:**
 
@@ -152,6 +193,8 @@ string.
 **Used for:** Deciding whether an OpenTender winner or buyer row should be
 treated as a single-CVR row or a multiple-CVR row.
 
+**Used in:** `1_2_process_open_tender.R`.
+
 **How it works:**
 
 - Calls `extract_valid_cvr_candidates()` on each value.
@@ -180,6 +223,10 @@ c(1, 2, 0)
 
 **Used for:** Winner and buyer CVR cleaning in OpenTender. Called in multiple functions to make them cleaner.
 
+**Used in:** `1_2_process_open_tender.R`, `1_2b_recover_ted_winners.R`; also
+referenced internally (e.g., the `recover_formatted_danish_cvr()` default
+argument).
+
 **Current placeholders:**
 
 ```r
@@ -201,6 +248,8 @@ trusted as real firm identifiers.
 or prefixes prevented the conservative extractor from finding it.
 
 **Used for:** OpenTender winner and buyer CVR cleaning.
+
+**Used in:** `1_2_process_open_tender.R` (applied to both winner and buyer CVRs).
 
 **How it works:**
 
@@ -237,6 +286,10 @@ recover_formatted_danish_cvr(
 
 **Used for:** Exact and fuzzy match tables before matches are joined back to the
 main winner or buyer data.
+
+**Used in:** Internal — called only via its wrappers
+`add_winner_context_to_matches()` and `add_buyer_context_to_matches()`; no direct
+pipeline-script call sites.
 
 **How it works:**
 
@@ -344,6 +397,10 @@ and fuzzy matching.
 **Used for:** Procurement winner and buyer names, main CVR registered names,
 and alternative CVR names.
 
+**Used in:** `1_1_process_kfst.R`, `1_2_process_open_tender.R`,
+`1_2b_recover_ted_winners.R`, `1_3_process_keys.R`, `2_3_match_opentender.R`,
+`2_4_match_opentender_buyers.R`, and `code/analysis/5_cvr_key_concordance.Rmd`.
+
 **How it works:**
 
 - Converts names to lowercase and trims whitespace.
@@ -385,6 +442,9 @@ match is found.
 separate firm names.
 
 **Used for:** OpenTender winner and buyer matching before fuzzy matching.
+
+**Used in:** `2_3_match_opentender.R`, `2_4_match_opentender_buyers.R`, and
+`code/analysis/3_quality_analysis.Rmd`.
 
 **How it works:**
 
