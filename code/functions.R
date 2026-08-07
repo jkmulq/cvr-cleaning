@@ -274,8 +274,6 @@ prepare_cvr_name <- function(x) {
     "ø" = "oe",
     "æ" = "ae",
     "å" = "aa",
-    "ö" = "oe",
-    "ä" = "ae",
     "á" = "a",
     "é" = "e",
     "è" = "e",
@@ -327,21 +325,17 @@ prepare_cvr_name <- function(x) {
   word_replacements <- c(
     "international" = "int",
     "and" = "og",
-    "av" = "af",
     "of" = "af",
     "limited" = "ltd",
     "denmark" = "dk",
     "danmark" = "dk",
     "holdings" = "holding",
-    "sweden" = "se",
-    "sverige" = "se",
     "corporation" = "corp",
     "company" = "co",
     "comp" = "co",
     "copenhagen" = "kbh",
     "kobenhavn" = "kbh",
     "cph" = "kbh",
-    "kopenhamn" = "kbh",
     "i" = "1",
     "ii" = "2",
     "iii" = "3"
@@ -368,12 +362,12 @@ prepare_cvr_name <- function(x) {
 
   # Steps 4 and 6 remove common, low-information words and ignore word order.
   common_words <- c(
-    "af", "arhus", "asset", "assets", "broderna", "brdr", "brodrerne",
+    "af", "arhus", "asset", "assets", "brdr", "brodrerne",
     "co", "dansk", "data", "development", "dk", "ejendomsselskabet",
     "finans", "forsikring", "group", "holding", "hotels", "hotel", "int",
     "invest", "kbh", "komplementaerssaelskabet", "livforsikringsselskab",
     "management", "media", "nordic", "nordisk", "og", "scandinavia",
-    "scandinavian", "se", "service", "services", "skandia", "software",
+    "scandinavian", "service", "services", "skandia", "software",
     "system", "systems", "ltd", "filial", "for"
   )
 
