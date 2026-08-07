@@ -1749,3 +1749,89 @@ kable(
 
 ## Verifying data
 We could also use the CVR number to name key to verify that the name in the source data is correct. This would help validate the data splitting process I've undertaken, for example.
+
+## Presence of Swedish letters/words
+The matching process is based on a paper that studied Danish and Swedish firm inter-linkages (Arnason et al., 2024). As a result, the matching algorithm included a variety of Swedish words (i.e. Köpenhamn for Copenhagen) and letters (ö, ä). This chunk tests how often such terms appear for Danish firms in the tender data.
+
+```{r test-swedish-terms}
+
+swedish_terms_regex <- paste(
+  c(
+    "ö", "ä",                     # Swedish vowels (Danish uses ø/æ, not ö/ä)
+    "Köpenhamn", "kopenhamn",     # Copenhagen (Swedish spelling)
+    "Stockholm",
+    "[Ss]verige", "[Ss]weden",    # Sweden
+    "broderna",                   # "bröderna" (Swedish: the brothers)
+    "(?<![[:alnum:]])av(?![[:alnum:]])",        # standalone Swedish "av" (of / by), not "Havn" etc.
+    "(?<![[:alnum:]])[Ss][Ee](?![[:alnum:]])"   # standalone SE / Se / sE / se (NB: \\b fails in this stringi/ICU build)
+  ),
+  collapse = "|"
+)
+
+# For KFST
+kfst_se_winners <- kfst_matched %>% 
+  distinct(winner_name, winner_country, .keep_all = TRUE) %>% 
+  filter(toupper(trimws(winner_country)) == "DK") %>%
+  mutate(flag_swedish = str_detect(winner_name, swedish_terms_regex)) 
+
+kfst_counts <- kfst_se_winners %>% 
+  count(flag_swedish) %>% 
+  mutate(source = "KFST")
+  
+# For OpenTender
+ot_se_winners <- ot_matched %>% 
+  distinct(winner_name, winner_country, .keep_all = TRUE) %>% 
+  filter(toupper(trimws(winner_country)) == "DK") %>%
+  mutate(flag_swedish = str_detect(winner_name, swedish_terms_regex))
+
+ot_counts <- ot_se_winners %>% 
+  count(flag_swedish) %>% 
+  mutate(source = "OpenTender")
+
+# Join and format results
+rbind(kfst_counts, ot_counts) %>% 
+  kable(caption = "Occurrence of Swedish Letters/Terms on Unique Danish Winner Names")
+
+# How many come directly with a valid_cvr?
+kfst_counts_status <- kfst_se_winners %>% 
+  count(flag_swedish, flag_check_fuzzy_match, valid_cvr) %>% 
+  filter(flag_swedish) %>% 
+  mutate(souce = "KFST")
+
+ot_counts_status <- ot_se_winners %>% 
+  count(flag_swedish, flag_check_fuzzy_match, valid_cvr) %>% 
+  filter(flag_swedish) %>% 
+  mutate(souce = "OpenTender")
+
+rbind(kfst_counts_status, ot_counts_status) %>% 
+  kable(caption = "Matching and Valid CVR for Danish firm names with Swedish Terms")
+
+# How many rows do these firms account for in the tender data?
+ot_se_rows <- ot_matched %>% 
+  mutate(flag_swedish = ifelse(str_detect(winner_name, swedish_terms_regex), TRUE, FALSE)) %>%
+  count(flag_swedish) %>% 
+  mutate(source = "OpenTender")
+
+kfst_se_rows <- kfst_matched %>% 
+  mutate(flag_swedish = ifelse(str_detect(winner_name, swedish_terms_regex), TRUE, FALSE)) %>%
+  count(flag_swedish) %>% 
+  mutate(source = "KFST")
+
+rbind(kfst_se_rows, ot_se_rows) %>% 
+  kable(caption = "Rows in tender data with Swedish letters/terms on Danish winner names")
+
+```
+Examples from KFST:
+```{r kfst-se-examples}
+set.seed(18231)
+sample(kfst_se_winners %>% 
+         filter(flag_swedish) %>% 
+         .$winner_name, size = 10)
+```
+
+Examples from OpenTender:
+```{r ot-se-examples}
+sample(ot_se_winners %>% 
+         filter(flag_swedish) %>% 
+         .$winner_name, size = 10)
+```
