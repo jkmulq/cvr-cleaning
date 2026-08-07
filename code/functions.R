@@ -133,7 +133,7 @@ recover_formatted_danish_cvr <- function(cvr_candidate,
   
   blank_candidate <- is.na(cvr_candidate) |
     stringr::str_trim(cvr_candidate) == ""
-  danish_candidate <- !is.na(country) & country == "DK"
+  danish_candidate <- !is.na(country) & toupper(trimws(country)) == "DK"
   no_raw_cvr_found <- !is.na(n_valid_cvr_raw) & n_valid_cvr_raw == 0
   one_eight_digit_number <- !is.na(digits_only) &
     stringr::str_detect(digits_only, "^[0-9]{8}$")

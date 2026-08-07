@@ -410,6 +410,12 @@ clean_winner_data <- bind_rows(
 ) %>% 
   arrange(tender_id)
 
+# Normalise the working country code once at the winner grain (upper-case + trim)
+# so the stored value is clean and downstream winner_country == "DK" comparisons
+# are reliable. winner_country_original (joined below) keeps the raw source value.
+clean_winner_data <- clean_winner_data %>%
+  mutate(winner_country = toupper(trimws(winner_country)))
+
 clean_winner_data <- clean_winner_data %>%
   rename(winner_cvr_candidate_original = winner_cvr)
 

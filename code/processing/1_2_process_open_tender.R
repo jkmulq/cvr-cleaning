@@ -343,11 +343,16 @@ data <- data %>%
 winner_data_original <- data %>%
   mutate(winner_cvr = winner_cvr_original,
          winner_name = winner_name_original,
-         winner_country = winner_country_original)
+         # Normalise the working country code (upper-case + trim) so the stored
+         # value is clean and downstream winner_country == "DK" comparisons are
+         # reliable. winner_country_original keeps the raw source value.
+         winner_country = toupper(trimws(winner_country_original)))
 buyer_data_original <- data %>%
   mutate(buyer_cvr = buyer_cvr_original,
          buyer_name = buyer_name_original,
-         buyer_country = buyer_country_original)
+         # Normalise the working country code (upper-case + trim); buyer_country_original
+         # keeps the raw source value.
+         buyer_country = toupper(trimws(buyer_country_original)))
 
 
 # 2 Winner data
