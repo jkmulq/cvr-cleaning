@@ -1750,6 +1750,67 @@ kable(
 ## Verifying data
 We could also use the CVR number to name key to verify that the name in the source data is correct. This would help validate the data splitting process I've undertaken, for example.
 
+I validate these for all tender winning firms that we DO NOT send to the matching algorithm.
+
+```{r load-keys}
+# Load
+main_key <- readRDS(file.path("data", "clean", "clean_cvr_name_key.rds"))
+alt_key <- readRDS(file.path("data", "clean", "clean_cvr_biname_key.rds"))
+
+# Keep source then bind
+main_key[, key_type := "Main names"]
+alt_key[, key_type := "Alternative names"]
+key <- rbindlist(list(main_key, alt_key))
+key[, cvr := as.character(cvr)]
+key[, key_row := TRUE]
+```
+
+```{r distinct-cvr-to-name}
+
+# Get distinct name-cvrs
+ot_winners <- ot_matched %>%
+  filter(!flag_check_fuzzy_match) %>% 
+  distinct(winner_name, winner_cvr_clean, winner_country) %>% 
+  mutate(source = "OpenTender")
+kfst_winners <- kfst_matched %>% 
+  filter(!flag_check_fuzzy_match) %>% 
+  distinct(winner_name, winner_cvr_clean, winner_country) %>% 
+  mutate(source = "KFST")
+distinct_winners <- rbind(ot_winners, kfst_winners)
+
+# Create default flag for whether CVR exists in key
+distinct_winners[, flag_in_key := TRUE]
+
+```
+
+```{r verify-cvrs}
+
+# Join main key to distinct winners
+validate_cvr_data <- key[distinct_winners, 
+                         on = .(cvr = winner_cvr_clean), 
+                         allow.cartesian = TRUE]
+
+# If key_row is NA, then the join failed
+validate_cvr_data[is.na(key_row), flag_in_key := FALSE]
+
+# Test whether there was any join for distinct (cvr, winner_name)
+validate_cvr_data[, any_in_key := any(flag_in_key), by = .(cvr, winner_name)]
+
+# Get unique key
+validate_cvr_unique_data <- unique(validate_cvr_data, 
+                                   by = c("cvr", "winner_name", "source", "any_in_key"))
+```
+
+```{r verify-cvrs-summary-table}
+validate_cvr_unique_data[, .(
+  `Source` = source,
+  `Distinct (CVR, winner name)` = .N,
+  `Distinct (CVR, winner name) in key` = sum(any_in_key),
+  `Share in key` = round(sum(any_in_key) / .N, 4)
+), by = source] %>%
+  kable(caption = "Verification of distinct (CVR, winner name) pairs against the CVR number to name key")
+```
+
 ## Presence of Swedish letters/words
 The matching process is based on a paper that studied Danish and Swedish firm inter-linkages (Arnason et al., 2024). As a result, the matching algorithm included a variety of Swedish words (i.e. Köpenhamn for Copenhagen) and letters (ö, ä). This chunk tests how often such terms appear for Danish firms in the tender data.
 
