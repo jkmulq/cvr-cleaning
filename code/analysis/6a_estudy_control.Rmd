@@ -435,7 +435,8 @@ if (construct_control_data == 1) {
 
 ```{r run-controlled-estudy}
 
-window <- c(-8, 8) # quarters
+# Event window
+window <- c(-8, 8) 
 
 # Filter to events we found controls for
 found_control_data <- control_event_data[flag_found_control == TRUE, ]
@@ -485,19 +486,9 @@ if (!check) {
   stop("event study is not balanced.")
 }
 
-# Run regression
-est <- feols(c(fte, log(fte)) ~ i(event_time, treated, ref = -1) | 
-               cvr + quarter^industry_code + treated + event_time,
-      data = reg_data, 
-      cluster = ~stack_id^cvr, 
-      weights = ~weight)
-
-# Graph
-iplot(est[1])       
-iplot(est[2])       
-
 ```
 
+Below are the weighted mean employment levels for treated and control firms by event time. The weights are constructed such that each treated firm has a weight of 1, and the controls are weighted inversely by the number of controls in each stack.
 ```{r weighted-diff-in-means}
 
 # Get regression metadata
@@ -524,5 +515,28 @@ ggplot(data = weighted_mean_fte,
          format(n_stacks, big.mark = ","))) +
   theme(plot.caption = element_text(hjust = 0))
   
+
+```
+
+Below is the stacked DiD event study. The specification is:
+
+$$
+
+y = \sum_{k=-8}^{8} \beta_k \cdot 1\{eventTime = k\} \cdot 1[treated] + \gamma_{cvr} + \gamma_{quarter:industry} + \gamma_{treated} + \gamma_{eventTime} + \epsilon
+
+$$
+I think this is the right specification based on Deshpande and Li (2019). Standard errors are clustered at the stack-CVR level.
+```{r run-estudy-regs}
+
+# Run regression
+est <- feols(c(fte, log(fte)) ~ i(event_time, treated, ref = -1) | 
+               cvr + quarter^industry_code + treated + event_time,
+      data = reg_data, 
+      cluster = ~stack_id^cvr, 
+      weights = ~weight)
+
+# Graph
+iplot(est[1])       
+iplot(est[2]) 
 
 ```
