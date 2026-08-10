@@ -1,0 +1,557 @@
+---
+title: "Control Event Studies"
+author: "Jack Mulqueeney"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    self_contained: true
+knit: >
+  (function(inputFile, encoding) {
+    project_dir <- normalizePath(dirname(inputFile), mustWork = TRUE)
+    while (!file.exists(file.path(project_dir, "cvr-cleaning.Rproj")) &&
+           dirname(project_dir) != project_dir) project_dir <- dirname(project_dir)
+    output_dir <- file.path(project_dir, "output", "docs")
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    rmarkdown::render(
+      inputFile,
+      encoding = encoding,
+      knit_root_dir = project_dir,
+      output_dir = output_dir
+    )
+  })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE
+)
+
+# Clean up environment
+rm(list = ls())
+
+# Packages
+library(here)
+library(data.table)
+library(tidyverse)
+library(knitr)
+library(fixest)
+library(lubridate)
+library(kableExtra)
+
+# Paths
+report_project_dir <- local({
+  d <- normalizePath(getwd(), mustWork = TRUE)
+  while (!file.exists(file.path(d, "cvr-cleaning.Rproj")) && dirname(d) != d) {
+    d <- dirname(d)
+  }
+  d
+})
+setwd(report_project_dir)
+knitr::opts_knit$set(root.dir = report_project_dir)
+
+source(file.path(report_project_dir, "config.R"))
+clean_data_dir <- dirs$clean_data
+key_dir <- dirs$cvr_key
+
+valid_cvrs <- function(x) {
+  x <- trimws(as.character(x))
+  x <- gsub("[^0-9]", "", x)
+  x <- x[grepl("^[0-9]{1,8}$", x)]
+  unique(sprintf("%08d", as.integer(x)))
+}
+
+# 1 Load data
+## 1.1 Firm data
+firm_data_raw <- fread(file.path(clean_data_dir, "cvr_employment_history_virk.csv"))
+setDT(firm_data_raw)
+
+firm_data <- copy(firm_data_raw)
+setDT(firm_data)
+firm_data[, firm_by := year(lifecycle_start)]
+firm_data[, firm_dy := year(lifecycle_end)]
+firm_data[, firm_age := as.integer(floor(as.numeric(period_end - lifecycle_start) / 365.25))]
+firm_data_ls <- firm_data %>% 
+  split(.$frequency)
+
+## 1.2 Tender data
+data_ot <- readRDS(file.path(clean_data_dir, "clean_winner_data_ot_name_matched.rds")) %>% 
+  mutate(data_source = "OpenTender")
+data_kfst <- readRDS(file.path(clean_data_dir, "clean_winner_data_kfst_name_matched.rds")) %>% 
+  mutate(data_source = "KFST")
+data_ot_buyers <- readRDS(file.path(clean_data_dir, "clean_buyer_data_ot_name_matched.rds")) %>% 
+  mutate(data_source = "OpenTender")
+data_kfst_buyers <- readRDS(file.path(clean_data_dir, "clean_buyer_data_kfst_name_matched.rds")) %>% 
+  mutate(data_source = "KFST")
+data_tender <- rbindlist(list(data_ot, data_kfst), fill = TRUE, ignore.attr = TRUE) %>% 
+  select(data_source, tender_id, lot_id, award_date, winner_cvr_final, tender_amount, lot_amount, contract_type, cpv_category, cpv_sector, flag_awarded)
+unique_cvrs <- unique(data_tender$winner_cvr_final)
+
+
+## 1.3 CVR key (includes firm registration and death dates)
+virk_data <- fread(file.path(key_dir, "cvr_names_virk_20260710_182823.csv"))
+virk_data[, tender_firm := FALSE]
+virk_data[cvr %in% unique_cvrs, tender_firm := TRUE]
+```
+
+```{r run-toggles}
+construct_control_data <- 0 # 1 = find and construct control data for each event. 0 = read in pre-constructed control data.
+```
+
+# Introduction
+The `virk.dk` API contains has employment data on a monthly, quarterly, and annual frequency. I pulled these data for every firm in the tender datasets. This note describes the quality of these data.
+
+# Availability/coverage
+```{r availability, fig.align='center'}
+
+# How many CVRs actually appear in the employment data?
+
+emp_cvrs <- valid_cvrs(firm_data_raw$cvr)
+
+coverage_cvrs <- rbindlist(list(
+  data.table(
+    data_source = "OpenTender",
+    firm_role = "Winner",
+    cvr = valid_cvrs(data_ot$winner_cvr_final)
+  ),
+  data.table(
+    data_source = "OpenTender",
+    firm_role = "Buyer",
+    cvr = valid_cvrs(data_ot_buyers$buyer_cvr_final)
+  ),
+  data.table(
+    data_source = "KFST",
+    firm_role = "Winner",
+    cvr = valid_cvrs(data_kfst$winner_cvr_final)
+  ),
+  data.table(
+    data_source = "KFST",
+    firm_role = "Buyer",
+    cvr = valid_cvrs(data_kfst_buyers$buyer_cvr_final)
+  )
+))
+
+coverage_table <- coverage_cvrs[, .(
+  n_cvrs = uniqueN(cvr),
+  n_in_employment_data = uniqueN(cvr[cvr %in% emp_cvrs]),
+  share_in_employment_data = round(uniqueN(cvr[cvr %in% emp_cvrs]) / uniqueN(cvr), 5)
+), by = .(data_source, firm_role)]
+
+kable(
+  coverage_table,
+  caption = "Share of valid firm CVRs in the tender data that appear in the pulled employment data"
+)
+
+# How many rows have non-missing data
+missingness_table <- firm_data_raw[, .(
+  # Counts
+  n = .N, 
+  n_nonmissing_fte = sum(!is.na(fte)),
+  n_nonmissing_emp = sum(!is.na(employees)),
+  n_nonmissing_emp_with_owner = sum(!is.na(employees_including_owners)),
+  
+  # Shares
+  share_nonmissing_fte = round(sum(!is.na(fte)) / .N, 5),
+  share_nonmissing_emp = round(sum(!is.na(employees)) / .N, 5),
+  share_nonmissing_emp_with_owner = round(sum(!is.na(employees_including_owners)) / .N, 5)
+
+
+), by = frequency]
+
+kable(missingness_table,
+      caption = "Employment data availability for firms that appear in the employment data")
+
+```
+
+# Balance
+Below is a balance table of age for firms in our tender dataset compared to those not in the tender dataset. Firms appearing in our tender dataset tend are older than firms not in the tender dataset. This could be because firms who win tenders are usually more productive/cost competitive than firms who do not win them (especially if price is heavily weighted in deciding which firm to award a tender to).
+
+```{r age-balance}
+
+# Calculate firm age
+anchor_date <- lubridate::floor_date(Sys.Date(), unit = "year") # Beginning of this year
+virk_data[!is.na(lifecycle_end), firm_age := lifecycle_end - registration_date] # If firm ended, calculate total age
+virk_data[is.na(lifecycle_end), firm_age := anchor_date - registration_date] # Otherwise, calculate from today's date
+virk_data[, firm_age_yrs := as.numeric(firm_age) / 365.25]
+virk_data[, firm_dissolved := fifelse(is.na(lifecycle_end), "Still registered", "Dissolved")]
+age_regs <- feols(firm_age_yrs ~ i(tender_firm) - 1, fsplit = ~firm_dissolved, data = virk_data)
+
+# Make table
+age_table <- coeftable(age_regs) %>% 
+  mutate(
+    group = ifelse(str_detect(coefficient, "TRUE"), "Won tender", "No tender")
+  ) %>% 
+  select(sample, group, Estimate) %>% 
+  pivot_wider(id_cols = group, names_from = sample, values_from = Estimate)
+
+kable(
+  age_table,
+  caption = "Firm Age by Tender Winning Status",
+  escape = FALSE,
+  align = "lcc"
+) %>%
+  kable_styling(full_width = FALSE)
+```
+
+# Employment by firm age
+```{r emp-by-firm-age, fig.align='center'}
+
+# Regression data
+reg_data <- firm_data[
+  frequency == "annual" &
+    exists_during_period == TRUE &
+    !is.na(fte) &
+    fte > 0 &
+    !is.na(firm_age) &
+    firm_age >= 0 &
+    firm_age <= 100
+]
+
+regression_sample_table <- reg_data[, .(
+  n = .N,
+  n_firms = uniqueN(cvr),
+  min_firm_age = min(firm_age),
+  max_firm_age = max(firm_age)
+)]
+
+kable(
+  regression_sample_table,
+  caption = "Annual employment observations used in the firm-age regression"
+)
+
+# Regression
+fte_reg <- feols(log(fte) ~ i(firm_age) - 1 | cvr, 
+                 data = reg_data, 
+                 cluster = ~cvr)
+iplot(fte_reg)
+```
+
+# Set up control group
+
+```{r es-plot-helper, include=FALSE}
+# Helper: plot a pair of fixest models as one event-study figure
+# (models[[1]] = FTE, models[[2]] = employees).
+plot_es <- function(models, main, xlab = "Quarters relative to contract win") {
+  iplot(list(models[[1]], models[[2]]),
+        main   = main,
+        xlab   = xlab,
+        col    = c("steelblue", "darkred"),
+        pt.pch = c(16, 17),
+        ci.lty = c(1, 1))
+  legend("bottomleft",
+         legend = c("FTE", "Employees"),
+         col    = c("steelblue", "darkred"),
+         pch    = c(16, 17),
+         lty    = c(1, 1),
+         bty    = "n")
+}
+```
+
+## Define universe of events
+
+This section of code defines the universe of events for the annual event study.
+
+```{r tender-award-estudy-data, include=FALSE}
+
+# Build universe of events
+## Get unique events
+setDT(data_tender)
+setorder(data_tender, winner_cvr_final, data_source, award_date)
+## Awarded contracts only: drop tenders that were annulled / never awarded
+## (flag_awarded is a tender/lot-level flag from the processing scripts). Applied
+## to the event universe here, so it propagates to every event study below
+## (annual estudy_data and quarterly estudy_all_events).
+valid_winner_events <- data_tender[winner_cvr_final %in% coverage_cvrs[firm_role == "Winner"]$cvr &
+                                     flag_awarded == TRUE, ]
+valid_winner_events <- unique(valid_winner_events, by = c("winner_cvr_final", "award_date"))
+
+## Create event identifier (chronological: event_id == 1 is the earliest award).
+## Sort by award_date within firm *before* numbering. The earlier setorder puts
+## data_source ahead of award_date, so numbering off that order would not be
+## chronological for firms appearing in more than one source.
+setorder(valid_winner_events, winner_cvr_final, award_date)
+valid_winner_events[, event_id := seq_len(.N), by = winner_cvr_final]
+
+## Flag "isolated" events: no other award by the same firm within 4 quarters on
+## either side. Used by the all-events quarterly event study so the +/-4 quarter
+## window around each event is not polluted by another award.
+valid_winner_events[, award_qidx := year(award_date) * 4 + quarter(award_date)]
+valid_winner_events[, gap_prev := award_qidx - shift(award_qidx), by = winner_cvr_final]
+valid_winner_events[, gap_next := shift(award_qidx, type = "lead") - award_qidx, by = winner_cvr_final]
+valid_winner_events[, isolated_event := (is.na(gap_prev) | gap_prev > 4) &
+                                        (is.na(gap_next) | gap_next > 4)]
+
+```
+
+## Find control firm match for each firm-event
+A control firm is the firm with:
+- closest employment history to the treated firm (winner) in the 4 quarters prior to the award date
+- closest age to the treated firm (winner) at the time of the award date
+- same sector, and
+- same location
+
+```{r create-firm-data-qidx}
+firm_data[, qidx := year * 4 + quarter]
+# Make sure character to make faster
+valid_winner_events[, winner_cvr_final := as.character(winner_cvr_final)] 
+firm_data[, cvr := as.character(cvr)]
+firm_data[, industry_code := as.character(industry_code)]
+```
+
+```{r find-control-firm, include=FALSE}
+
+build_control_firm_data <- function(winning_firm_cvr, 
+                              award_year, 
+                              award_quarter, 
+                              lookback = 4, 
+                              freq = "quarterly_spliced",
+                              firm_data = firm_data, 
+                              event_data = valid_winner_events) {
+  
+  # Firm qidx at the time of the award
+  winning_qidx <- award_year * 4 + award_quarter
+  
+  # Check firm in firm_data
+  if (!(winning_firm_cvr %in% unique(firm_data$cvr))) {
+    print(paste0("Winning firm CVR ", winning_firm_cvr, " not found in firm_data."))
+    return(NULL)
+  }
+  
+  # Extract firm sector, location and age at the time of the award
+  winning_info <- firm_data[
+    frequency == freq &
+      cvr == winning_firm_cvr & 
+      qidx %between% c(winning_qidx - lookback, winning_qidx - 1), 
+    .(
+      cvr = cvr,
+      frequency = frequency,
+      year = year, 
+      quarter = quarter,
+      qidx = qidx,
+      firm_sector = industry_code,
+      firm_age = firm_age,
+      employees = employees,
+      fte = fte
+    )
+  ]
+  
+  # Find eligible observations
+  eligible_obs <- firm_data[
+    cvr != winning_firm_cvr &
+      frequency == freq &
+      qidx %between% c(winning_qidx - lookback, winning_qidx - 1) & # A year before the tender award
+      industry_code %chin% unique(winning_info$firm_sector), # A firm might change industry code in the event window
+    .(cvr = cvr,
+      year = year,
+      quarter = quarter,
+      qidx = qidx,
+      firm_sector = industry_code,
+      firm_age = firm_age,
+      employees = employees,
+      fte = fte)
+  ]
+  
+  ## For these eligible firms, find ones that DIDN'T win a tender in the
+  ## in c(award_qidx - lookback, award_qidx + lookback)
+  no_tender_controls <- event_data[winner_cvr_final %chin% unique(eligible_obs$cvr) &
+                                     !(award_qidx %between% c(winning_qidx - lookback, winning_qidx + 4)), ]
+  no_tender_controls_cvrs <- no_tender_controls[, unique(winner_cvr_final)]
+  eligible_obs <- eligible_obs[cvr %chin% no_tender_controls_cvrs, ]
+  
+  ## Create eligible control firm counter
+  eligible_obs[, firm_counter_control := .GRP, by = cvr]
+
+  # Cartesian join to find control firm
+  eligible_obs <- merge(
+    eligible_obs,
+    winning_info,
+    by = "qidx",
+    suffixes = c("_control", "_treatment"),
+    allow.cartesian = TRUE
+  )
+
+  # Order
+  setorder(eligible_obs, firm_counter_control, qidx)
+
+  # Calculate differences
+  # for FTE, mean sq. difference in pre-period in fte
+  eligible_obs[, `:=`(
+    fte_diff_sq = (fte_control - fte_treatment) ^ 2,
+    age_diff_sq = (firm_age_control - firm_age_treatment) ^ 2
+    )]
+
+  # Find means
+  eligible_obs[, `:=`(
+    mean_fte_diff_sq = mean(fte_diff_sq),
+    mean_age_diff_sq = mean(age_diff_sq)
+    ), by = .(firm_counter_control, cvr_control)]
+
+  # Find closest match of sum of differences
+  eligible_obs[, sum_diff := mean_fte_diff_sq + mean_age_diff_sq]
+  control_firm_data <- eligible_obs[sum_diff == min(sum_diff), ]
+
+  # Create control/treated data
+  control_event_data <- firm_data[
+    cvr %in% unique(control_firm_data$cvr_control) | cvr == winning_firm_cvr, 
+    .(cvr, frequency, year, quarter, qidx, firm_age, employees, fte)
+  ]
+  control_event_data[, treatment := fifelse(cvr == winning_firm_cvr, "treated", "control")]
+  control_event_data$event_year <- award_year
+  control_event_data$event_quarter <- award_quarter
+  control_event_data$event_qidx <- winning_qidx
+  control_event_data$control_quality <- control_firm_data$sum_diff[1]
+  control_event_data$flag_found_control <- (nrow(control_firm_data) > 0)
+  # Print
+  return(list(
+    "control_firm_decision_data" = control_firm_data, 
+    "all_eligible_controls" = unique(eligible_obs$cvr_control),
+    "estudy_data" = control_event_data
+    ))
+  
+}
+
+```
+
+```{r build-full-treatment-control-set}
+
+# Create event year/quarter
+valid_winner_events[, event_year := year(award_date)]
+valid_winner_events[, event_quarter := quarter(award_date)]
+
+# If toggle on, construct controls
+if (construct_control_data == 1) {
+  
+    control_event_list <- map(seq_len(nrow(valid_winner_events)),
+      function(i) {
+        # Extract required info for the i-th event
+        winning_firm_cvr <- valid_winner_events$winner_cvr_final[i]
+        award_year <- valid_winner_events$event_year[i]
+        award_quarter <- valid_winner_events$event_quarter[i]
+        
+        # Execute funtions
+        build_control_firm_data(
+          winning_firm_cvr = winning_firm_cvr,
+          award_year = award_year,
+          award_quarter = award_quarter,
+          lookback = 4,
+          freq = "quarterly_spliced",
+          firm_data = firm_data,
+          event_data = valid_winner_events
+        )
+      }
+    ) 
+  
+  # Bind control data into one data.table
+  control_event_data <- map(seq_along(control_event_list), function(i) {
+    x <- control_event_list[[i]]
+    out <- x$estudy_data
+    out$stack_id <- i
+    return(out)
+    }) %>% 
+    rbindlist(fill = TRUE, use.names = TRUE)
+  control_event_data <- control_event_data[frequency == "quarterly_spliced", ]
+  saveRDS(control_event_data, file.path(clean_data_dir, "control_event_list.rds"))
+} else {
+  control_event_data <- readRDS(file.path(clean_data_dir, "control_event_list.rds"))
+}
+
+```
+
+```{r run-controlled-estudy}
+
+window <- c(-8, 8) # quarters
+
+# Filter to events we found controls for
+found_control_data <- control_event_data[flag_found_control == TRUE, ]
+
+# Create event time
+found_control_data[, event_time := qidx - event_qidx]
+
+# Filter to window
+found_control_data[, event_time_window := fifelse(event_time >= window[1] & event_time <= window[2], TRUE, FALSE)]
+estudy_control_data <- found_control_data[event_time_window == TRUE, ]
+
+# Create balanced dataset with all positive FTE observations
+estudy_control_data[, fte_pos := fifelse(fte > 0, TRUE, FALSE)]
+estudy_control_data[, all_fte_pos := all(fte_pos), by = .(cvr, event_qidx)]
+estudy_control_data[, all_in_window := sum(event_time_window) == length(window[1]:window[2]),
+                    by = .(cvr, stack_id, treatment)]
+estudy_control_balanced_data <- estudy_control_data[all_in_window == TRUE, ]
+
+# Ensure at least one treatment per stack_id
+estudy_control_balanced_data[, n_treatment := sum(treatment == "treated"), by = stack_id]
+estudy_control_balanced_data <- estudy_control_balanced_data[n_treatment > 0, ]
+
+# Coerce event_time to factor
+estudy_control_balanced_data[, event_time := factor(event_time)]
+
+# Weightings
+estudy_control_balanced_data[treatment == "treated", weight := 1]
+estudy_control_balanced_data[, n_control := uniqueN(cvr[treatment == "control"]), by = .(stack_id)]
+estudy_control_balanced_data[treatment == "control", weight := 1 / n_control, by = .(stack_id)]
+
+# Filter to where I have at least one control
+estudy_control_balanced_data <- estudy_control_balanced_data[n_control >= 1, ]
+
+# Join sector
+sector_codes <- firm_data[cvr %chin% unique(estudy_control_balanced_data$cvr), .(cvr, qidx, industry_code)]
+estudy_control_balanced_data[sector_codes, on = .(cvr, qidx), industry_code := i.industry_code]
+
+# treatment must be numeric 0/1
+estudy_control_balanced_data[, treated := as.integer(treatment == "treated")]
+
+# Check balanced of fine tuned regression data
+control_quality_bounds <- c(0, 100)
+reg_data <- estudy_control_balanced_data[control_quality %between% control_quality_bounds, ]
+check <- all(reg_data[, .N, by = event_time]$N == unique(reg_data[, .N, by = event_time]$N))
+
+if (!check) {
+  stop("event study is not balanced.")
+}
+
+# Run regression
+est <- feols(c(fte, log(fte)) ~ i(event_time, treated, ref = -1) | 
+               cvr + quarter^industry_code + treated + event_time,
+      data = reg_data, 
+      cluster = ~stack_id^cvr, 
+      weights = ~weight)
+
+# Graph
+iplot(est[1])       
+iplot(est[2])       
+
+```
+
+```{r weighted-diff-in-means}
+
+# Get regression metadata
+n_per_period <- reg_data[, .(n = sum(weight)), by = .(event_time, treatment)]
+n_firms <- reg_data[, uniqueN(cvr), by = treatment]
+n_stacks <- reg_data[, uniqueN(stack_id)]
+
+# Calculate weighted mean FTE
+weighted_mean_fte <- reg_data[,
+                              .(
+                               mean_fte = sum(weight * fte) / sum(weight)
+                               ), 
+                             by = .(event_time, treatment, control_protocol)]
+
+# Make graph
+ggplot(data = weighted_mean_fte,
+       aes(x = event_time, group = treatment, y = mean_fte, colour = treatment)) +
+  geom_line() +
+  labs(title = "FTE by Treatment Status",
+       y = "FTE (level)", x = "Event time (t = 0 is award quarter)",
+       caption = sprintf(
+         "Control match quality in [%.2f, %.2f]; %s matched stacks.",
+         control_quality_bounds[1], control_quality_bounds[2],
+         format(n_stacks, big.mark = ","))) +
+  theme(plot.caption = element_text(hjust = 0))
+  
+
+```
