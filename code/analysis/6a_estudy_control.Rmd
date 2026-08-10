@@ -425,37 +425,8 @@ valid_winner_events[, event_quarter := quarter(award_date)]
 
 # If toggle on, construct controls
 if (construct_control_data == 1) {
-  
-    control_event_list <- map(seq_len(nrow(valid_winner_events)),
-      function(i) {
-        # Extract required info for the i-th event
-        winning_firm_cvr <- valid_winner_events$winner_cvr_final[i]
-        award_year <- valid_winner_events$event_year[i]
-        award_quarter <- valid_winner_events$event_quarter[i]
-        
-        # Execute funtions
-        build_control_firm_data(
-          winning_firm_cvr = winning_firm_cvr,
-          award_year = award_year,
-          award_quarter = award_quarter,
-          lookback = 4,
-          freq = "quarterly_spliced",
-          firm_data = firm_data,
-          event_data = valid_winner_events
-        )
-      }
-    ) 
-  
-  # Bind control data into one data.table
-  control_event_data <- map(seq_along(control_event_list), function(i) {
-    x <- control_event_list[[i]]
-    out <- x$estudy_data
-    out$stack_id <- i
-    return(out)
-    }) %>% 
-    rbindlist(fill = TRUE, use.names = TRUE)
-  control_event_data <- control_event_data[frequency == "quarterly_spliced", ]
-  saveRDS(control_event_data, file.path(clean_data_dir, "control_event_list.rds"))
+  source("R/code/analysis/find_control_firms.R")
+  control_event_data <- readRDS(file.path(clean_data_dir, "control_event_list.rds"))
 } else {
   control_event_data <- readRDS(file.path(clean_data_dir, "control_event_list.rds"))
 }
