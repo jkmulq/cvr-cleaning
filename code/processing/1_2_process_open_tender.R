@@ -339,6 +339,18 @@ data <- data %>%
 data <- data %>% 
   mutate(flag_awarded = ifelse(tender_isAwarded == "yes", TRUE, FALSE))
 
+## Join extracted dates from TED notices
+## First-time replication has no panel yet, so the below source() calls build it
+detect_notice_dates <- file.exists(file.path(dirs$intermediates, "ted", "opentender_notice_dates.rds"))
+if (!detect_notice_dates) {
+  source(file.path(PROJECT_DIR, "code", "scraping", "1_2a_fetch_notices.R"))
+  source(file.path(PROJECT_DIR, "code", "scraping", "1_2b_build_notice_lineage.R"))
+  source(file.path(PROJECT_DIR, "code", "scraping", "1_2c_extract_notice_dates.R"))
+  source(file.path(PROJECT_DIR, "code", "scraping", "1_2e_build_date_panel.R"))
+}
+extracted_ted_dates <- readRDS(file.path(dirs$intermediates, "ted", "opentender_notice_dates.rds"))
+data <- left_join(data, extracted_ted_dates, by = c("tender_id", "lot_id"))
+
 ## 1.4 Separate winners/buyers/original data
 winner_data_original <- data %>%
   mutate(winner_cvr = winner_cvr_original,
