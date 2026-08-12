@@ -1,0 +1,293 @@
+---
+title: "TED Notice Dates"
+author: "Jack Mulqueeney"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    self_contained: true
+knit: >
+  (function(inputFile, encoding) {
+    project_dir <- normalizePath(dirname(inputFile), mustWork = TRUE)
+    while (!file.exists(file.path(project_dir, "cvr-cleaning.Rproj")) &&
+           dirname(project_dir) != project_dir) project_dir <- dirname(project_dir)
+    output_dir <- file.path(project_dir, "output", "docs")
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    rmarkdown::render(
+      inputFile,
+      encoding = encoding,
+      knit_root_dir = project_dir,
+      output_dir = output_dir
+    )
+  })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE
+)
+
+# Clean up environment
+rm(list = ls())
+
+# Packages
+library(data.table)
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(scales)
+
+# Graph settings
+theme_set(theme_light())
+theme_update(plot.title = element_text(hjust = 0.5, face = "bold"))
+theme_update(plot.subtitle = element_text(hjust = 0.5))
+
+# Paths (locate project root, then read the ONLY input this note needs)
+report_project_dir <- local({
+  d <- normalizePath(getwd(), mustWork = TRUE)
+  while (!file.exists(file.path(d, "cvr-cleaning.Rproj")) && dirname(d) != d) {
+    d <- dirname(d)
+  }
+  d
+})
+setwd(report_project_dir)
+knitr::opts_knit$set(root.dir = report_project_dir)
+source(file.path(report_project_dir, "config.R"))
+
+dates <- as.data.table(readRDS(
+  file.path(dirs$intermediates, "ted", "opentender_notice_dates.rds")
+))
+n_rows <- nrow(dates)
+```
+
+```{r define-gaps, include=FALSE}
+# Each gap is (to - from) in days. Signs are set so a well-behaved tender is
+# POSITIVE: dispatch precedes publication, publication precedes the deadline, the
+# deadline precedes the award, planning precedes competition precedes award.
+gap_defs <- data.table(
+  gap = c("plan_dispatch_to_pub", "comp_dispatch_to_pub", "award_dispatch_to_pub",
+          "comp_pub_to_deadline", "comp_dispatch_to_deadline",
+          "deadline_to_award_pub", "deadline_to_contract", "contract_to_award_pub",
+          "plan_to_comp_pub", "comp_to_award_pub", "plan_to_award_pub"),
+  label = c("Planning: dispatch -> publication",
+            "Competition: dispatch -> publication",
+            "Award: dispatch -> publication",
+            "Competition: publication -> tender deadline",
+            "Competition: dispatch -> tender deadline",
+            "Tender deadline -> award publication",
+            "Tender deadline -> contract award",
+            "Contract award -> award publication",
+            "Planning -> competition (publication)",
+            "Competition -> award (publication)",
+            "Planning -> award (full lifecycle)"),
+  group = c("TED processing lag", "TED processing lag", "TED processing lag",
+            "Bidding window", "Bidding window",
+            "Evaluation & award", "Evaluation & award", "Evaluation & award",
+            "Lead time & lifecycle", "Lead time & lifecycle", "Lead time & lifecycle"),
+  from = c("planning_dispatch_date", "competition_dispatch_date", "award_dispatch_date",
+           "competition_publication_date", "competition_dispatch_date",
+           "competition_tender_deadline_date", "competition_tender_deadline_date", "award_contract_date",
+           "planning_publication_date", "competition_publication_date", "planning_publication_date"),
+  to = c("planning_publication_date", "competition_publication_date", "award_publication_date",
+         "competition_tender_deadline_date", "competition_tender_deadline_date",
+         "award_publication_date", "award_contract_date", "award_publication_date",
+         "competition_publication_date", "award_publication_date", "award_publication_date")
+)
+
+# Compute each gap in days
+for (i in seq_len(nrow(gap_defs))) {
+  dates[, (gap_defs$gap[i]) := as.integer(get(gap_defs$to[i]) - get(gap_defs$from[i]))]
+}
+
+# Long format for tables/plots (one row per tender-lot x gap, missing dropped)
+long <- melt(dates, id.vars = c("tender_id", "lot_id"),
+             measure.vars = gap_defs$gap, variable.name = "gap", value.name = "days")
+long[, gap := as.character(gap)]
+long <- gap_defs[, .(gap, label, group)][long, on = "gap"]
+long_valid <- long[!is.na(days)]
+
+# Readable, lifecycle-ordered factors
+long_valid[, label := factor(label, levels = gap_defs$label)]
+long_valid[, group := factor(group, levels = unique(gap_defs$group))]
+
+```
+
+# Introduction
+
+This note describes the extracted dates from the TED notices. I selected dates that roughly trace the tender's lifecycle. There are three main stages of a tender's lifecycle:
+
+1. **Planning** (PIN, where present), tender is announced.
+2. **Competition** (contract notice), more details about the tender published along with participation conditions.
+3. **Award/result**, information about the winning contract is published.
+
+Most tender's have an award/result and competition notice, while very few appear to have an attached planning notice. There are two dates available for each tender type: the dispatch and publication date. The dispatch date is the date the buying firm sent the notice to TED, and the publication date is when the notice was made publicly available on the TED website. Award and competition notices have extra dates we extract. For awards, the contract award date is usually the date where the final signature was put on the contract and it was finalised. For competition notices, the tender deadline date is the date when bids must be submitted by. 
+
+Below is an example tender illustrating the full lifecycle. Where a stage is available, we use the *dispatch date* of each notice to reconstruct as much of the tender's timeline as possible.
+
+| Stage | Notice | Type | Dispatch date | Link |
+|---|---|---|---|---|
+| 1. Announcement (PIN) | 310260-2021 | Prior information notice | 2021-06-16 | [view](https://ted.europa.eu/en/notice/-/detail/310260-2021) |
+| 2. Competition | 299816-2022 | Contract notice | 2022-05-31 | [view](https://ted.europa.eu/en/notice/-/detail/299816-2022) |
+| 3. Award | 000517-2023 | Contract award notice | 2022-12-28 | [view](https://ted.europa.eu/en/notice/-/detail/000517-2023) |
+
+In the OpenTender data we already have the award notice (the last stage). From each award notice we walk back to its competition notice (where it cites one), and from there to a planning notice. 
+
+```{r lineage-coverage}
+links <- as.data.table(readRDS(
+  file.path(dirs$intermediates, "ted", "notice_links.rds")
+))
+n_award <- nrow(links)
+
+lineage_tbl <- data.table(
+  Stage = c("Award notice", "-> Competition notice", "-> Planning notice (PIN)"),
+  `Notice type` = c("Contract award notice", "Contract notice", "Prior information notice"),
+  `Notices recovered` = c(n_award,
+                          links[!is.na(competition_notice_id), .N],
+                          links[!is.na(planning_notice_id), .N]),
+  `% of award notices` = c(100,
+                           round(100 * links[!is.na(competition_notice_id), .N] / n_award, 1),
+                           round(100 * links[!is.na(planning_notice_id), .N] / n_award, 1))
+)
+
+kable(lineage_tbl,
+      caption = sprintf("Notice lineage recovered from the %s OpenTender award URLs",
+                        format(n_award, big.mark = ",")),
+      format.args = list(big.mark = ",")) %>%
+  kable_styling(full_width = FALSE)
+```
+
+Of the award notices with no competition link, `r format(links[direct_award %in% TRUE, .N], big.mark = ",")` are **direct awards** (made without a call for competition), so a competition notice legitimately does not exist for them. Award URLs are available only for `AWARDED` lots (not `PREAWARDED`), so the award-notice universe is drawn entirely from awarded lots.
+
+Every gap below is measured in days. Negative or extreme values are summarised in the final section.
+
+```{r date-coverage}
+date_cols <- c("planning_dispatch_date", "planning_publication_date",
+               "competition_dispatch_date", "competition_publication_date",
+               "competition_tender_deadline_date",
+               "award_dispatch_date", "award_publication_date", "award_contract_date")
+
+field_cov <- data.table(
+  `Date field` = date_cols,
+  `Tender-lots with date` = sapply(date_cols, function(c) dates[!is.na(get(c)), .N]),
+  `Coverage (%)` = sapply(date_cols, function(c) round(100 * dates[!is.na(get(c)), .N] / n_rows, 1))
+)
+
+kable(field_cov,
+      caption = sprintf("Availability of each extracted date field (of %s tender-lots)",
+                        format(n_rows, big.mark = ",")),
+      format.args = list(big.mark = ",")) %>%
+  kable_styling(full_width = FALSE)
+```
+
+# Coverage in the cleaned OpenTender winner dataset
+
+Below is the share of observations in the **cleaned OpenTender winner dataset** (`clean_winner_data_ot.rds` — the processed table *before* matching, one row per tender-lot-winner) that carry each date. Winner rows whose notice was never matched/fetched have no dates, so these shares are lower.
+
+```{r winner-date-coverage}
+winners <- as.data.table(readRDS(
+  file.path(dirs$clean_data, "clean_winner_data_ot.rds")
+))
+n_winner_rows <- nrow(winners)
+
+winner_field_cov <- data.table(
+  `Date field` = date_cols,
+  `Winner rows with date` = sapply(date_cols, function(c) winners[!is.na(get(c)), .N]),
+  `Coverage (%)` = sapply(date_cols, function(c) round(100 * winners[!is.na(get(c)), .N] / n_winner_rows, 1))
+)
+
+kable(winner_field_cov,
+      caption = sprintf("Date-field coverage in the cleaned OpenTender winner dataset (of %s winner rows)",
+                        format(n_winner_rows, big.mark = ",")),
+      format.args = list(big.mark = ",")) %>%
+  kable_styling(full_width = FALSE)
+```
+
+# Gap coverage and summary statistics
+
+The `coverage %` column is the share of the cleaned **OpenTender winner rows** for which **both** endpoint dates exist (so the gap is computable); it falls as we chain further up the lifecycle (planning dates are rare). 
+
+```{r gap-summary}
+# Distribution of each gap (days) over the extracted date panel (tender-lot grain).
+gap_summary <- long_valid[, .(
+  n = .N,
+  median = as.numeric(median(days)),
+  mean = round(mean(days), 1),
+  p10 = as.numeric(quantile(days, 0.10)),
+  p25 = as.numeric(quantile(days, 0.25)),
+  p75 = as.numeric(quantile(days, 0.75)),
+  p90 = as.numeric(quantile(days, 0.90)),
+  `share_neg` = round(mean(days < 0), 5),
+  `share_over_2yr` = round(mean(days > 730), 5)
+), by = .(group, label)]
+
+# `coverage %`: share of the cleaned OpenTender winner rows (of n_winner_rows) for
+# which BOTH endpoint dates of the gap are present, i.e. the gap is computable.
+ot_n <- vapply(seq_len(nrow(gap_defs)), function(i) {
+  fr <- gap_defs$from[i]; to <- gap_defs$to[i]
+  sum(!is.na(winners[[fr]]) & !is.na(winners[[to]]))
+}, integer(1))
+ot_cov <- data.table(label = factor(gap_defs$label, levels = gap_defs$label),
+                     `coverage %` = round(100 * ot_n / n_winner_rows, 1))
+
+gap_summary <- ot_cov[gap_summary, on = "label"]
+setcolorder(gap_summary, c("group", "label", "n", "coverage %"))
+setorder(gap_summary, group, label)
+
+kable(gap_summary,
+      caption = sprintf(paste("Gap distribution (days) over the extracted date panel; coverage =",
+                              "share of the %s cleaned OpenTender winner rows with the gap computable."),
+                        format(n_winner_rows, big.mark = ",")),
+      format.args = list(big.mark = ",")) %>%
+  kable_styling(full_width = FALSE, font_size = 12) %>%
+  collapse_rows(columns = 1, valign = "top")
+```
+
+# Data-quality flags
+
+## Out-of-order gaps (negative)
+
+```{r negative-gaps}
+neg_tbl <- long_valid[, .(
+  n = .N,
+  n_negative = sum(days < 0),
+  `share_negative` = round(mean(days < 0), 5),
+  most_negative_days = as.integer(min(days))
+), by = .(group, label)][n_negative > 0]
+setorder(neg_tbl, -n_negative)
+
+if (nrow(neg_tbl) == 0) {
+  cat("No negative gaps found.\n")
+} else {
+  kable(neg_tbl,
+        caption = "Gaps with out-of-order (negative) values",
+        format.args = list(big.mark = ",")) %>%
+    kable_styling(full_width = FALSE)
+}
+```
+
+## Long gaps
+
+```{r long-gaps}
+long_tbl <- long_valid[, .(
+  n = .N,
+  `n_over_1yr` = sum(days > 365),
+  `n_over_2yr` = sum(days > 730),
+  `n_over_3yr` = sum(days > 1095),
+  max_days = as.integer(max(days))
+), by = .(group, label)][n_over_2yr > 0]
+setorder(long_tbl, -n_over_2yr)
+
+if (nrow(long_tbl) == 0) {
+  cat("No gaps longer than two years found.\n")
+} else {
+  kable(long_tbl,
+        caption = "Gaps with implausibly long (> 2 year) values",
+        format.args = list(big.mark = ",")) %>%
+    kable_styling(full_width = FALSE)
+}
+```
