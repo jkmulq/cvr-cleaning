@@ -127,7 +127,7 @@ This note describes the extracted dates from the TED notices. I selected dates t
 
 Most tender's have an award/result and competition notice, while very few appear to have an attached planning notice. There are two dates available for each tender type: the dispatch and publication date. The dispatch date is the date the buying firm sent the notice to TED, and the publication date is when the notice was made publicly available on the TED website. Award and competition notices have extra dates we extract. For awards, the contract award date is usually the date where the final signature was put on the contract and it was finalised. For competition notices, the tender deadline date is the date when bids must be submitted by. 
 
-Below is an example tender illustrating the full lifecycle. Where a stage is available, we use the *dispatch date* of each notice to reconstruct as much of the tender's timeline as possible.
+Below is an example tender illustrating the full lifecycle. 
 
 | Stage | Notice | Type | Dispatch date | Link |
 |---|---|---|---|---|
