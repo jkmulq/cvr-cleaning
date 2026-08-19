@@ -14,3 +14,6 @@ data/*
 documents/*
 output/*
 logs/*
+
+# Log files (catch any stray log written outside logs/)
+*.log
