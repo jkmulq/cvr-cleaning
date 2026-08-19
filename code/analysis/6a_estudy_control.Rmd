@@ -44,6 +44,11 @@ library(fixest)
 library(lubridate)
 library(kableExtra)
 
+# Graph settings
+theme_set(theme_light())
+theme_update(plot.title = element_text(hjust = 0.5, face = "bold"))
+theme_update(plot.subtitle = element_text(hjust = 0.5))
+
 # Paths
 report_project_dir <- local({
   d <- normalizePath(getwd(), mustWork = TRUE)
@@ -291,7 +296,6 @@ valid_winner_events[, isolated_event := (is.na(gap_prev) | gap_prev > 4) &
 ## Find control firm match for each firm-event
 A control firm is the firm with:
 - closest employment history to the treated firm (winner) in the 4 quarters prior to the award date
-- closest age to the treated firm (winner) at the time of the award date
 - same sector, and
 - same location
 
@@ -301,120 +305,6 @@ firm_data[, qidx := year * 4 + quarter]
 valid_winner_events[, winner_cvr_final := as.character(winner_cvr_final)] 
 firm_data[, cvr := as.character(cvr)]
 firm_data[, industry_code := as.character(industry_code)]
-```
-
-```{r find-control-firm, include=FALSE}
-
-build_control_firm_data <- function(winning_firm_cvr, 
-                              award_year, 
-                              award_quarter, 
-                              lookback = 4, 
-                              freq = "quarterly_spliced",
-                              firm_data = firm_data, 
-                              event_data = valid_winner_events) {
-  
-  # Firm qidx at the time of the award
-  winning_qidx <- award_year * 4 + award_quarter
-  
-  # Check firm in firm_data
-  if (!(winning_firm_cvr %in% unique(firm_data$cvr))) {
-    print(paste0("Winning firm CVR ", winning_firm_cvr, " not found in firm_data."))
-    return(NULL)
-  }
-  
-  # Extract firm sector, location and age at the time of the award
-  winning_info <- firm_data[
-    frequency == freq &
-      cvr == winning_firm_cvr & 
-      qidx %between% c(winning_qidx - lookback, winning_qidx - 1), 
-    .(
-      cvr = cvr,
-      frequency = frequency,
-      year = year, 
-      quarter = quarter,
-      qidx = qidx,
-      firm_sector = industry_code,
-      firm_age = firm_age,
-      employees = employees,
-      fte = fte
-    )
-  ]
-  
-  # Find eligible observations
-  eligible_obs <- firm_data[
-    cvr != winning_firm_cvr &
-      frequency == freq &
-      qidx %between% c(winning_qidx - lookback, winning_qidx - 1) & # A year before the tender award
-      industry_code %chin% unique(winning_info$firm_sector), # A firm might change industry code in the event window
-    .(cvr = cvr,
-      year = year,
-      quarter = quarter,
-      qidx = qidx,
-      firm_sector = industry_code,
-      firm_age = firm_age,
-      employees = employees,
-      fte = fte)
-  ]
-  
-  ## For these eligible firms, find ones that DIDN'T win a tender in the
-  ## in c(award_qidx - lookback, award_qidx + lookback)
-  no_tender_controls <- event_data[winner_cvr_final %chin% unique(eligible_obs$cvr) &
-                                     !(award_qidx %between% c(winning_qidx - lookback, winning_qidx + 4)), ]
-  no_tender_controls_cvrs <- no_tender_controls[, unique(winner_cvr_final)]
-  eligible_obs <- eligible_obs[cvr %chin% no_tender_controls_cvrs, ]
-  
-  ## Create eligible control firm counter
-  eligible_obs[, firm_counter_control := .GRP, by = cvr]
-
-  # Cartesian join to find control firm
-  eligible_obs <- merge(
-    eligible_obs,
-    winning_info,
-    by = "qidx",
-    suffixes = c("_control", "_treatment"),
-    allow.cartesian = TRUE
-  )
-
-  # Order
-  setorder(eligible_obs, firm_counter_control, qidx)
-
-  # Calculate differences
-  # for FTE, mean sq. difference in pre-period in fte
-  eligible_obs[, `:=`(
-    fte_diff_sq = (fte_control - fte_treatment) ^ 2,
-    age_diff_sq = (firm_age_control - firm_age_treatment) ^ 2
-    )]
-
-  # Find means
-  eligible_obs[, `:=`(
-    mean_fte_diff_sq = mean(fte_diff_sq),
-    mean_age_diff_sq = mean(age_diff_sq)
-    ), by = .(firm_counter_control, cvr_control)]
-
-  # Find closest match of sum of differences
-  eligible_obs[, sum_diff := mean_fte_diff_sq + mean_age_diff_sq]
-  control_firm_data <- eligible_obs[sum_diff == min(sum_diff), ]
-
-  # Create control/treated data
-  control_event_data <- firm_data[
-    cvr %in% unique(control_firm_data$cvr_control) | cvr == winning_firm_cvr, 
-    .(cvr, frequency, year, quarter, qidx, firm_age, employees, fte)
-  ]
-  control_event_data[, treatment := fifelse(cvr == winning_firm_cvr, "treated", "control")]
-  control_event_data$event_year <- award_year
-  control_event_data$event_quarter <- award_quarter
-  control_event_data$event_qidx <- winning_qidx
-  control_event_data$control_quality <- control_firm_data$sum_diff[1]
-  control_event_data$flag_found_control <- (nrow(control_firm_data) > 0)
-  # Print
-  return(list(
-    "control_firm_decision_data" = control_firm_data, 
-    "all_eligible_controls" = unique(eligible_obs$cvr_control),
-    "estudy_data" = control_event_data
-    ))
-  
-}
-
 ```
 
 ```{r build-full-treatment-control-set}
@@ -428,10 +318,15 @@ if (construct_control_data == 1) {
   source("R/code/analysis/find_control_firms.R")
   control_event_data <- readRDS(file.path(clean_data_dir, "control_event_list.rds"))
 } else {
-  control_event_data <- readRDS(file.path(clean_data_dir, "control_event_list.rds"))
+  control_event_data <- readRDS(file.path(clean_data_dir, "control_event_list_new_qscore.rds"))
+  control_event_data_just_fte <- readRDS(file.path(clean_data_dir, "control_event_list_h8_typefteonly.rds"))
 }
 
 ```
+
+# Event study — full control set {.tabset}
+
+*Controls from the `control_event_data` object (`control_event_list.rds`).*
 
 ```{r run-controlled-estudy}
 
@@ -450,10 +345,11 @@ estudy_control_data <- found_control_data[event_time_window == TRUE, ]
 
 # Create balanced dataset with all positive FTE observations
 estudy_control_data[, fte_pos := fifelse(fte > 0, TRUE, FALSE)]
-estudy_control_data[, all_fte_pos := all(fte_pos), by = .(cvr, event_qidx)]
+estudy_control_data[, all_fte_pos := all(fte_pos), 
+                    by = .(cvr, stack_id)]
 estudy_control_data[, all_in_window := sum(event_time_window) == length(window[1]:window[2]),
                     by = .(cvr, stack_id, treatment)]
-estudy_control_balanced_data <- estudy_control_data[all_in_window == TRUE, ]
+estudy_control_balanced_data <- estudy_control_data[all_in_window == TRUE & all_fte_pos == TRUE, ]
 
 # Ensure at least one treatment per stack_id
 estudy_control_balanced_data[, n_treatment := sum(treatment == "treated"), by = stack_id]
@@ -477,9 +373,118 @@ estudy_control_balanced_data[sector_codes, on = .(cvr, qidx), industry_code := i
 # treatment must be numeric 0/1
 estudy_control_balanced_data[, treated := as.integer(treatment == "treated")]
 
+
+```
+
+## Control quality
+
+I define a good control as one that has a control quality score (sum of squared differences in FTE and age) ...
+```{r extract-only-good-controls}
+
+# Create pre-period flag
+estudy_control_balanced_data[, pre_period := (event_time %in% seq(window[1], -1))]
+# 
+# # Calculate mean FTE for treated firms in the pre-period, by stack_id
+# estudy_control_balanced_data[treated == 1 & pre_period == TRUE,
+#                              m_emp_treated := mean(fte, na.rm = T),
+#                                by = stack_id]
+# estudy_control_balanced_data[, # Fill across all rows in the stack
+#                              m_emp_treated := mean(m_emp_treated, na.rm = T),
+#                              by = stack_id]
+# estudy_control_balanced_data[treated == 0 & pre_period == TRUE,
+#                              m_emp_control := weighted.mean(fte, w = weight, na.rm = T),
+#                              by = stack_id]
+# estudy_control_balanced_data[, # Fill across all rows in the stack
+#                              m_emp_control := mean(m_emp_control, na.rm = T),
+#                              by = stack_id]
+# 
+# # Calculate pre-period treated FTE as share mean squared gap in treated vs. control preperiod FTE
+# estudy_control_balanced_data[,
+#                               control_qscore := m_emp_treated / m_emp_control - 1,
+#                               by = stack_id]
+
+
+# estudy_control_balanced_data[,
+#                              control_qscore_etime := weighted.mean(fte[treated == 0], w = weight[treated == 0]) / fte[treated == 1] - 1,
+#                              by = .(stack_id, event_time)]
+# estudy_control_balanced_data[pre_period == TRUE,
+#                              control_qscore := max(abs(control_qscore_etime)), 
+#                              by = .(stack_id, pre_period)]
+# estudy_control_balanced_data[, 
+#                              control_qscore := mean(control_qscore, na.rm = T),
+#                              by = stack_id]
+```
+
+The below plots pre-period FTE of the treatment and control firms and the number of stacks included as a function of the control quality score.
+```{r control-quality-plot, fig.align='center'}
+score_grid <- seq(0.01, 1, by = 0.01)
+
+qscore_results <- map(score_grid, function(s_cutoff) {
+  
+  # Find cutoff data
+  estudy_cutoff <- estudy_control_balanced_data[abs(control_qscore) <= s_cutoff & control_protocol == "sector, kommune, pre-award FTE", ]
+  
+  # Check balance
+  balance_check <- all(estudy_cutoff[, .N, by = event_time]$N == unique(estudy_cutoff[, .N, by = event_time]$N))
+  
+  # Find number of stacks
+  n_stacks <- estudy_cutoff[, uniqueN(stack_id)]
+  
+  # Find average treatment/control firm pre-period firm size
+  firm_size <- estudy_cutoff[, .(
+    mean_fte = sum(weight * fte, na.rm = T) / sum(weight, na.rm = T)
+    ), by = .(treatment, pre_period)][
+      pre_period == TRUE
+    ]
+  
+  
+  # Join together all in one output
+  out <- data.table(
+    control_quality_cutoff = s_cutoff,
+    balance_check = balance_check,
+    n_stacks = n_stacks,
+    mean_fte_treated = firm_size[treatment == "treated", unique(mean_fte)],
+    mean_fte_control = firm_size[treatment == "control", unique(mean_fte)]
+  )
+  
+  # Return
+  return(out)
+})
+
+qscore_results <- rbindlist(qscore_results)
+
+# Qscore select
+control_quality_bound <- 0.30
+
+# Plot N
+ggplot(qscore_results, aes(x = control_quality_cutoff, y = n_stacks)) +
+  geom_line() +
+  labs(title = "Number of matched stacks by control quality cutoff",
+       x = "Control quality cutoff",
+       y = "Number of matched stacks") + 
+  geom_vline(aes(xintercept = control_quality_bound), lty = "dashed")
+
+# Plot gap between pre-period FTEs
+firm_size_qscore_gdata <- qscore_results %>% 
+  pivot_longer(., cols = -c(control_quality_cutoff, balance_check, n_stacks))
+ggplot(firm_size_qscore_gdata, 
+       aes(x = control_quality_cutoff, y = value, colour = name)) +
+  geom_line() +
+  labs(title = "Pre-period FTE gap by control quality cutoff",
+       x = "Control quality cutoff",
+       y = "Pre-period FTE") + 
+  geom_vline(aes(xintercept = control_quality_bound), lty = "dashed")
+
+```
+
+## Weighted difference in means
+
+The below ensures the event study is balanced before running the regressions / calculating means.
+```{r check-balance}
+
 # Check balanced of fine tuned regression data
-control_quality_bounds <- c(0, 100)
-reg_data <- estudy_control_balanced_data[control_quality %between% control_quality_bounds, ]
+reg_data <- estudy_control_balanced_data[abs(control_qscore) <= control_quality_bound & 
+                                           control_protocol == "sector, kommune, pre-award FTE", ]
 check <- all(reg_data[, .N, by = event_time]$N == unique(reg_data[, .N, by = event_time]$N))
 
 if (!check) {
@@ -501,7 +506,7 @@ weighted_mean_fte <- reg_data[,
                               .(
                                mean_fte = sum(weight * fte) / sum(weight)
                                ), 
-                             by = .(event_time, treatment, control_protocol)]
+                             by = .(event_time, treatment)]
 
 # Make graph
 ggplot(data = weighted_mean_fte,
@@ -510,29 +515,241 @@ ggplot(data = weighted_mean_fte,
   labs(title = "FTE by Treatment Status",
        y = "FTE (level)", x = "Event time (t = 0 is award quarter)",
        caption = sprintf(
-         "Control match quality in [%.2f, %.2f]; %s matched stacks.",
-         control_quality_bounds[1], control_quality_bounds[2],
-         format(n_stacks, big.mark = ","))) +
+         "Control match quality l.t. %.2f, includes %s matched stacks (%.2f of the total).",
+         control_quality_bound,
+         format(n_stacks, big.mark = ","),
+         n_stacks / estudy_control_balanced_data[, uniqueN(stack_id)])) +
   theme(plot.caption = element_text(hjust = 0))
   
 
 ```
 
+## Stacked DiD estimates
+
 Below is the stacked DiD event study. The specification is:
 
 $$
 
-y = \sum_{k=-8}^{8} \beta_k \cdot 1\{eventTime = k\} \cdot 1[treated] + \gamma_{cvr} + \gamma_{quarter:industry} + \gamma_{treated} + \gamma_{eventTime} + \epsilon
+y = \sum_{k=-8}^{8} \beta_k \cdot 1\{eventTime = k\} \cdot 1[treated] + \gamma_{cvr} + \gamma_{qidx} + \gamma_{treated} + \gamma_{eventTime} + \epsilon
 
 $$
 I think this is the right specification based on Deshpande and Li (2019). Standard errors are clustered at the stack-CVR level.
 ```{r run-estudy-regs}
 
 # Run regression
-est <- feols(c(fte, log(fte)) ~ i(event_time, treated, ref = -1) | 
-               cvr + quarter^industry_code + treated + event_time,
-      data = reg_data, 
-      cluster = ~stack_id^cvr, 
+est <- feols(c(fte, log(fte)) ~ i(event_time, treated, ref = -1) |
+               cvr + qidx^industry_code + treated + event_time,
+      data = reg_data[control_protocol == "sector, kommune, pre-award FTE", ],
+      cluster = ~stack_id^cvr,
+      weights = ~weight)
+
+# Graph
+iplot(est[1])
+iplot(est[2])
+
+```
+# Event study — FTE-only control set (8-quarter) {.tabset}
+
+*Controls from the `control_event_data_just_fte` object (`control_event_list_fte_only_8qtr.rds`).*
+
+```{r run-controlled-estudy-fte}
+
+# Event window
+window <- c(-8, 8) 
+
+# Filter to events we found controls for
+found_control_data <- control_event_data_just_fte[flag_found_control == TRUE, ]
+
+# Create event time
+found_control_data[, event_time := qidx - event_qidx]
+
+# Filter to window
+found_control_data[, event_time_window := fifelse(event_time >= window[1] & event_time <= window[2], TRUE, FALSE)]
+estudy_control_data <- found_control_data[event_time_window == TRUE, ]
+
+# Create balanced dataset with all positive FTE observations
+estudy_control_data[, fte_pos := fifelse(fte > 0, TRUE, FALSE)]
+estudy_control_data[, all_fte_pos := all(fte_pos), by = .(cvr, stack_id)]
+estudy_control_data[, all_in_window := sum(event_time_window) == length(window[1]:window[2]),
+                    by = .(cvr, stack_id, treatment)]
+estudy_control_balanced_data <- estudy_control_data[all_in_window == TRUE & all_fte_pos == TRUE, ]
+
+# Ensure at least one treatment per stack_id
+estudy_control_balanced_data[, n_treatment := sum(treatment == "treated"), by = stack_id]
+estudy_control_balanced_data <- estudy_control_balanced_data[n_treatment > 0, ]
+
+# Coerce event_time to factor
+estudy_control_balanced_data[, event_time := factor(event_time)]
+
+# Weightings
+estudy_control_balanced_data[treatment == "treated", weight := 1]
+estudy_control_balanced_data[, n_control := uniqueN(cvr[treatment == "control"]), by = .(stack_id)]
+estudy_control_balanced_data[treatment == "control", weight := 1 / n_control, by = .(stack_id)]
+
+# Filter to where I have at least one control
+estudy_control_balanced_data <- estudy_control_balanced_data[n_control >= 1, ]
+
+# Join sector
+sector_codes <- firm_data[cvr %chin% unique(estudy_control_balanced_data$cvr), .(cvr, qidx, industry_code)]
+estudy_control_balanced_data[sector_codes, on = .(cvr, qidx), industry_code := i.industry_code]
+
+# treatment must be numeric 0/1
+estudy_control_balanced_data[, treated := as.integer(treatment == "treated")]
+
+
+```
+
+## Control quality
+
+I define a good control as one that has a control quality score (sum of squared differences in FTE and age) ...
+```{r extract-only-good-controls-fte}
+
+# Create pre-period flag
+estudy_control_balanced_data[, pre_period := (event_time %in% seq(window[1], -1))]
+# 
+# # Calculate mean FTE for treated firms in the pre-period, by stack_id
+# estudy_control_balanced_data[treated == 1 & pre_period == TRUE, 
+#                              m_emp_treated := mean(fte, na.rm = T), 
+#                              by = stack_id]
+# estudy_control_balanced_data[, # Fill across all rows in the stack
+#                              m_emp_treated := mean(m_emp_treated, na.rm = T), 
+#                              by = stack_id]
+# 
+# estudy_control_balanced_data[treated == 0 & pre_period == TRUE, 
+#                              m_emp_control := mean(fte, na.rm = T), 
+#                              by = stack_id]
+# estudy_control_balanced_data[, # Fill across all rows in the stack
+#                              m_emp_control := mean(m_emp_control, na.rm = T), 
+#                              by = stack_id]
+# 
+# # Calculate pre-period treated FTE as share mean squared gap in treated vs. control preperiod FTE
+# estudy_control_balanced_data[, 
+#                              control_qscore := m_emp_treated / m_emp_control - 1, 
+#                              by = stack_id]
+
+```
+
+The below plots pre-period FTE of the treatment and control firms and the number of stacks included as a function of the control quality score.
+```{r control-quality-plot-fte, fig.align='center'}
+score_grid <- seq(0.01, 1, by = 0.01)
+
+qscore_results <- map(score_grid, function(s_cutoff) {
+  
+  # Find cutoff data
+  estudy_cutoff <- estudy_control_balanced_data[abs(control_qscore) <= s_cutoff, ]
+  
+  # Check balance
+  balance_check <- all(estudy_cutoff[, .N, by = event_time]$N == unique(estudy_cutoff[, .N, by = event_time]$N))
+  
+  # Find number of stacks
+  n_stacks <- estudy_cutoff[, uniqueN(stack_id)]
+  
+  # Find average treatment/control firm pre-period firm size
+  firm_size <- estudy_cutoff[, .(
+    mean_fte = sum(weight * fte, na.rm = T) / sum(weight, na.rm = T)
+    ), by = .(treatment, pre_period)][
+      pre_period == TRUE
+    ]
+  
+  
+  # Join together all in one output
+  out <- data.table(
+    control_quality_cutoff = s_cutoff,
+    balance_check = balance_check,
+    n_stacks = n_stacks,
+    mean_fte_treated = firm_size[treatment == "treated", unique(mean_fte)],
+    mean_fte_control = firm_size[treatment == "control", unique(mean_fte)]
+  )
+  
+  # Return
+  return(out)
+})
+
+qscore_results <- rbindlist(qscore_results)
+
+# Plot N
+ggplot(qscore_results, aes(x = control_quality_cutoff, y = n_stacks)) +
+  geom_line() +
+  labs(title = "Number of matched stacks by control quality cutoff",
+       x = "Control quality cutoff",
+       y = "Number of matched stacks")
+
+# Plot gap between pre-period FTEs
+firm_size_qscore_gdata <- qscore_results %>% 
+  pivot_longer(., cols = -c(control_quality_cutoff, balance_check, n_stacks))
+ggplot(firm_size_qscore_gdata, 
+       aes(x = control_quality_cutoff, y = value, colour = name)) +
+  geom_line() +
+  labs(title = "Pre-period FTE gap by control quality cutoff",
+       x = "Control quality cutoff",
+       y = "Pre-period FTE")
+
+```
+
+## Weighted difference in means
+
+The below ensures the event study is balanced before running the regressions / calculating means.
+```{r check-balance-fte}
+
+# Check balanced of fine tuned regression data
+control_quality_bound <- 0.04
+reg_data <- estudy_control_balanced_data[abs(control_qscore) <= control_quality_bound, ]
+check <- all(reg_data[, .N, by = event_time]$N == unique(reg_data[, .N, by = event_time]$N))
+
+if (!check) {
+  stop("event study is not balanced.")
+}
+
+```
+
+Below are the weighted mean employment levels for treated and control firms by event time. The weights are constructed such that each treated firm has a weight of 1, and the controls are weighted inversely by the number of controls in each stack.
+```{r weighted-diff-in-means-fte}
+
+# Get regression metadata
+n_per_period <- reg_data[, .(n = sum(weight)), by = .(event_time, treatment)]
+n_firms <- reg_data[, uniqueN(cvr), by = treatment]
+n_stacks <- reg_data[, uniqueN(stack_id)]
+
+# Calculate weighted mean FTE
+weighted_mean_fte <- reg_data[,
+                              .(
+                               mean_fte = sum(weight * fte) / sum(weight)
+                               ), 
+                             by = .(event_time, treatment)]
+
+# Make graph
+ggplot(data = weighted_mean_fte,
+       aes(x = event_time, group = treatment, y = mean_fte, colour = treatment)) +
+  geom_line() +
+  labs(title = "FTE by Treatment Status",
+       y = "FTE (level)", x = "Event time (t = 0 is award quarter)",
+       caption = sprintf(
+         "Control match quality l.t. %.2f, includes %s matched stacks (%.2f of the total).",
+         control_quality_bound,
+         format(n_stacks, big.mark = ","),
+         n_stacks / estudy_control_balanced_data[, uniqueN(stack_id)])) +
+  theme(plot.caption = element_text(hjust = 0))
+  
+
+```
+
+## Stacked DiD estimates
+
+Below is the stacked DiD event study. The specification is:
+
+$$
+
+y = \sum_{k=-8}^{8} \beta_k \cdot 1\{eventTime = k\} \cdot 1[treated] + \gamma_{cvr} + \gamma_{qidx} + \gamma_{treated} + \gamma_{eventTime} + \epsilon
+
+$$
+I think this is the right specification based on Deshpande and Li (2019). Standard errors are clustered at the stack-CVR level.
+```{r run-estudy-regs-fte}
+
+# Run regression
+est <- feols(c(fte, log(fte)) ~ i(event_time, treated, ref = -1) |
+               cvr + qidx + treated + event_time,
+      data = reg_data,
+      cluster = ~stack_id^cvr,
       weights = ~weight)
 
 # Graph
