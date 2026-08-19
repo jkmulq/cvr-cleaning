@@ -84,7 +84,8 @@ build_control_firm_data <- function(winning_firm_cvr,
                                     lookback = 4,
                                     freq = "quarterly_spliced",
                                     firm_data = firm_data,
-                                    event_data = valid_winner_events) {
+                                    event_data = valid_winner_events,
+                                    staggered_attributes = TRUE) {
 
   winning_qidx <- award_year * 4 + award_quarter
 
@@ -92,63 +93,92 @@ build_control_firm_data <- function(winning_firm_cvr,
     print(paste0("Winning firm CVR ", winning_firm_cvr, " not found in firm_data."))
     return(NULL)
   }
-
+  
+  # Treated firm's own pre-window quarters. Needed by BOTH branches and by the
+  # merge / n_pre after the if/else, so compute it up front. (It previously lived
+  # only inside the staggered branch, so the FTE-only `else` path -- and the merge
+  # -- hit "object 'winning_info' not found" and every event errored to NULL.)
   winning_info <- firm_data[
     frequency == freq &
       cvr == winning_firm_cvr &
       qidx %between% c(winning_qidx - lookback, winning_qidx - 1),
     .(cvr = cvr, frequency = frequency, year = year, quarter = quarter, qidx = qidx,
-      firm_sector = industry_code, hq_kommune_code = hq_kommune_code, 
+      firm_sector = industry_code, hq_kommune_code = hq_kommune_code,
       firm_age = firm_age, employees = employees, fte = fte)
   ]
 
-  eligible_obs <- firm_data[
-    cvr != winning_firm_cvr &
-      frequency == freq &
-      qidx %between% c(winning_qidx - lookback, winning_qidx - 1) &
-      industry_code %chin% unique(winning_info$firm_sector) &
-      hq_kommune_code %chin% unique(winning_info$hq_kommune_code),
-    .(cvr = cvr, year = year, quarter = quarter, qidx = qidx,
-      firm_sector = industry_code, firm_age = firm_age, employees = employees, fte = fte)
-  ]
-  
-  # Eligible controls: firms that win at least one tender (winners are preferred to
-  # never-winners as controls), but that do NOT win one inside this event's window
-  # [award_qidx +/- lookback]. NB: exclude a firm if it wins *anywhere* in the window
-  # -- not merely "has some award outside it" (a firm winning both inside and outside
-  # the window must still be dropped).
-  all_winner_cvrs   <- event_data[, unique(winner_cvr_final)]
-  winners_in_window <- event_data[award_qidx %between% c(winning_qidx - lookback, 
-                                                         winning_qidx + lookback),
-                                  unique(winner_cvr_final)]
-  eligible_obs <- eligible_obs[cvr %chin% all_winner_cvrs & !(cvr %chin% winners_in_window), ]
-  eligible_obs$control_protocol <- "sector, kommune, pre-award FTE"
-  
-  # Check a control was found with the above
-  if (nrow(eligible_obs) == 0) {
-    print(paste0("No eligible control firms found for winning firm CVR ", 
-                 winning_firm_cvr, " in sector ", unique(winning_info$firm_sector), 
-                 " and kommune ", unique(winning_info$hq_kommune_code), ". \n Defaulting to just sector."))
+  # If staggered attributes is true, run through stricter -> looser control sets.
+  if (staggered_attributes) {
     eligible_obs <- firm_data[
       cvr != winning_firm_cvr &
         frequency == freq &
         qidx %between% c(winning_qidx - lookback, winning_qidx - 1) &
-        industry_code %chin% unique(winning_info$firm_sector),
+        industry_code %chin% unique(winning_info$firm_sector) &
+        hq_kommune_code %chin% unique(winning_info$hq_kommune_code),
       .(cvr = cvr, year = year, quarter = quarter, qidx = qidx,
         firm_sector = industry_code, firm_age = firm_age, employees = employees, fte = fte)
     ]
     
-    # Find no winners in window
+    # Eligible controls: firms that win at least one tender (winners are preferred to
+    # never-winners as controls), but that do NOT win one inside this event's window
+    # [award_qidx +/- lookback]. NB: exclude a firm if it wins *anywhere* in the window
+    # -- not merely "has some award outside it" (a firm winning both inside and outside
+    # the window must still be dropped).
     all_winner_cvrs   <- event_data[, unique(winner_cvr_final)]
     winners_in_window <- event_data[award_qidx %between% c(winning_qidx - lookback, 
                                                            winning_qidx + lookback),
                                     unique(winner_cvr_final)]
     eligible_obs <- eligible_obs[cvr %chin% all_winner_cvrs & !(cvr %chin% winners_in_window), ]
-    eligible_obs$control_protocol <- "sector, pre-award FTE"
-  }
-  
-  # Check again that eligible_obs is not empty. If it is, do not match on sector
-  if (nrow(eligible_obs) == 0) {
+    eligible_obs$control_protocol <- "sector, kommune, pre-award FTE"
+    
+    # Check a control was found with the above
+    if (nrow(eligible_obs) == 0) {
+      print(paste0("No eligible control firms found for winning firm CVR ", 
+                   winning_firm_cvr, " in sector ", unique(winning_info$firm_sector), 
+                   " and kommune ", unique(winning_info$hq_kommune_code), ". \n Defaulting to just sector."))
+      eligible_obs <- firm_data[
+        cvr != winning_firm_cvr &
+          frequency == freq &
+          qidx %between% c(winning_qidx - lookback, winning_qidx - 1) &
+          industry_code %chin% unique(winning_info$firm_sector),
+        .(cvr = cvr, year = year, quarter = quarter, qidx = qidx,
+          firm_sector = industry_code, firm_age = firm_age, employees = employees, fte = fte)
+      ]
+      
+      # Find no winners in window
+      all_winner_cvrs   <- event_data[, unique(winner_cvr_final)]
+      winners_in_window <- event_data[award_qidx %between% c(winning_qidx - lookback, 
+                                                             winning_qidx + lookback),
+                                      unique(winner_cvr_final)]
+      eligible_obs <- eligible_obs[cvr %chin% all_winner_cvrs & !(cvr %chin% winners_in_window), ]
+      eligible_obs$control_protocol <- "sector, pre-award FTE"
+    }
+    
+    # Check again that eligible_obs is not empty. If it is, do not match on sector
+    if (nrow(eligible_obs) == 0) {
+      print(paste0("No eligible control firms found for winning firm CVR ", 
+                   winning_firm_cvr, " in sector ", unique(winning_info$firm_sector), 
+                   ". \n Defaulting to all firms."))
+      eligible_obs <- firm_data[
+        cvr != winning_firm_cvr &
+          frequency == freq &
+          qidx %between% c(winning_qidx - lookback, winning_qidx - 1),
+        .(cvr = cvr, year = year, quarter = quarter, qidx = qidx,
+          firm_sector = industry_code, firm_age = firm_age, employees = employees, fte = fte)
+      ]
+      
+      # Find no winners in window
+      all_winner_cvrs   <- event_data[, unique(winner_cvr_final)]
+      winners_in_window <- event_data[award_qidx %between% c(winning_qidx - lookback, 
+                                                             winning_qidx + lookback),
+                                      unique(winner_cvr_final)]
+      eligible_obs <- eligible_obs[cvr %chin% all_winner_cvrs & !(cvr %chin% winners_in_window), ]
+      eligible_obs$control_protocol <- "pre-award FTE"
+      
+    }
+  } else { # Otherwise, just match on FTE
+    
+    # Check again that eligible_obs is not empty. If it is, do not match on sector
     print(paste0("No eligible control firms found for winning firm CVR ", 
                  winning_firm_cvr, " in sector ", unique(winning_info$firm_sector), 
                  ". \n Defaulting to all firms."))
@@ -167,8 +197,9 @@ build_control_firm_data <- function(winning_firm_cvr,
                                     unique(winner_cvr_final)]
     eligible_obs <- eligible_obs[cvr %chin% all_winner_cvrs & !(cvr %chin% winners_in_window), ]
     eligible_obs$control_protocol <- "pre-award FTE"
-
-  }
+    
+    }
+  
   
   # Create group counter
   eligible_obs[, firm_counter_control := .GRP, by = cvr]
@@ -192,24 +223,29 @@ build_control_firm_data <- function(winning_firm_cvr,
     return(NULL)
   }
 
-  # Keep only controls that cover ALL n_pre pre-period observations (a shared
-  # quarter with a non-missing gap for each).
-  eligible_obs[, n_gap := sum(!is.na(fte_diff_sq)), by = .(firm_counter_control, cvr_control)]
-  eligible_obs <- eligible_obs[n_gap == n_pre]
+  # Eligibility: keep only controls that, in EVERY one of the n_pre pre-period
+  # quarters, have a computable gap and positive FTE. 
+  eligible_obs[, n_gap := sum(!is.na(fte_diff_sq) & fte_control > 0),
+               by = .(firm_counter_control, cvr_control)]
+  eligible_obs <- eligible_obs[n_gap == n_pre, ]
 
-  # Case B: controls exist but none span the full pre-period -> discard (distinct message).
+  # controls exist but none have strictly positive FTE with a computable gap
+  # across the whole pre-period -> discard (distinct message).
   if (nrow(eligible_obs) == 0) {
     print(paste0("Discarding winning firm CVR ", winning_firm_cvr,
-                 ": no control has a computable FTE gap across all ", n_pre,
-                 " pre-period observations."))
+                 ": no control has strictly positive FTE with a computable gap across all ",
+                 n_pre, " pre-period observations."))
     return(NULL)
   }
 
   # Closest control by mean squared gap over the (now complete) pre-period.
   eligible_obs[, mean_fte_diff_sq := mean(fte_diff_sq, na.rm = TRUE),
                by = .(firm_counter_control, cvr_control)]
-  control_firm_data <- eligible_obs[mean_fte_diff_sq == min(mean_fte_diff_sq, na.rm = TRUE), ]
-
+  eligible_obs[, control_qscore := sqrt(mean(fte_diff_sq, na.rm = TRUE)) / mean(fte_treatment, na.rm = TRUE),
+               by = .(firm_counter_control, cvr_control)]
+  #control_firm_data <- eligible_obs[mean_fte_diff_sq == min(mean_fte_diff_sq, na.rm = TRUE), ]
+  control_firm_data <- eligible_obs[control_qscore == min(control_qscore, na.rm = TRUE), ]
+  
   # Create event_study data
   control_event_data <- firm_data[
     cvr %in% unique(control_firm_data$cvr_control) | cvr == winning_firm_cvr,
@@ -220,6 +256,7 @@ build_control_firm_data <- function(winning_firm_cvr,
   control_event_data$event_quarter <- award_quarter
   control_event_data$event_qidx <- winning_qidx
   control_event_data$control_quality <- control_firm_data$mean_fte_diff_sq[1]
+  control_event_data$control_qscore <- control_firm_data$control_qscore[1]
   control_event_data$flag_found_control <- (nrow(control_firm_data) > 0)
   control_event_data$control_protocol <- unique(control_firm_data$control_protocol)
 
@@ -229,48 +266,47 @@ build_control_firm_data <- function(winning_firm_cvr,
 }
 
 # ---- Build the full treatment/control set ----
-if (construct_control_data == 1) {
 
-  n_events <- nrow(valid_winner_events)
-  # Parallel over events (each event is independent). Fork-based mclapply lets
-  # workers share the large read-only firm_data / valid_winner_events via
-  # copy-on-write (no per-worker export cost). Fork works on macOS/Linux, not
-  # Windows -- on Windows set n_cores <- 1L (or switch to a PSOCK cluster).
-  n_cores <- max(1L, detectCores() - 1L)
-  setDTthreads(1L)  # one data.table thread per worker -> avoid CPU oversubscription
-  message(sprintf("Constructing controls for %d events on %d cores...", n_events, n_cores))
-  control_event_list <- mclapply(seq_len(n_events), function(i) {
-    e <- valid_winner_events[i]
-    # tryCatch so a single bad event doesn't kill a long background run.
-    tryCatch(
-      build_control_firm_data(
-        winning_firm_cvr = e$winner_cvr_final,
-        award_year = e$event_year, award_quarter = e$event_quarter,
-        lookback = 8, freq = "quarterly_spliced",
-        firm_data = firm_data, event_data = valid_winner_events),
-      error = function(err) NULL)
-  }, mc.cores = n_cores, mc.preschedule = TRUE)
-  setDTthreads(0L)  # restore data.table's default threading for the rest of the script
+# Arguments
+h <- 8
+use_staggered <- FALSE
+staggered_label <- ifelse(use_staggered, "staggered", "fteonly")
+n_events <- nrow(valid_winner_events)
+save_name <- paste0("control_event_list_h", h, "_type", staggered_label, ".rds")
 
-  # Bind, tagging each stack; skip events that produced no estudy_data.
-  control_event_data <- imap(control_event_list, function(x, i) {
-    if (is.null(x) || is.null(x$estudy_data) || nrow(x$estudy_data) == 0) return(NULL)
-    out <- x$estudy_data
-    out[, stack_id := i]
-    out
-  }) %>%
-    purrr::compact() %>%
-    rbindlist(fill = TRUE, use.names = TRUE)
+# Parallel over events 
+n_cores <- max(1L, detectCores() - 1L)
+setDTthreads(1L) 
+message(sprintf("Constructing controls for %d events on %d cores...", n_events, n_cores))
+control_event_list <- mclapply(seq_len(n_events), function(i) {
+  e <- valid_winner_events[i]
+  tryCatch(
+    build_control_firm_data(
+      winning_firm_cvr = e$winner_cvr_final,
+      award_year = e$event_year, award_quarter = e$event_quarter,
+      lookback = h, freq = "quarterly_spliced",
+      firm_data = firm_data, event_data = valid_winner_events,
+      staggered_attributes = use_staggered),
+    error = function(err) NULL)
+}, mc.cores = n_cores, mc.preschedule = TRUE)
+setDTthreads(0L)  # restore data.table's default threading for the rest of the script
 
-  # Guard: an all-NULL batch yields a 0-column table; only filter if we have rows.
-  if (nrow(control_event_data) > 0) {
-    control_event_data <- control_event_data[frequency == "quarterly_spliced", ]
-  }
-  saveRDS(control_event_data, file.path(clean_data_dir, "control_event_list.rds"))
-  message(sprintf("Saved control_event_data: %d rows, %d stacks -> %s",
-                  nrow(control_event_data), uniqueN(control_event_data$stack_id),
-                  file.path(clean_data_dir, "control_event_list.rds")))
-} else {
-  control_event_data <- readRDS(file.path(clean_data_dir, "control_event_list.rds"))
-  message(sprintf("Loaded control_event_data: %d rows", nrow(control_event_data)))
+# Bind, tagging each stack; skip events that produced no estudy_data.
+control_event_data <- imap(control_event_list, function(x, i) {
+  if (is.null(x) || is.null(x$estudy_data) || nrow(x$estudy_data) == 0) return(NULL)
+  out <- x$estudy_data
+  out[, stack_id := i]
+  out
+}) %>%
+  purrr::compact() %>%
+  rbindlist(fill = TRUE, use.names = TRUE)
+
+# Guard: an all-NULL batch yields a 0-column table; only filter if we have rows.
+if (nrow(control_event_data) > 0) {
+  control_event_data <- control_event_data[frequency == "quarterly_spliced", ]
 }
+
+saveRDS(control_event_data, file.path(clean_data_dir, save_name))
+message(sprintf("Saved control_event_data: %d rows, %d stacks -> %s",
+                nrow(control_event_data), uniqueN(control_event_data$stack_id),
+                file.path(clean_data_dir, save_name)))
