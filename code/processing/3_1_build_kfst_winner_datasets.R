@@ -1,6 +1,6 @@
 # =============================================================================
-# code/processing/2_1b_build_kfst_winner_datasets.R
-# KFST winner robustness stack (mirror of the OpenTender stack in 2_7): base / extraction /
+# code/processing/3_1_build_kfst_winner_datasets.R
+# KFST winner robustness stack (mirror of the OpenTender stack in 3_2): base / extraction /
 # name_only on the SHARED slim schema. NOT consumed by the pipeline (robustness/comparison
 # only). Runs right after 2_1. Author: Jack Mulqueeney.
 # =============================================================================

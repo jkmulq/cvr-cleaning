@@ -1,5 +1,5 @@
 # Assertion tests for the production KFST winner-datasets stack
-# (data/clean/kfst_winner_datasets_stacked.rds, built by code/processing/2_1b_build_kfst_winner_datasets.R).
+# (data/clean/kfst_winner_datasets_stacked.rds, built by code/processing/3_1_build_kfst_winner_datasets.R).
 # Promoted from the retired code/drafts/test_dummy_production_kfst.R and repointed to the production
 # outputs + level names (base / extraction / name_only). Prints PASS/FAIL; exits non-zero on any FAIL.
 #   LC_ALL=en_US.UTF-8 Rscript tests/test_kfst_winner_datasets.R
@@ -26,7 +26,7 @@ ok("required columns present", all(need %in% names(d)))
 # 2. no invalid CVRs anywhere (every non-NA winner_cvr_final is a clean 8-digit)
 ok("no invalid winner_cvr_final", d[!is.na(winner_cvr_final) & !is8(winner_cvr_final), .N] == 0L)
 
-# 3. the base slice reproduces the canonical matched winner table (2_1b did not alter CVRs)
+# 3. the base slice reproduces the canonical matched winner table (3_1 did not alter CVRs)
 a <- sort(unique(d[dataset == "base" & is8(winner_cvr_final), as.character(winner_cvr_final)]))
 b <- sort(unique(canon[is8(winner_cvr_final), as.character(winner_cvr_final)]))
 ok("base slice CVR set == clean_winner_data_kfst_name_matched.rds", identical(a, b))

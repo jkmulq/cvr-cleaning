@@ -1,5 +1,5 @@
 # =============================================================================
-# code/processing/2_7_build_ot_winner_datasets.R
+# code/processing/3_2_build_ot_winner_datasets.R
 # OpenTender winner robustness stack (mirror of the KFST stack): base / extraction /
 # name_only on a shared slim schema. NOT consumed by the pipeline (robustness/comparison
 # only — stacking variants would double-count). Author: Jack Mulqueeney.
@@ -66,7 +66,7 @@ extraction <- extraction[, ..slim_cols]
 
 # ---- (3) name_only: every DK OT winner name through the exact+fuzzy matcher, field CVR IGNORED ----
 # winner_cvr_final = the name-matched CVR only (NA if no match). IDENTICAL matcher to the KFST stack
-# (2_1b) and to production 2_3's core (exact steps 1-4 + fuzzy 5-6, same functions.R primitives +
+# (3_1) and to production 2_3's core (exact steps 1-4 + fuzzy 5-6, same functions.R primitives +
 # thresholds 85/85/86/89). Runs on the base OT winner rows (already name-partitioned by 2_3), just
 # ignoring the field CVR. DK-GATED (the registry is Danish; ~68,744 OT winners are DK). Uses the SAME
 # publication-date filter as base 2_3 (match_date = tender_publications_firstdContractAwardDate), so

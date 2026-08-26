@@ -41,12 +41,12 @@ cvr-cleaning/
 │   │   ├── 1_2b_recover_ted_winners.R
 │   │   ├── 1_3_process_keys.R
 │   │   ├── 2_1_match_kfst.R
-│   │   ├── 2_1b_build_kfst_winner_datasets.R
 │   │   ├── 2_2_match_kfst_buyers.R
 │   │   ├── 2_3_match_opentender.R
 │   │   ├── 2_4_match_opentender_buyers.R
-│   │   ├── 2_5_augment_matched_variables.R
-│   │   └── 2_7_build_ot_winner_datasets.R
+│   │   ├── 3_1_build_kfst_winner_datasets.R
+│   │   ├── 3_2_build_ot_winner_datasets.R
+│   │   └── 4_augment_matched_variables.R
 │   ├── analysis/                        # R Markdown quality/analysis reports
 │   │   ├── 3_quality_analysis.Rmd
 │   │   ├── 4_summary_stats.Rmd
@@ -105,12 +105,12 @@ generated separately (listed below the pipeline table).
 | [code/processing/1_2b_recover_ted_winners.R](code/processing/1_2b_recover_ted_winners.R) | Optional/manual. Folds TED-recovered winners (from the notice-lineage pull under `code/scraping/`) back into the OpenTender winner table. Run only when the TED notice data has been built. | updated OpenTender winner data. |
 | [code/processing/1_3_process_keys.R](code/processing/1_3_process_keys.R) | Cleans the CVR register name keys used for later matching. It prepares both official names and alternative names. | `clean_cvr_name_key.rds`, `clean_cvr_biname_key.rds`. |
 | [code/processing/2_1_match_kfst.R](code/processing/2_1_match_kfst.R) | Matches KFST winner names to CVRs against the prepared CVR-name keys (tier-3b consortium members are paired to the lot's own listed field CVRs first). Writes the **consortium-expanded** canonical winner table with the CVR-name **quality columns** and the provenance flag `flag_cvr_recovered_from_invalid`. | `clean_winner_data_kfst_name_matched.rds`, `manual_name_review_kfst.rds`. |
-| [code/processing/2_1b_build_kfst_winner_datasets.R](code/processing/2_1b_build_kfst_winner_datasets.R) | Builds the KFST winner **robustness stack** — `base` / `extraction` / `name_only` variants in one table (a `dataset` factor). Not consumed downstream; for robustness comparison. | `kfst_winner_datasets_stacked.rds`. |
 | [code/processing/2_2_match_kfst_buyers.R](code/processing/2_2_match_kfst_buyers.R) | Matches KFST buyer names to CVRs, since KFST buyer CVRs are not supplied in the raw source. | `clean_buyer_data_kfst_name_matched.rds`, `manual_buyer_name_review_kfst.rds`. |
 | [code/processing/2_3_match_opentender.R](code/processing/2_3_match_opentender.R) | Matches missing OpenTender winner CVRs, records ambiguous/fuzzy cases for review, and writes winner-name partition diagnostics. Also **scores CVR-name quality inline** — the same quality columns + `flag_cvr_recovered_from_invalid` as KFST `2_1` (this scoring used to be a separate step). | `clean_winner_data_ot_name_matched.rds`, `manual_name_review_ot.rds`, `winner_name_partition_diagnostics_ot.rds`. |
 | [code/processing/2_4_match_opentender_buyers.R](code/processing/2_4_match_opentender_buyers.R) | Matches missing OpenTender buyer CVRs and records ambiguous or fuzzy cases for review. Also writes buyer-name partition diagnostics. | `clean_buyer_data_ot_name_matched.rds`, `manual_buyer_name_review_ot.rds`, `buyer_name_partition_diagnostics_ot.rds`. |
-| [code/processing/2_5_augment_matched_variables.R](code/processing/2_5_augment_matched_variables.R) | Maintenance utility for additive tender/lot-level updates. Re-attaches newly created variables from the clean datasets onto the existing `*_name_matched.rds` files without re-running the slow name-matching scripts. Use only when the cleaning changes are add-only and do not alter names, CVRs, or row expansion. | refreshed `*_name_matched.rds` files in place. |
-| [code/processing/2_7_build_ot_winner_datasets.R](code/processing/2_7_build_ot_winner_datasets.R) | Builds the OpenTender winner **robustness stack** — `base` / `extraction` / `name_only` variants (a `dataset` factor), mirroring KFST `2_1b`. Not consumed downstream. | `ot_winner_datasets_stacked.rds`. |
+| [code/processing/3_1_build_kfst_winner_datasets.R](code/processing/3_1_build_kfst_winner_datasets.R) | Builds the KFST winner **robustness stack** — `base` / `extraction` / `name_only` variants in one table (a `dataset` factor). Not consumed downstream; for robustness comparison. | `kfst_winner_datasets_stacked.rds`. |
+| [code/processing/3_2_build_ot_winner_datasets.R](code/processing/3_2_build_ot_winner_datasets.R) | Builds the OpenTender winner **robustness stack** — `base` / `extraction` / `name_only` variants (a `dataset` factor), mirroring KFST `3_1`. Not consumed downstream. | `ot_winner_datasets_stacked.rds`. |
+| [code/processing/4_augment_matched_variables.R](code/processing/4_augment_matched_variables.R) | Maintenance utility for additive tender/lot-level updates. Re-attaches newly created variables from the clean datasets onto the existing `*_name_matched.rds` files without re-running the slow name-matching scripts. Use only when the cleaning changes are add-only and do not alter names, CVRs, or row expansion. | refreshed `*_name_matched.rds` files in place. |
 
 The [code/analysis/](code/analysis) notebooks and helpers run **manually, after matching**:
 
@@ -298,17 +298,17 @@ code/processing/1_2_process_open_tender.R
 code/processing/0_build_cvr_lookup.R  # only if BUILD_CVR_LOOKUP=true
 code/processing/1_3_process_keys.R
 code/processing/2_1_match_kfst.R
-code/processing/2_1b_build_kfst_winner_datasets.R
 code/processing/2_2_match_kfst_buyers.R
 code/processing/2_3_match_opentender.R
 code/processing/2_4_match_opentender_buyers.R
-code/processing/2_7_build_ot_winner_datasets.R
+code/processing/3_1_build_kfst_winner_datasets.R
+code/processing/3_2_build_ot_winner_datasets.R
 code/scraping/1_build_cvr_employment_history.R  # only if BUILD_EMPLOYMENT_HISTORY=true
 code/scraping/2_extract_ted_notices.R           # only if EXTRACT_TED_NOTICES=true
 ```
 
 The default replication script does **not** run
-`code/processing/2_5_augment_matched_variables.R`. That script is a targeted
+`code/processing/4_augment_matched_variables.R`. That script is a targeted
 maintenance utility for cases where `1_1_process_kfst.R` or
 `1_2_process_open_tender.R` gained new tender/lot-level variables and you want
 to refresh existing matched datasets without re-running the buyer-matching
@@ -333,12 +333,12 @@ R 4.5.1.
 | Cleaning only | `code/processing/1_1_process_kfst.R`, `code/processing/1_2_process_open_tender.R` | ~1.5 minutes |
 | CVR-name-key preparation | `code/processing/1_3_process_keys.R` | ~4 minutes |
 | Winner matching | `code/processing/2_1_match_kfst.R`, `code/processing/2_3_match_opentender.R` | ~22 minutes (KFST ~5m; OpenTender ~16m, now incl. inline quality scoring) |
-| Winner robustness stacks | `code/processing/2_1b_build_kfst_winner_datasets.R`, `code/processing/2_7_build_ot_winner_datasets.R` | ~45 minutes (the OpenTender name-only pass in `2_7` dominates) |
+| Winner robustness stacks | `code/processing/3_1_build_kfst_winner_datasets.R`, `code/processing/3_2_build_ot_winner_datasets.R` | ~45 minutes (the OpenTender name-only pass in `3_2` dominates) |
 | Buyer matching | `code/processing/2_2_match_kfst_buyers.R`, `code/processing/2_4_match_opentender_buyers.R` | ~57 minutes (KFST ~24m, OpenTender ~33m) |
 
 For a quick check that the cleaning scripts still run, use `RUN_MATCHING=false`.
 For a full matched dataset, plan for roughly **~2h 15m**, split mainly between
-the OpenTender name-only robustness pass in `2_7` and the buyer-matching scripts.
+the OpenTender name-only robustness pass in `3_2` and the buyer-matching scripts.
 
 ### 5. Run cleaning only
 
@@ -406,7 +406,7 @@ before name matching (`flag_non_cvr_identifier`).
 
 If you add tender/lot-level variables like these after matched files already
 exist, either re-run the full matching workflow or run
-`code/processing/2_5_augment_matched_variables.R` after regenerating the clean
+`code/processing/4_augment_matched_variables.R` after regenerating the clean
 files. That utility updates the matched `*_name_matched.rds` files in place by
 joining on stable row keys; it is not a substitute for re-running matching when
 the cleaning logic changes names, CVRs, or row expansion.
