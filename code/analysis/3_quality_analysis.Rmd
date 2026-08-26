@@ -517,9 +517,17 @@ kfst_clean_count <- kfst_clean %>%
   summarise(Total = n()) %>%
   pull(Total)
 
+# The consortium rework replaced the old `source` column. A lot's ';'-separated winners are now indexed by
+# winner_number, so "single vs multiple winners" = distinct winner_number per lot. Consortium members of a
+# single winner share a winner_number and are indexed by consortium_number (counted on its own line below).
+kfst_clean <- kfst_clean %>%
+  group_by(tender_id, lot_id) %>%
+  mutate(n_winners_in_lot = n_distinct(winner_number)) %>%
+  ungroup()
+
 kfst_cleaning_summary <- bind_rows(
   kfst_clean %>%
-    filter(source == "single winners") %>%
+    filter(n_winners_in_lot == 1) %>%
     summarise(
       Measure = "Original rows identified as single winners",
       Count = n(),
@@ -527,7 +535,7 @@ kfst_cleaning_summary <- bind_rows(
       Share.of = "Original winner rows"
     ),
   kfst_clean %>%
-    filter(source == "multiple winners") %>%
+    filter(n_winners_in_lot > 1) %>%
     distinct(tender_id, lot_id) %>%
     summarise(
       Measure = "Original rows treated as multiple winners",
@@ -536,9 +544,17 @@ kfst_cleaning_summary <- bind_rows(
       Share.of = "Original winner rows"
     ),
   kfst_clean %>%
-    filter(source == "multiple winners") %>%
+    filter(n_winners_in_lot > 1) %>%
     summarise(
       Measure = "Winner rows after multiple-winner expansion",
+      Count = n(),
+      Share = Count / kfst_clean_count,
+      Share.of = "Final winner rows"
+    ),
+  kfst_clean %>%
+    filter(is_consortium) %>%
+    summarise(
+      Measure = "Consortium member rows (expanded from ',' within a winner)",
       Count = n(),
       Share = Count / kfst_clean_count,
       Share.of = "Final winner rows"
@@ -1753,6 +1769,9 @@ We could also use the CVR number to name key to verify that the name in the sour
 I validate these for all tender winning firms that we DO NOT send to the matching algorithm.
 
 ```{r load-keys}
+# This "Verifying data" section uses data.table syntax (rbindlist, [, :=], joins). Attach data.table
+# HERE -- after the dplyr chunks above (one uses first()) -- so nothing earlier is masked.
+suppressPackageStartupMessages(library(data.table))
 # Load
 main_key <- readRDS(file.path("data", "clean", "clean_cvr_name_key.rds"))
 alt_key <- readRDS(file.path("data", "clean", "clean_cvr_biname_key.rds"))
@@ -1777,6 +1796,7 @@ kfst_winners <- kfst_matched %>%
   distinct(winner_name, winner_cvr_clean, winner_country) %>% 
   mutate(source = "KFST")
 distinct_winners <- rbind(ot_winners, kfst_winners)
+setDT(distinct_winners)   # dplyr rbind returns a tibble; the := updates below need a data.table
 
 # Create default flag for whether CVR exists in key
 distinct_winners[, flag_in_key := TRUE]
