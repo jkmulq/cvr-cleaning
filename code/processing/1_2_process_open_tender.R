@@ -359,6 +359,12 @@ winner_data_original <- data %>%
          # value is clean and downstream winner_country == "DK" comparisons are
          # reliable. winner_country_original keeps the raw source value.
          winner_country = toupper(trimws(winner_country_original)))
+# DK-gate normalisation (same rule as 1_1): all-Danish country (incl. malformed "DK04") -> "DK"; mixed
+# DK+foreign left as-is. No-op for current OT data (already single clean tokens); kept for consistency.
+winner_data_original <- winner_data_original %>%
+  mutate(winner_country = if_else(
+    replace_na(grepl("DK", winner_country) & gsub("DK|[^A-Z]", "", winner_country) == "", FALSE),
+    "DK", winner_country))
 buyer_data_original <- data %>%
   mutate(buyer_cvr = buyer_cvr_original,
          buyer_name = buyer_name_original,
