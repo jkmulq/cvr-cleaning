@@ -535,6 +535,7 @@ winner_data[, flag_review_name_match := (
 #   - matches where several CVRs were possible.
 winner_data[, flag_manual_name_review := (
   flag_check_fuzzy_match &
+    is.na(field_paired_cvr) &   # a field-paired row is already resolved -- don't route it to manual review
     (
       !flag_name_match_found |
         flag_review_name_match
@@ -554,7 +555,7 @@ winner_data[, winner_cvr_final := fcase(
 # invalidity. Rows with no candidate (e.g. name-only tier-3b members) are NOT flagged -- see semi_tier.
 reg_cvrs_prov <- unique(as.character(cvr_key_quality$cvr))
 cand_prov <- ifelse(is.na(winner_data$winner_cvr_candidate_original), "",
-                    as.character(winner_data$winner_cvr_candidate_original))
+                    gsub("\\s+", "", as.character(winner_data$winner_cvr_candidate_original)))  # de-space first, like the CVR cleaner
 cand_has_reg_prov <- vapply(regmatches(cand_prov, gregexpr("(?<![0-9])[0-9]{8}(?![0-9])", cand_prov, perl = TRUE)),
                             function(v) any(v %chin% reg_cvrs_prov), logical(1))
 winner_data[, flag_cvr_recovered_from_invalid :=
@@ -630,6 +631,7 @@ manual_name_review <- winner_data[
     winner_country,
     pub_date,
     winner_cvr_name_match,
+    winner_cvr_final,
     registered_name_match,
     starts_with("fuzzy_candidate_cvr"),
     starts_with("fuzzy_candidate_name"),

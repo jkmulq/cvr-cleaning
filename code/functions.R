@@ -180,7 +180,9 @@ semi_split <- function(df, col) {
 
 # Recycle a single (one-piece, comma-free) value across n ';'-pieces; leave multi-piece values.
 recycle_single <- function(x, n) {
-  single <- (stringr::str_count(tidyr::replace_na(x, ""), ";") + 1L == 1L) &
+  # NA stays NA (don't recycle it into the literal string "NA;NA;..."); only recycle a real one-piece value.
+  single <- !is.na(x) &
+    (stringr::str_count(tidyr::replace_na(x, ""), ";") + 1L == 1L) &
     !stringr::str_detect(tidyr::replace_na(x, ""), ",")
   ifelse(single, mapply(function(v, k) paste(rep(v, k), collapse = ";"), x, n), x)
 }

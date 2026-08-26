@@ -484,9 +484,11 @@ winners_consort_s2 <- winners_consort_s1_resid %>%
   filter(to_split_s2) %>%
   separate_longer_delim(cols = c(winner_cvr, winner_name), delim = ",")
 
-# For leftovers of step 2, I separate only by name and these will be sent off the matching.
+# For leftovers of step 2, split by name only and send to matching. Keep ALL of them (including foreign
+# or blank-country consortia) so no winner row is silently dropped -- the matcher's DK gate simply leaves
+# the non-Danish ones unmatched, rather than us discarding them here.
 to_review_via_match <- winners_consort_s1_resid %>%
-  filter(!to_split_s2 & str_detect(winner_country, "DK"))
+  filter(!to_split_s2)
 
 to_review_via_match <- to_review_via_match %>%
   separate_longer_delim(winner_name, ",")
