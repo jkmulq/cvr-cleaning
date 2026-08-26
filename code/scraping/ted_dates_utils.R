@@ -1,9 +1,10 @@
-# Shared helpers for the TED notice-lineage pair:
-#   1_2a_fetch_notices.R        (staged XML fetching: award -> competition -> planning)
-#   1_2b_build_notice_lineage.R (assemble notice_links from the cached XMLs)
+# Shared helpers for the TED date-panel chain, sourced by:
+#   ted_dates_1_fetch.R    (staged XML fetching: award -> competition -> planning)
+#   ted_dates_2_lineage.R  (assemble notice_links from the cached XMLs)
+#   ted_dates_3_extract.R  (extract every date, tied back to tender/lot)
 #
-# NOT run on its own - sourced by both. Loads config + the award scraper's fetch
-# machinery (2_extract_ted_notices.R), defines the per-level cache paths, the
+# NOT run on its own - sourced by the above. Loads config + the award scraper's fetch
+# machinery (ted_1_extract_notices.R), defines the per-level cache paths, the
 # prior-publication parser shared by every hop, and a cache-first parallel fetch.
 #
 # The two hops both use the same prior-publication reference in the TED XML:
@@ -16,7 +17,7 @@ source("config.R")
 # fetch_notice_xml, derive_notice_id, ted_dir, cache_dir, n_workers, max_retries,
 # base_delay, and the packages (xml2/httr/dplyr/furrr/progressr).
 SKIP_TED_RUN <- TRUE
-source(file.path(PROJECT_DIR, "code", "scraping", "2_extract_ted_notices.R"))
+source(file.path(PROJECT_DIR, "code", "scraping", "ted_1_extract_notices.R"))
 suppressWarnings(suppressPackageStartupMessages(library(data.table)))
 
 # ── Per-level cache dirs + output paths ───────────────────────────────────────

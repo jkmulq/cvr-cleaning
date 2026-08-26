@@ -15,11 +15,11 @@
 #
 # Optional env var: NOTICE_LINEAGE_SAMPLE_SIZE  (limit award universe; for testing)
 
-source("code/scraping/notice_lineage_utils.R")
+source("code/scraping/ted_dates_utils.R")
 suppressWarnings(suppressPackageStartupMessages(library(parallel)))
 `%||%` <- function(a, b) if (is.null(a) || length(a) == 0 || is.na(a)) b else a
 
-if (!file.exists(links_rds)) stop("notice_links.rds not found; run 1_2b_build_notice_lineage.R first.", call. = FALSE)
+if (!file.exists(links_rds)) stop("notice_links.rds not found; run ted_dates_2_lineage.R first.", call. = FALSE)
 
 # ── Every date in one notice's XML: data.table(date_field, date_value) ─────────
 # Handles both flat text (YYYYMMDD[ HH:MM]) and nested <YEAR>/<MONTH>/<DAY>, and

@@ -17,7 +17,7 @@ Most functions are used by the staged scripts:
 - `code/processing/2_4_match_opentender_buyers.R`
 
 A few are also called by the scraping script
-`code/scraping/1_build_cvr_employment_history.R` and the analysis notebooks
+`code/scraping/employment_1_winners.R` and the analysis notebooks
 `code/analysis/3_quality_analysis.Rmd` and `code/analysis/5_cvr_key_concordance.Rmd`.
 
 Each function entry lists the scripts it is **Used in** (direct call sites).
@@ -844,7 +844,7 @@ lightly than the functions above — purpose and call sites only.
 - `test_cvr_lookup_sample()` — **Used in:** `0_build_cvr_lookup.R`. Runs the
   lookup on a small sample of CVRs as a quick sanity check.
 
-**Virk API helpers** — **Used in:** `code/scraping/1_build_cvr_employment_history.R`
+**Virk API helpers** — **Used in:** `code/scraping/employment_1_winners.R`
 and internally by `generate_cvr_lookup_from_virk()`: `get_virk_credentials()`
 (reads API credentials), `virk_post_json()` (POSTs a query, returns parsed JSON),
 `virk_scalar()` (safely pulls a scalar field), `format_virk_cvr()` (normalizes a
@@ -877,7 +877,7 @@ function is only invoked by another function in `code/functions.R`. Script codes
 `0` = `processing/0_build_cvr_lookup.R`; `1_1` = `1_1_process_kfst.R`;
 `1_2` = `1_2_process_open_tender.R`; `1_2b` = `1_2b_recover_ted_winners.R`;
 `1_3` = `1_3_process_keys.R`; `2_1`–`2_4` = the four matching scripts;
-`scrape/1` = `scraping/1_build_cvr_employment_history.R`;
+`scrape/1` = `scraping/employment_1_winners.R`;
 `an/3` = `analysis/3_quality_analysis.Rmd`;
 `an/5` = `analysis/5_cvr_key_concordance.Rmd`.
 

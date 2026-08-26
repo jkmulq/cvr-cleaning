@@ -46,7 +46,7 @@ knitr::opts_knit$set(root.dir = report_project_dir)
 source(file.path(report_project_dir, "config.R"))
 
 # TED notice id in a URL, e.g. ".../TED:NOTICE:303670-2017:..." -> "303670-2017".
-# Like scraping/2_extract_ted_notices.R::derive_notice_id, but with a LOOSER digit
+# Like scraping/ted_1_extract_notices.R::derive_notice_id, but with a LOOSER digit
 # count. KFST's raw award URLs carry the notice number UN-padded (e.g. "2521-2022"),
 # whereas OpenTender/production URLs zero-pad it to 6 ("094091-2022"), so production's
 # strict 6-8 digit rule silently drops KFST's short numbers. Allowing 1-8 leading

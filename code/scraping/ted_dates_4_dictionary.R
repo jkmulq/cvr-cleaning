@@ -125,5 +125,5 @@ if (file.exists(nd_rds)) {
   miss <- nd[is.na(date_field_description), .N, by = date_field][order(-N)]
   if (nrow(miss)) { cat("\nDate fields still without a description (extend the coded supplement if needed):\n"); print(miss) }
 } else {
-  message("notice_dates.rds not found - run 1_2c_extract_notice_dates.R, then re-run this to annotate it.")
+  message("notice_dates.rds not found - run ted_dates_3_extract.R, then re-run this to annotate it.")
 }

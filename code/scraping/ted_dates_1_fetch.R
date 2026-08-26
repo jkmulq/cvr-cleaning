@@ -1,4 +1,4 @@
-# Stage 1 of 2 for the TED notice lineage: FETCH all XML, in the required order.
+# TED date panel, stage 1: FETCH all notice XML, in the required order.
 #
 # Fetching is inherently STAGED because each level's targets are discovered by
 # parsing the level above it:
@@ -7,15 +7,15 @@
 #   3. planning notices  - ids are the prior-publication ref inside each competition XML
 # So this script alternates fetch -> parse-to-discover -> fetch across the three
 # levels. It writes NO table; it only populates the XML caches. Build the
-# notice_links table afterwards with 1_2b_build_notice_lineage.R (offline, no fetch).
+# notice_links table afterwards with ted_dates_2_lineage.R (offline, no fetch).
 #
 # Cache-first + resumable: only ids not already on disk are fetched, so re-running
 # picks up notices that previously came back throttled/pending. raw_xml/ is shared
-# with 2_extract_ted_notices.R, so award XMLs it already pulled are not re-fetched.
+# with ted_1_extract_notices.R, so award XMLs it already pulled are not re-fetched.
 #
 # Optional env var: NOTICE_LINEAGE_SAMPLE_SIZE  (limit to first N award notices)
 
-source("code/scraping/notice_lineage_utils.R")
+source("code/scraping/ted_dates_utils.R")
 
 # ── Stage 1/3: award notices (ids from OpenTender URLs) ───────────────────────
 message("== Stage 1/3: award notices ==")
@@ -39,4 +39,4 @@ message("\nFetching complete. Caches populated:")
 message(sprintf("  award:       %s", award_cache_dir))
 message(sprintf("  competition: %s", comp_cache_dir))
 message(sprintf("  planning:    %s", planning_cache_dir))
-message("Now run: Rscript code/scraping/1_2b_build_notice_lineage.R")
+message("Now run: Rscript code/scraping/ted_dates_2_lineage.R")

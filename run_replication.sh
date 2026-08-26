@@ -199,11 +199,11 @@ run_r_script "code/processing/3_2_build_ot_winner_datasets.R"
 # BUILD_EMPLOYMENT_HISTORY needs Virk credentials; EXTRACT_TED_NOTICES needs
 # internet access. Both are resumable.
 if [[ "$BUILD_EMPLOYMENT_HISTORY" == "true" ]]; then
-  run_r_script "code/scraping/1_build_cvr_employment_history.R"
+  run_r_script "code/scraping/employment_1_winners.R"
 fi
 
 if [[ "$EXTRACT_TED_NOTICES" == "true" ]]; then
-  run_r_script "code/scraping/2_extract_ted_notices.R"
+  run_r_script "code/scraping/ted_1_extract_notices.R"
 fi
 
 echo

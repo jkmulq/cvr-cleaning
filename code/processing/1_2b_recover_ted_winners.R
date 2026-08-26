@@ -16,10 +16,10 @@ suppressWarnings(suppressPackageStartupMessages({
 source(file.path(PROJECT_DIR, "code", "functions.R"))
 
 # Reuse the TED recovery process WITHOUT running its standalone artifact write.
-# Transitively sources 2_extract_ted_notices.R (SKIP_TED_RUN) for the cache-aware
+# Transitively sources ted_1_extract_notices.R (SKIP_TED_RUN) for the cache-aware
 # fetcher. Exposes recover_ted_missing_winners(winner_data).
 SKIP_RECOVER_RUN <- TRUE
-source(file.path(PROJECT_DIR, "code", "scraping", "3_recover_ted_missing_winners.R"))
+source(file.path(PROJECT_DIR, "code", "scraping", "ted_2_recover_winners.R"))
 
 winner_file <- file.path(dirs$clean_data, "clean_winner_data_ot.rds")
 w <- readRDS(winner_file)

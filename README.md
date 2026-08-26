@@ -59,14 +59,14 @@ cvr-cleaning/
 │   │   ├── 10_twfe_estudy_cvr_method.Rmd
 │   │   └── find_control_firms.R
 │   └── scraping/                        # optional web/API pulls (run after matching)
-│       ├── 1_build_cvr_employment_history.R
-│       ├── 1_2a_fetch_notices.R
-│       ├── 1_2b_build_notice_lineage.R
-│       ├── 1_2c_extract_notice_dates.R
-│       ├── 1_2d_build_field_dictionary.R
-│       ├── 1_2e_build_date_panel.R
-│       ├── 2_extract_ted_notices.R
-│       └── notice_lineage_utils.R
+│       ├── employment_1_winners.R
+│       ├── ted_1_extract_notices.R
+│       ├── ted_dates_utils.R
+│       ├── ted_dates_1_fetch.R
+│       ├── ted_dates_2_lineage.R
+│       ├── ted_dates_3_extract.R
+│       ├── ted_dates_4_dictionary.R
+│       └── ted_dates_5_panel.R
 ├── docs/
 │   ├── cleaning_flags.md
 │   ├── functions_manual.md
@@ -98,7 +98,7 @@ generated separately (listed below the pipeline table).
 | [code/processing/0_build_cvr_lookup.R](code/processing/0_build_cvr_lookup.R) | Optional script for users with Virk system-to-system API access. Builds CVR official-name and alternative-name lookup CSVs, or runs a small API timing sample. | Timestamped `cvr_names_virk_*.csv` and `cvr_binavne_virk_*.csv`, or sample CSVs. |
 | [code/processing/1_1_process_kfst.R](code/processing/1_1_process_kfst.R) | Cleans KFST winner and buyer data with a **consortium-aware tiered split**: `;` separates winners and `,` separates consortium members, so each member becomes its own row tagged with `semi_tier`, `is_consortium`, and `consortium_number`. Standardises winner CVRs (all-Danish country tokens are normalised to `"DK"`), creates matching-ready name fields, and saves clean KFST objects. | `clean_winner_data_kfst.rds`, `clean_buyer_data_kfst.rds`. |
 | [code/processing/1_2_process_open_tender.R](code/processing/1_2_process_open_tender.R) | Reads all annual OpenTender CSVs present in `data/raw/OpenTender/`, checks column-name concordance before binding, keeps source-file and source-row provenance, derives tender/lot amount and framework-duration variables, cleans winner and buyer CVR fields, removes non-CVR tokens from multi-CVR buyer rows, fills some missing CVRs when the same firm name appears elsewhere with one valid CVR, prepares matching-ready names, and saves clean OpenTender objects with the original tender fields attached. | `clean_winner_data_ot.rds`, `clean_buyer_data_ot.rds`. |
-| [code/processing/1_2b_recover_ted_winners.R](code/processing/1_2b_recover_ted_winners.R) | Optional/manual. Folds TED-recovered winners (from the notice-lineage pull under `code/scraping/`) back into the OpenTender winner table. Run only when the TED notice data has been built. | updated OpenTender winner data. |
+| [code/processing/1_2b_recover_ted_winners.R](code/processing/1_2b_recover_ted_winners.R) | Optional/manual. Folds TED-recovered winners (recovered from the TED notice XML by `code/scraping/ted_2_recover_winners.R`) back into the OpenTender winner table. Run only when the TED notice data has been built. | updated OpenTender winner data. |
 | [code/processing/1_3_process_keys.R](code/processing/1_3_process_keys.R) | Cleans the CVR register name keys used for later matching. It prepares both official names and alternative names. | `clean_cvr_name_key.rds`, `clean_cvr_biname_key.rds`. |
 | [code/processing/2_1_match_kfst.R](code/processing/2_1_match_kfst.R) | Matches KFST winner names to CVRs against the prepared CVR-name keys (tier-3b consortium members are paired to the lot's own listed field CVRs first). Writes the **consortium-expanded** canonical winner table with the CVR-name **quality columns** and the provenance flag `flag_cvr_recovered_from_invalid`. | `clean_winner_data_kfst_name_matched.rds`, `manual_name_review_kfst.rds`. |
 | [code/processing/2_2_match_kfst_buyers.R](code/processing/2_2_match_kfst_buyers.R) | Matches KFST buyer names to CVRs, since KFST buyer CVRs are not supplied in the raw source. | `clean_buyer_data_kfst_name_matched.rds`, `manual_buyer_name_review_kfst.rds`. |
@@ -125,18 +125,21 @@ The [code/analysis/](code/analysis) notebooks and helpers run **manually, after 
 
 The [code/scraping/](code/scraping) folder holds optional web/API data pulls
 that run **after** matching, because they consume the matched datasets. They
-need network access and are off by default:
+need network access and are off by default. Filenames are grouped by prefix:
+`employment_*` (Virk employment/name-history pulls), `ted_*` (TED notice
+extraction, with `ted_1_extract_notices.R` also serving as the shared fetch
+library), and `ted_dates_*` (the TED notice-date panel sub-pipeline):
 
 | Script | Purpose | Main outputs |
 |---|---|---|
-| [code/scraping/1_build_cvr_employment_history.R](code/scraping/1_build_cvr_employment_history.R) | Pulls annual/quarterly/monthly employment history from the Virk CVR API for the winner/buyer CVRs across all winner variants (matched + extraction/name_only + prior-production sets). Resumable and tolerant of missing optional inputs (requires Virk credentials). Feeds `6_firm_employment_quality.Rmd`. | `data/clean/cvr_employment_history_virk.csv` (+ `_status.csv`). |
-| [code/scraping/1_2a_fetch_notices.R](code/scraping/1_2a_fetch_notices.R) | TED notice lineage, stage 1: fetches award/competition/planning notice XML in dependency order (requires internet; cached). | cached TED notice XML. |
-| [code/scraping/1_2b_build_notice_lineage.R](code/scraping/1_2b_build_notice_lineage.R) | TED notice lineage, stage 2: assembles the notice-links lineage from the cached XML (parsing only, no network). | `notice_links` lineage table. |
-| [code/scraping/1_2c_extract_notice_dates.R](code/scraping/1_2c_extract_notice_dates.R) | Extracts every date from every notice in the lineage, tied back to tender/lot. | extracted notice dates. |
-| [code/scraping/1_2d_build_field_dictionary.R](code/scraping/1_2d_build_field_dictionary.R) | Builds a TED field dictionary (XML element → plain-English) from the EU schema label files and annotates the extracted dates. | annotated dates + field dictionary. |
-| [code/scraping/1_2e_build_date_panel.R](code/scraping/1_2e_build_date_panel.R) | Builds the OpenTender notice-date panel from the extracted/annotated dates. | OpenTender date panel. |
-| [code/scraping/notice_lineage_utils.R](code/scraping/notice_lineage_utils.R) | Shared helpers for the TED notice-lineage pair (`1_2a`/`1_2b`). | No direct output. |
-| [code/scraping/2_extract_ted_notices.R](code/scraping/2_extract_ted_notices.R) | Fetches TED notice XML for OpenTender award notices and flags whether non-winning tenderers are listed (requires internet). | `data/intermediates/ted/` (cached XML + per-notice indicators). |
+| [code/scraping/employment_1_winners.R](code/scraping/employment_1_winners.R) | Pulls annual/quarterly/monthly employment history from the Virk CVR API for the winner/buyer CVRs across all winner variants (matched + extraction/name_only + prior-production sets). Resumable and tolerant of missing optional inputs (requires Virk credentials). Feeds `6_firm_employment_quality.Rmd`. | `data/clean/cvr_employment_history_virk.csv` (+ `_status.csv`). |
+| [code/scraping/ted_1_extract_notices.R](code/scraping/ted_1_extract_notices.R) | Fetches TED notice XML for OpenTender award notices and flags whether non-winning tenderers are listed (requires internet). Also the shared TED fetch/parse library the other `ted_*` scripts source. | `data/intermediates/ted/` (cached XML + per-notice indicators). |
+| [code/scraping/ted_dates_utils.R](code/scraping/ted_dates_utils.R) | Shared helpers for the TED date-panel chain (`ted_dates_1`–`3`). | No direct output. |
+| [code/scraping/ted_dates_1_fetch.R](code/scraping/ted_dates_1_fetch.R) | TED date panel, stage 1: fetches award/competition/planning notice XML in dependency order (requires internet; cached). | cached TED notice XML. |
+| [code/scraping/ted_dates_2_lineage.R](code/scraping/ted_dates_2_lineage.R) | TED date panel, stage 2: assembles the notice-links lineage from the cached XML (parsing only, no network). | `notice_links` lineage table. |
+| [code/scraping/ted_dates_3_extract.R](code/scraping/ted_dates_3_extract.R) | TED date panel, stage 3: extracts every date from every notice in the lineage, tied back to tender/lot. | extracted notice dates. |
+| [code/scraping/ted_dates_4_dictionary.R](code/scraping/ted_dates_4_dictionary.R) | TED date panel, stage 4: builds a TED field dictionary (XML element → plain-English) from the EU schema label files and annotates the extracted dates. | annotated dates + field dictionary. |
+| [code/scraping/ted_dates_5_panel.R](code/scraping/ted_dates_5_panel.R) | TED date panel, stage 5: builds the OpenTender notice-date panel from the extracted/annotated dates. | OpenTender date panel. |
 
 Enable them in a run with `BUILD_EMPLOYMENT_HISTORY=true` and/or
 `EXTRACT_TED_NOTICES=true` (see [Replication](#replication)). Both are resumable
@@ -315,8 +318,8 @@ code/processing/2_3_match_opentender.R
 code/processing/2_4_match_opentender_buyers.R
 code/processing/3_1_build_kfst_winner_datasets.R
 code/processing/3_2_build_ot_winner_datasets.R
-code/scraping/1_build_cvr_employment_history.R  # only if BUILD_EMPLOYMENT_HISTORY=true
-code/scraping/2_extract_ted_notices.R           # only if EXTRACT_TED_NOTICES=true
+code/scraping/employment_1_winners.R   # only if BUILD_EMPLOYMENT_HISTORY=true
+code/scraping/ted_1_extract_notices.R  # only if EXTRACT_TED_NOTICES=true
 ```
 
 The default replication script does **not** run
@@ -385,7 +388,7 @@ inputs are the matched `*_name_matched.rds` files, you can also run either scrip
 on its own once those files exist, without re-running the pipeline:
 
 ```bash
-Rscript --vanilla code/scraping/2_extract_ted_notices.R
+Rscript --vanilla code/scraping/ted_1_extract_notices.R
 ```
 
 ## Main outputs

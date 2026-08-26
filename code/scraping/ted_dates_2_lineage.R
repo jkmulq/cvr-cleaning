@@ -1,7 +1,7 @@
-# Stage 2 of 2 for the TED notice lineage: BUILD notice_links from cached XML.
+# TED date panel, stage 2: BUILD notice_links (the notice lineage) from cached XML.
 #
 # Pure parsing + assembly, no network - reads only the caches populated by
-# 1_2a_fetch_notices.R, so it can be re-run offline any time. Produces one row per
+# ted_dates_1_fetch.R, so it can be re-run offline any time. Produces one row per
 # award notice tracing award -> competition -> planning:
 #
 #   award_notice_id, award_url,
@@ -17,11 +17,11 @@
 #                        publication is a VEAT pre-announcement, so competition = NA)
 #
 # *_xml_status is "ok" if the notice's XML is on disk, else "missing" (re-run
-# 1_2a_fetch_notices.R to pick up anything missing; its log has the fetch outcomes).
+# ted_dates_1_fetch.R to pick up anything missing; its log has the fetch outcomes).
 #
 # Optional env var: NOTICE_LINEAGE_SAMPLE_SIZE  (must match the fetch run to align)
 
-source("code/scraping/notice_lineage_utils.R")
+source("code/scraping/ted_dates_utils.R")
 
 xml_status <- function(ids, cache) {
   fifelse(is.na(ids), NA_character_, fifelse(is_cached(ids, cache), "ok", "missing"))
