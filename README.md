@@ -200,6 +200,17 @@ dirs$code          -> code/
 `data/clean/`) if they are missing, but it does not download or create the raw
 input files.
 
+**Optional: a shared data folder.** By default the data root is `<project>/data`.
+To keep data off the repo — e.g. in a Box or Dropbox folder synced across machines —
+set `CVR_DATA_DIR` to that folder in `~/.Renviron` (or the environment). Every
+`dirs$*` data path then derives from it, while `dirs$code` always stays in the repo.
+See [.Renviron.example](.Renviron.example); on macOS a Box path looks like
+`/Users/<you>/Library/CloudStorage/Box-Box/cvr-cleaning-data`. Copy your existing
+`data/` there once (`rsync -a data/ "$CVR_DATA_DIR/"`).
+[run_replication.sh](run_replication.sh) runs each step with `Rscript --vanilla`
+(which skips `~/.Renviron`), so it resolves `CVR_DATA_DIR` from `~/.Renviron` and
+exports it; the data root it will use is echoed at the top of each run.
+
 ## Replication
 
 ### 1. Add local input data

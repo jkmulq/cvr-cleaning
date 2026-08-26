@@ -90,6 +90,20 @@ if ! command -v "$RSCRIPT" > /dev/null 2>&1; then
   exit 1
 fi
 
+# The pipeline runs each step with `Rscript --vanilla` (below), which skips
+# ~/.Renviron. If CVR_DATA_DIR (the shared-data redirect honored by config.R) is
+# set there rather than exported, resolve it once via a plain Rscript and export
+# it so every --vanilla step inherits it. Harmless when unset (stays on <project>/data).
+if [ -z "${CVR_DATA_DIR:-}" ]; then
+  CVR_DATA_DIR="$("$RSCRIPT" -e 'cat(Sys.getenv("CVR_DATA_DIR"))' 2>/dev/null || true)"
+  [ -n "$CVR_DATA_DIR" ] && export CVR_DATA_DIR
+fi
+if [ -n "${CVR_DATA_DIR:-}" ]; then
+  echo "Data root (CVR_DATA_DIR): $CVR_DATA_DIR"
+else
+  echo "Data root:        <project>/data (CVR_DATA_DIR unset)"
+fi
+
 require_file() {
   local file_path="$1"
 

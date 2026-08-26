@@ -23,13 +23,19 @@ find_project_root <- function(start = getwd(), marker = "cvr-cleaning.Rproj") {
 }
 PROJECT_DIR <- find_project_root()
 
+# 1b. Data root. Defaults to <project>/data, but can be redirected to a shared folder (e.g. a Box/Dropbox
+#     folder synced across machines) by setting CVR_DATA_DIR in ~/.Renviron or the environment. Only the
+#     data moves; code/ always stays in the repo. See .Renviron.example.
+DATA_ROOT <- Sys.getenv("CVR_DATA_DIR", unset = file.path(PROJECT_DIR, "data"))
+DATA_ROOT <- normalizePath(DATA_ROOT, mustWork = FALSE)
+
 # 2. Derived paths (do not edit)
 dirs <- list(
-  data = file.path(PROJECT_DIR, "data"),
-  cvr_key = file.path(PROJECT_DIR, "data", "cvr_matching_data"),
-  raw_data   = file.path(PROJECT_DIR, "data", "raw"),
-  clean_data = file.path(PROJECT_DIR, "data", "clean"),
-  intermediates = file.path(PROJECT_DIR, "data", "intermediates"),
+  data = DATA_ROOT,
+  cvr_key = file.path(DATA_ROOT, "cvr_matching_data"),
+  raw_data   = file.path(DATA_ROOT, "raw"),
+  clean_data = file.path(DATA_ROOT, "clean"),
+  intermediates = file.path(DATA_ROOT, "intermediates"),
   code = file.path(PROJECT_DIR, "code")
 )
 
