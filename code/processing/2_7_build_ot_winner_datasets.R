@@ -25,7 +25,7 @@ slim_cols <- c("dataset","tender_id","lot_id","winner_number","winner_name","win
 base <- copy(base_raw)
 setnames(base, "buyer_name_original", "buyer_name", skip_absent = TRUE)
 setnames(base, "tender_publications_lastContractAwardUrl", "award_url", skip_absent = TRUE)
-base[, tender_status := NA_character_]         # REVIEW: KFST-specific completion status; no OT equivalent
+base[, tender_status := NA_character_]         # KFST-specific completion status; no OT equivalent
 base[, dataset := "base"]
 base <- base[, ..slim_cols]
 

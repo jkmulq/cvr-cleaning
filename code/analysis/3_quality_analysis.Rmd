@@ -519,7 +519,8 @@ kfst_clean_count <- kfst_clean %>%
 
 # The consortium rework replaced the old `source` column. A lot's ';'-separated winners are now indexed by
 # winner_number, so "single vs multiple winners" = distinct winner_number per lot. Consortium members of a
-# single winner share a winner_number and are indexed by consortium_number (counted on its own line below).
+# single winner share both a winner_number and a consortium_number; the member-row count below filters on
+# is_consortium (consortium_number distinguishes different consortia within a lot, not members within one).
 kfst_clean <- kfst_clean %>%
   group_by(tender_id, lot_id) %>%
   mutate(n_winners_in_lot = n_distinct(winner_number)) %>%

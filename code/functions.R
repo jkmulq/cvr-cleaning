@@ -160,8 +160,8 @@ recover_formatted_danish_cvr <- function(cvr_candidate,
 }
 
 # --- KFST consortium winner-split helpers -----------------------------------
-# Shared by 1_1_process_kfst.R (the ';'=winners / ','=members tier split) and
-# 2_1_match_kfst.R (tier-3b registry field pairing). All are registry-free.
+# Used by 1_1_process_kfst.R (the ';'=winners / ','=members tier split). lot_field_cvrs()
+# is also used by 2_1_match_kfst.R for tier-3b registry field pairing. All are registry-free.
 
 # Number of ';'-separated pieces in a field (= what separate_longer_delim() produces).
 n_pieces <- function(x) {
@@ -830,6 +830,7 @@ select_preferred_exact_match <- function(candidates, step) {
 
 # The documentation describes a Levenshtein similarity score from 0 to 100.
 levenshtein_ratio <- function(value, candidates, pairwise = FALSE) {
+  if (length(value) == 0L || length(candidates) == 0L) return(numeric(0))
   if (pairwise) {
     # elementwise: value[i] vs candidates[i] -> the two vectors MUST align
     if (length(value) != length(candidates)) {

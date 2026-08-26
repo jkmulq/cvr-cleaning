@@ -317,7 +317,7 @@ raw <- data %>%
 
 
 ## 2.1 CVR extraction
-### 2.2.1 Make different cases for separation
+### 2.1.1 Make different cases for separation
 w_semi <- raw %>%
   mutate(nc = n_pieces(winner_cvr), nn = n_pieces(winner_name),
          nk = n_pieces(winner_country), ncons = n_pieces(consortium_flag),
@@ -330,7 +330,7 @@ w_semi <- raw %>%
 cat("separation tier counts:\n")
 print(w_semi %>% count(semi_tier))
 
-### 2.2.2: tier 1 -- split cvr + name + country + consortium flag on ';'
+### 2.1.2 tier 1 -- split cvr + name + country + consortium flag on ';'
 winners_semi_t1 <- w_semi %>% 
   filter(semi_tier == 1L) %>%
   select(tender_id, lot_id, winner_cvr, winner_name, winner_country, consortium_flag) %>%
@@ -340,7 +340,7 @@ winners_semi_t1 <- w_semi %>%
   ungroup() %>%
   mutate(semi_tier = "1_all_agree")
 
-### 2.2.3: tier 2 -- split cvr + name on ';'
+### 2.1.3 tier 2 -- split cvr + name on ';'
 # The country/consortium entry is applied to each winner
 winners_semi_t2 <- w_semi %>% 
   filter(semi_tier == 2L) %>%
@@ -361,7 +361,7 @@ winners_semi_t2 <- w_semi %>%
   mutate(semi_tier = "2_country_differs") %>%
   select(-nc, -nk, -nn, -ncons)  
 
-### 2.2.4: tier 3 -- cvr & name winner-counts disagree
+### 2.1.4 tier 3 -- cvr & name counts disagree, or only country/flag partial
 # More precise extraction required since naive separate_longer_delim() 
 # would mispair everything after a mid-string gap.
 
@@ -491,15 +491,15 @@ to_review_via_match <- winners_consort_s1_resid %>%
 to_review_via_match <- to_review_via_match %>%
   separate_longer_delim(winner_name, ",")
 
-## 3.2 put back together
+## 3.2 Put consortium tranches back together
 clean_winner_data <- bind_rows(
   winners %>% filter(!is_consortium) %>% mutate(type = "simple split on ;"),
   winners_consort_s1 %>% mutate(type = "simple consort split on ,"),
   winners_consort_s2 %>% mutate(type = "only split on name, cvr, ignore country"),
   to_review_via_match %>% mutate(type = "no easy split - send to matching")
 ) %>%
-  # Bridge to the existing production CVR-cleaning (§2.5): the member CVR becomes the "candidate
-  # original", and winner_cvr_clean is seeded from it (§2.5 then standardises/validates it).
+  # Bridge to the existing production CVR-cleaning (§4): the member CVR becomes the "candidate
+  # original", and winner_cvr_clean is seeded from it (§4 then standardises/validates it).
   rename(winner_cvr_candidate_original = winner_cvr) %>%
   mutate(winner_cvr_clean = winner_cvr_candidate_original)
 
@@ -509,8 +509,9 @@ clean_winner_data <- bind_rows(
 ## member is meaningless, and touching a mixed DK/foreign consortium would leave the foreign member on
 ## the recycled copy. For an eligible consortium: clear the recycled CVR and tag every member
 ## "3b_pending" so 2_1 pairs each listed CVR to the member it name-matches (graft A) and sends the rest
-## to the registry matcher (graft C); normalise country to a clean "DK" so the matcher's exact
-## `winner_country == "DK"` gate lets the unpaired members through. Registry-free (counts + country).
+## to the registry matcher (graft C). The general DK-gate normalisation below then collapses each member's
+## all-Danish country to "DK" so the matcher's exact `winner_country == "DK"` gate lets the unpaired
+## members through. Registry-free (counts + country).
 clean_winner_data <- clean_winner_data %>%
   mutate(.country_up = str_to_upper(replace_na(winner_country, "")),
          .member_dk  = str_detect(.country_up, "DK") & str_remove_all(.country_up, "DK|[^A-Z]") == "") %>%
@@ -545,8 +546,8 @@ clean_winner_data <- clean_winner_data %>%
                  gsub("DK|[^A-Z]", "", toupper(winner_country)) == "", FALSE),
     "DK", winner_country))
 
-# Join the full production tender-lot context + original (raw) winner fields, exactly as
-# 1_1 does, so the winner rows carry all the production columns.
+# Join the full production tender-lot context + original (raw) winner fields, so the winner
+# rows carry all the production columns.
 clean_winner_data <- clean_winner_data %>%
   left_join(tender_lot_data, by = c("tender_id", "lot_id")) %>%
   left_join(original_winner_data, by = c("tender_id", "lot_id"))
@@ -857,7 +858,7 @@ clean_buyer_data <- left_join(clean_buyer_data, original_buyer_data,
                                suffix = c("", "_original"))
 
 
-## 5.6 Standardise buyer names for matching
+## 5.7 Standardise buyer names for matching
 buyer_name_prepared <- prepare_cvr_name(clean_buyer_data$buyer_name)
 
 clean_buyer_data <- clean_buyer_data %>%
@@ -870,7 +871,7 @@ clean_buyer_data <- clean_buyer_data %>%
     buyer_name_first_letter = buyer_name_prepared$first_letter
   )
 
-## 5.7 Quality/processing flags
+## 5.8 Quality/processing flags
 ## Flag joint tenders with unlisted buyers 
 ## (i.e. joint tenders that do not have multiple buyers 
 ## listed in the buyer_name field)

@@ -24,7 +24,11 @@ if (length(args) == 0) {
 }
 
 pattern <- args[1]
-n_max   <- if (length(args) >= 2) suppressWarnings(as.integer(args[2])) else NA_integer_
+n_max   <- NA_integer_
+if (length(args) >= 2) {
+  n_max <- suppressWarnings(as.integer(args[2]))
+  if (is.na(n_max) || n_max < 1L) stop("max_rows must be a positive integer; got: ", args[2])
+}
 matches <- rds_files[grepl(pattern, rds_files, ignore.case = TRUE)]
 
 if (length(matches) == 0) {

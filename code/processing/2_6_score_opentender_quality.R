@@ -4,11 +4,13 @@
 # CVR's registered names (main + bi-names). This is an independent quality signal that applies
 # to BOTH provenances -- CVRs kept from the original source data AND CVRs obtained by name
 # matching -- because it scores winner_cvr_final regardless of how the CVR was found.
-# Augments clean_winner_data_ot_name_matched.rds in place with three new columns:
-#   cvr_name_match_quality      -- the best name<->registry levenshtein ratio (0-100)
-#   cvr_name_match_quality_name -- the registered name that produced that best score
-#   cvr_name_is_substring       -- is the cleaned winner name a verbatim substring of that name?
-#                                  (rescues terse-but-correct names, e.g. "axa" in "axa forsikring ...")
+# Augments clean_winner_data_ot_name_matched.rds in place with seven new columns:
+#   cvr_name_match_quality            -- best name<->registry levenshtein ratio (0-100), clean name form
+#   cvr_name_match_quality_basic/_nospaces/_broad -- the same ratio for the looser name forms
+#   cvr_name_match_quality_name       -- the registered name that produced the best (clean-form) score
+#   cvr_name_is_substring             -- is the cleaned winner name a verbatim substring of that name?
+#                                        (rescues terse-but-correct names, e.g. "axa" in "axa forsikring ...")
+#   flag_cvr_recovered_from_invalid   -- final CVR recovered because the field candidate was invalid
 # NOTE: distinct from name_match_score, which is the matcher's own fuzzy confidence and exists
 # only for name-matched rows; this metric is computed for all rows with a final CVR + name.
 # Author: Jack Mulqueeney
@@ -112,7 +114,7 @@ prov_summary <- data.table(provenance = provenance, q = winner_data$cvr_name_mat
   )[!is.na(q), .(n = .N, median_q = round(median(q), 1), pct_ge90 = round(mean(q >= 90), 3)), by = provenance]
 cat("quality by CVR provenance:\n"); print(prov_summary)
 
-# 5 GUARD: the re-saved object must equal the current one except for the 3 added columns. Abort
+# 5 GUARD: the re-saved object must equal the current one except for the added columns (new_cols). Abort
 #   otherwise, so this step can never silently rewrite the canonical table with anything else.
 stopifnot(
   nrow(winner_data) == nrow(orig_snapshot),

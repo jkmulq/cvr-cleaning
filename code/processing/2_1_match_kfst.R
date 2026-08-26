@@ -71,7 +71,7 @@ cvr_key[, source_order := fifelse(name_source == "name", 1L, 2L)]
 winner_data[, match_row_id := .I]
 winner_data[, winner_name_in_data := winner_name]
 
-# --- 1.3 Registry-validity: a name-bearing row whose cleaned CVR is NOT a registered CVR is
+# --- 2.2 Registry-validity: a name-bearing row whose cleaned CVR is NOT a registered CVR is
 # erroneous (typo/extra digit/malformed), so clear it and send it to the name matcher. The
 # original stays in winner_cvr_candidate_original; winner_cvr_final can fall back to the match.
 registered_cvrs <- unique(cvr_key$cvr)
@@ -81,11 +81,11 @@ winner_data[!is.na(winner_name) & winner_name != "" &
             `:=`(winner_cvr_clean = NA_character_, valid_cvr = FALSE, flag_check_fuzzy_match = TRUE)]
 
 # Force every tier-3b name through the open matcher (even if borrow-filled) so each 3b row stores
-# BOTH a field score (graft 1.4) and an open-match score -> the field-vs-open cut is re-tunable later.
+# BOTH a field score (graft 2.3) and an open-match score -> the field-vs-open cut is re-tunable later.
 winner_data[semi_tier == "3b_pending" & !is.na(winner_name) & winner_name != "",
             flag_check_fuzzy_match := TRUE]
 
-# --- 1.4 Tier-3b field pairing (resolve semi_tier == "3b_pending") ---------------------------
+# --- 2.3 Tier-3b field pairing (resolve semi_tier == "3b_pending") ---------------------------
 # For lots with more names than field CVRs, prefer the lot's OWN listed field CVRs. Each 3b name
 # is scored against the lot's field CVRs (from winner_cvr_original) via the registry; a name keeps
 # its best field CVR when that match clears the fuzzy bar (field_prefer_threshold). If two names
