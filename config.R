@@ -39,5 +39,9 @@ dirs <- list(
   code = file.path(PROJECT_DIR, "code")
 )
 
-# Create any missing data output directories (never the code directory).
-invisible(lapply(dirs[c("raw_data", "clean_data")], dir.create, recursive = TRUE, showWarnings = FALSE))
+# Create any missing data directories (never the code directory) so a fresh clone
+# or a new data root works out of the box, including the TED XML cache subdir the
+# scraping scripts write into. Input dirs are created empty; run_replication.sh
+# still verifies the required input files are actually present.
+invisible(lapply(c(dirs[setdiff(names(dirs), "code")], file.path(dirs$intermediates, "ted", "raw_xml")),
+                 dir.create, recursive = TRUE, showWarnings = FALSE))
