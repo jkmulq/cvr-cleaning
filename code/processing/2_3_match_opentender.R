@@ -9,7 +9,10 @@ rm(list = ls())
 source("config.R")
 
 # Packages
-suppressWarnings(suppressPackageStartupMessages(library(data.table)))
+suppressWarnings(suppressPackageStartupMessages({
+  library(data.table)
+  library(stringr)
+}))
 
 # Source functions
 source(file.path(PROJECT_DIR, "code", "functions.R"))
@@ -642,6 +645,9 @@ potential_multiple_ids <- name_partition_summary[
   .(match_row_id)]
 remaining <- remaining[!potential_multiple_ids, on = "match_row_id"]
 
+# Preserve the CVR -> registered-name FORMS for the data-quality scores near the end (scored EXACTLY as
+# KFST 2_1 PART-6), before cvr_key is removed.
+cvr_key_quality <- unique(cvr_key[, .(cvr, name_match, name_basic, name_no_spaces, name_broad)])
 rm(complete_summary, cvr_key)
 gc()
 
@@ -1042,7 +1048,49 @@ winner_data[, name_match_status := fcase(
   default = "manual review - no automatic match"
 )]
 
-# Save a compact table containing only rows that need a person to inspect.
+# 8 Data quality
+# Matches each winner's CVR against the CVR registry and compares recorded name
+# similarity with the name in the CVR registry
+# Computed for EACH prepared name form (clean = strict default; basic/no-spaces/broad looser).
+for (qf in list(c("winner_name_match",     "name_match",     "cvr_name_match_quality"),
+                c("winner_name_basic",     "name_basic",     "cvr_name_match_quality_basic"),
+                c("winner_name_no_spaces", "name_no_spaces", "cvr_name_match_quality_nospaces"),
+                c("winner_name_broad",     "name_broad",     "cvr_name_match_quality_broad"))) {
+  win_col <- qf[1]; key_col <- qf[2]; q_col <- qf[3]
+  reg_lookup <- unique(data.table(cvr = as.character(cvr_key_quality$cvr),
+                                  reg_name = cvr_key_quality[[key_col]]))[!is.na(reg_name) & reg_name != ""]
+  qual <- data.table(match_row_id = winner_data$match_row_id,
+                     cvr = as.character(winner_data$winner_cvr_final),
+                     win_name = winner_data[[win_col]])
+  qual <- qual[!is.na(cvr) & cvr != "" & !is.na(win_name) & win_name != ""]
+  qual <- merge(qual, reg_lookup, by = "cvr", allow.cartesian = TRUE)
+  qual[, score := levenshtein_ratio(win_name, reg_name, pairwise = TRUE)]
+  setorder(qual, match_row_id, -score)
+  best_qual <- qual[, .SD[1L], by = match_row_id]
+  winner_data[, (q_col) := NA_real_]
+  winner_data[best_qual, on = "match_row_id", (q_col) := i.score]
+  if (q_col == "cvr_name_match_quality") {   # keep the matched registry name for the strict (clean) form
+    winner_data[, cvr_name_match_quality_name := NA_character_]
+    winner_data[best_qual, on = "match_row_id", cvr_name_match_quality_name := i.reg_name]
+  }
+}
+# is the cleaned winner name a verbatim substring of that best registered name? 
+winner_data[, cvr_name_is_substring := NA]
+winner_data[!is.na(cvr_name_match_quality_name) & !is.na(winner_name_match) & winner_name_match != "",
+            cvr_name_is_substring := str_detect(cvr_name_match_quality_name, fixed(winner_name_match))]
+
+# 9 Document invalid CVRs
+## we also send invalid CVRs to the matcher, so record which matched CVRs 
+## come from invalid CVRs.
+reg_cvrs_prov <- unique(as.character(cvr_key_quality$cvr))
+cand_prov <- ifelse(is.na(winner_data$winner_cvr_candidate), "",
+                    gsub("\\s+", "", as.character(winner_data$winner_cvr_candidate)))  # de-space first, like the CVR cleaner
+cand_has_reg_prov <- vapply(regmatches(cand_prov, gregexpr("(?<![0-9])[0-9]{8}(?![0-9])", cand_prov, perl = TRUE)),
+                            function(v) any(v %chin% reg_cvrs_prov), logical(1))
+winner_data[, flag_cvr_recovered_from_invalid :=
+  cand_prov != "" & !cand_has_reg_prov & !is.na(winner_cvr_final) & as.character(winner_cvr_final) != ""]
+
+# Rows for review
 manual_name_review <- winner_data[
   flag_manual_name_review == TRUE,
   .(
@@ -1101,7 +1149,7 @@ if (length(fuzzy_review_columns) > 0) {
 # Delete the temporary joining identifier.
 winner_data[, match_row_id := NULL]
 
-# 8 Save
+# 10 Save
 saveRDS(winner_data, file.path(clean_data_dir, "clean_winner_data_ot_name_matched.rds"))
 saveRDS(manual_name_review, file.path(clean_data_dir, "manual_name_review_ot.rds"))
 saveRDS(name_partition_segments, file.path(clean_data_dir, "winner_name_partition_diagnostics_ot.rds"))

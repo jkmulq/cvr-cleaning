@@ -175,12 +175,11 @@ fi
 
 run_r_script "code/processing/1_3_process_keys.R"
 run_r_script "code/processing/2_1_match_kfst.R"
-run_r_script "code/processing/2_1b_build_kfst_winner_datasets.R"
 run_r_script "code/processing/2_2_match_kfst_buyers.R"
 run_r_script "code/processing/2_3_match_opentender.R"
 run_r_script "code/processing/2_4_match_opentender_buyers.R"
-run_r_script "code/processing/2_6_score_opentender_quality.R"
-run_r_script "code/processing/2_7_build_ot_winner_datasets.R"
+run_r_script "code/processing/3_1_build_kfst_winner_datasets.R"
+run_r_script "code/processing/3_2_build_ot_winner_datasets.R"
 
 # Optional post-matching pulls (consume the *_name_matched.rds outputs above).
 # BUILD_EMPLOYMENT_HISTORY needs Virk credentials; EXTRACT_TED_NOTICES needs

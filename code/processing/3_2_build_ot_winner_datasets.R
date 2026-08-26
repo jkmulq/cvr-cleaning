@@ -1,18 +1,18 @@
 # =============================================================================
-# code/processing/2_1b_build_kfst_winner_datasets.R
-# KFST winner robustness stack (mirror of the OpenTender stack in 2_7): base / extraction /
-# name_only on the SHARED slim schema. NOT consumed by the pipeline (robustness/comparison
-# only). Runs right after 2_1. Author: Jack Mulqueeney.
+# code/processing/2_7_build_ot_winner_datasets.R
+# OpenTender winner robustness stack (mirror of the KFST stack): base / extraction /
+# name_only on a shared slim schema. NOT consumed by the pipeline (robustness/comparison
+# only — stacking variants would double-count). Author: Jack Mulqueeney.
 # =============================================================================
 rm(list = ls()); source("config.R")
 suppressWarnings(suppressPackageStartupMessages({library(data.table); library(tidyverse)}))
 source(file.path(PROJECT_DIR, "code", "functions.R"))
 clean_data_dir <- dirs$clean_data
 
-base_raw <- as.data.table(readRDS(file.path(clean_data_dir, "clean_winner_data_kfst_name_matched.rds")))
+base_raw <- as.data.table(readRDS(file.path(clean_data_dir, "clean_winner_data_ot_name_matched.rds")))
 
-# Shared slim schema — IDENTICAL to 2_7. (KFST-specific columns semi_tier/consortium_number/
-# field_paired_* stay in the canonical table; the stack is the minimal columns-only view.)
+# Slim CORE schema (shared with the KFST stack). base expands beyond this (flags/name-partition/provenance);
+# extraction/name_only keep only the core and get NA elsewhere via rbindlist(fill = TRUE).
 slim_cols <- c("dataset","tender_id","lot_id","winner_number","winner_name","winner_country",
   "winner_cvr_final","winner_cvr_clean","valid_cvr","name_match_method","name_match_step",
   "name_match_step_code","name_match_score","flag_name_match_found","cvr_name_match_quality",
@@ -22,11 +22,23 @@ slim_cols <- c("dataset","tender_id","lot_id","winner_number","winner_name","win
   "annualised_lot_amount","cpv_division","cpv_sector","cpv_category","buyer_name","tender_status",
   "n_bidders","award_url","winner_cvr_original","winner_name_original","winner_country_original")
 
-# ---- (1) base: the canonical consortium-matched KFST winners (2_1), reduced to slim schema ----
-# KFST canonical already has every slim column directly (no renames needed).
+# ---- (1) base: the 2_3 matched OT winners (2_3 scores quality inline). Slim core + all cleaning/matching
+# flags + name-partition + provenance/candidate + matching-evidence cols. Full raw canonical (317 cols)
+# stays in clean_winner_data_ot_name_matched.rds -- this is the curated view.
 base <- copy(base_raw)
+setnames(base, "buyer_name_original", "buyer_name", skip_absent = TRUE)
+setnames(base, "tender_publications_lastContractAwardUrl", "award_url", skip_absent = TRUE)
+base[, tender_status := NA_character_]         # KFST-specific completion status; no OT equivalent
 base[, dataset := "base"]
-base <- base[, ..slim_cols]
+extra_cols <- intersect(c(
+  grep("^flag_", names(base), value = TRUE),
+  grep("^name_partition_", names(base), value = TRUE), "proposed_name_partition",
+  "winner_cvr_candidate","winner_cvr_recovered_from_formatting","winner_cvr_valid_from_same_name",
+  "row_id","source","row_id_borrowed_from","consortium_winner",
+  "winner_cvr_name_match","registered_name_match","name_match_source","name_match_n_candidates","name_match_status"
+), names(base))
+expanded_cols <- unique(c(slim_cols, extra_cols))
+base <- base[, ..expanded_cols]
 
 # ---- lot-level context to attach to the CVR-only variants (one row per lot) ------------------
 ctx_cols <- c("tender_id","lot_id","award_date","flag_awarded","tender_amount","tender_amount_eur",
@@ -34,8 +46,7 @@ ctx_cols <- c("tender_id","lot_id","award_date","flag_awarded","tender_amount","
   "cpv_sector","cpv_category","buyer_name","tender_status","n_bidders","award_url")
 lot_ctx <- unique(base[, ..ctx_cols], by = c("tender_id","lot_id"))
 
-# ---- (2) extraction: every standalone 8-digit CVR in the raw winner field, no matching --------
-# lot_field_cvrs() = the shared functions.R helper (collapse_whitespace=FALSE, drop_invalid=TRUE).
+# ---- (2) extraction: every standalone 8-digit CVR in the OT bidder field, no matching --------
 extraction <- as.data.table(lot_field_cvrs(
   unique(base_raw[, .(tender_id, lot_id, winner_cvr = winner_cvr_original)])))
 extraction[, winner_number := rowid(tender_id, lot_id)]
@@ -43,7 +54,7 @@ extraction[, `:=`(
   winner_cvr_final = cvr, winner_cvr_clean = cvr, valid_cvr = TRUE,
   winner_name = NA_character_, winner_country = NA_character_, name_match_method = NA_character_,
   name_match_step = NA_integer_,
-  name_match_step_code = "CVR from the winner field: raw extraction (no matching)",
+  name_match_step_code = "CVR from the bidder field: raw extraction (no matching)",
   name_match_score = NA_real_, flag_name_match_found = FALSE,
   cvr_name_match_quality = NA_real_, cvr_name_match_quality_basic = NA_real_,
   cvr_name_match_quality_nospaces = NA_real_, cvr_name_match_quality_broad = NA_real_,
@@ -53,21 +64,24 @@ extraction <- merge(extraction, lot_ctx, by = c("tender_id","lot_id"), all.x = T
 extraction[, cvr := NULL][, dataset := "extraction"]
 extraction <- extraction[, ..slim_cols]
 
-# ---- (3) name_only: every DK winner name through the exact+fuzzy matcher, field CVR IGNORED ----
-# winner_cvr_final = the name-matched CVR only (NA if no match). Mirrors the 2_1 CORE matcher
-# (exact steps 1-4 + fuzzy 5-6, same functions.R primitives + thresholds 85/85/86/89). DK-GATED:
-# the CVR registry is Danish, so only DK winners are matched (non-DK winners get NA) -- consistent
-# with the §3.3 reasoning. Uses the SAME publication-date filter as base (match_date = pub_date), so
+# ---- (3) name_only: every DK OT winner name through the exact+fuzzy matcher, field CVR IGNORED ----
+# winner_cvr_final = the name-matched CVR only (NA if no match). IDENTICAL matcher to the KFST stack
+# (2_1b) and to production 2_3's core (exact steps 1-4 + fuzzy 5-6, same functions.R primitives +
+# thresholds 85/85/86/89). Runs on the base OT winner rows (already name-partitioned by 2_3), just
+# ignoring the field CVR. DK-GATED (the registry is Danish; ~68,744 OT winners are DK). Uses the SAME
+# publication-date filter as base 2_3 (match_date = tender_publications_firstdContractAwardDate), so
 # name_only differs from base ONLY by ignoring the field CVR -- not by the registry date window.
 # Runs at SCRIPT scope because keep_step_matches() uses <<- (exactly as production 2_1/2_3 do).
-no <- copy(base_raw)[, .(tender_id, lot_id, winner_number, winner_name, winner_country, pub_date)]
+no <- copy(base_raw)[, .(tender_id, lot_id, winner_number, winner_name, winner_country,
+                         tender_publications_firstdContractAwardDate)]
 prep <- as.data.table(prepare_cvr_name(no$winner_name))
 no[, `:=`(winner_name_basic = prep$name_basic, winner_name_no_spaces = prep$name_no_spaces,
           winner_name_broad = prep$name_broad, winner_name_match = prep$name_clean,
           winner_firm_type = prep$firm_type)]
-no[, `:=`(match_row_id = .I, winner_name_in_data = winner_name, match_date = as.IDate(pub_date))]
+no[, `:=`(match_row_id = .I, winner_name_in_data = winner_name,
+          match_date = as.IDate(tender_publications_firstdContractAwardDate))]
 
-# keys (identical construction to 2_1)
+# keys (identical construction to 2_3)
 name_key   <- as.data.table(readRDS(file.path(clean_data_dir, "clean_cvr_name_key.rds")))
 biname_key <- as.data.table(readRDS(file.path(clean_data_dir, "clean_cvr_biname_key.rds")))
 setnames(name_key, "name", "registered_name"); setnames(biname_key, "binavn", "registered_name")
@@ -88,7 +102,7 @@ matched <- data.table(match_row_id = integer(0), cvr_name_match = character(0),
 remaining_original <- copy(remaining)   # add_winner_context_to_matches() reads this from the caller
 cat("name_only: DK names to match:", nrow(remaining), "of", nrow(no), "\n")
 
-# exact steps 1-4 (identical to 2_1)
+# exact steps 1-4 (identical to 2_3)
 run_step <- function(on_cols, step) {
   cand <- cvr_key[remaining, on = on_cols, nomatch = 0, allow.cartesian = TRUE]
   keep_step_matches(add_winner_context_to_matches(select_preferred_exact_match(cand, step = step)))
@@ -98,7 +112,7 @@ run_step(c(name_no_spaces = "winner_name_no_spaces", firm_type = "winner_firm_ty
 run_step(c(name_no_spaces = "winner_name_no_spaces"), 3L)
 run_step(c(name_broad = "winner_name_broad"), 4L)
 
-# collapse distinct name-problems, fuzzy steps 5-6 (identical to 2_1), then expand back
+# collapse distinct name-problems, fuzzy steps 5-6 (identical to 2_3), then expand back
 fuzzy_match_cols <- c("winner_name_match", "winner_name_broad", "winner_firm_type", "match_date")
 remaining[, fuzzy_match_id := .GRP, by = fuzzy_match_cols]
 fuzzy_row_lookup <- remaining[, .(match_row_id, fuzzy_match_id)]
@@ -126,7 +140,7 @@ no <- merge(no, km, by = "match_row_id", all.x = TRUE)
 no[, winner_cvr_final := winner_cvr_name_match]     # PURE name match: field CVR ignored
 
 # quality: best levenshtein of the winner name vs the final CVR's registered names, for EACH prepared
-# name form (clean = strict default; basic/no-spaces/broad looser). Same block as 2_1 PART-6.
+# name form (clean = strict default; basic/no-spaces/broad looser). Same block as 2_3 (and KFST 2_1).
 for (qf in list(c("winner_name_match",     "name_match",     "cvr_name_match_quality"),
                 c("winner_name_basic",     "name_basic",     "cvr_name_match_quality_basic"),
                 c("winner_name_no_spaces", "name_no_spaces", "cvr_name_match_quality_nospaces"),
@@ -167,7 +181,7 @@ name_only <- name_only[, ..slim_cols]
 # ---- (4) stack ------------------------------------------------------------------------------
 stacked <- rbindlist(list(base, extraction, name_only), use.names = TRUE, fill = TRUE)
 stacked[, dataset := factor(dataset, levels = c("base","extraction","name_only"))]
-out_path <- Sys.getenv("KFST_STACK_OUT", unset = file.path(clean_data_dir, "kfst_winner_datasets_stacked.rds"))
+out_path <- Sys.getenv("OT_STACK_OUT", unset = file.path(clean_data_dir, "ot_winner_datasets_stacked.rds"))
 saveRDS(stacked, out_path)
-cat("kfst_winner_datasets_stacked.rds:", nrow(stacked), "rows\n")
+cat("ot_winner_datasets_stacked.rds:", nrow(stacked), "rows\n")
 print(stacked[, .N, by = dataset])

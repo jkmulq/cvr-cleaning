@@ -25,6 +25,8 @@ This file tracks development work against the current codebase and the project b
   - **Conclusion**: Will put separate tables for `clean_winnner_data` and `clean_buyer_data`. `clean_winner_data` will contain buyer-winner matches, but it won't have multiple buyers separated out row-by-row.
 - [ ] Review multi-buyer lots in the KFST dataset.
   - Check how tender-lots procured jointly by multiple buyers (`joint_tender` / Fælles) are represented, and whether the tender-lot grain and the buyer table handle them correctly (cf. the OpenTender buyer-dimension explosion fix under OpenTender Cleaning, which was treated as a no-op for KFST — confirm that assumption holds).
+- [ ] Review the consortium-rollout `name_match_step_code` descriptions (added 2026-08-21).
+  - New human-readable labels in `2_1_match_kfst.R` from the consortium method: the tier-3b field-pairing label ("CVR from tier-3b field pairing: ...") and the field-CVR provenance labels ("CVR from the winner field: ..." for semicolon-separated winners / comma-separated consortium members / unclassified split). Confirm the wording is clear/consistent, and decide whether `name_match_status` needs matching updates.
 
 ## Buyer And Name Matching
 
@@ -51,6 +53,11 @@ This file tracks development work against the current codebase and the project b
   - **Verified byte-identical** to the previous production outputs (strict sorted, per-column incl. type): KFST winner 28,313 / KFST buyer 42,565 / OT winner 115,998 / OT buyer 121,559 rows - all `identical=TRUE`.
   - **Speed** (isolated, caffeinated wall time): 2_2 KFST buyer 49m35s -> 25m37s (1.9x); 2_4 OT buyer 2h16m -> 54m (2.5x); 2_3 OT winner 19m05s -> 16m19s; 2_1 KFST winner ~unchanged (~1.4m, tiny fuzzy set). Matching suite ~3h27m -> ~1h38m; **full pipeline ~3h32m -> ~1h43m**. The big wins are the two buyer matchers (buyers repeat the same public bodies across many tenders, so they collapse most).
   - Removed the superseded `code/drafts/` matching drafts (2026-07-29) now that the approach lives in production.
+- [ ] Pull and use historical firm names to validate firm-name matches over time (added after PI discussion, 2026-08-13).
+  - Firm names change over time, so a tender's recorded name need not equal the CVR's *current* registry name; cross-checking against the name valid at the award date (or any historical name) validates a match that would otherwise look like a mismatch. (Motivating example: CVR 36293780, whose "Historiske navne" differ from its current name.)
+  - Source: the CVR distribution API exposes each firm's full name history on `Vrvirksomhed.navne` (primary) and `binavne` (secondary/trading), each with a `periode` (`gyldigFra`/`gyldigTil`); a null `gyldigTil` marks the current name. Same document we already fetch for employment, so no extra API calls.
+  - Done: `code/scraping/1_build_cvr_employment_history.R` now requests `navne`/`binavne` and writes a separate name-history key (`<output>_names.csv`: `cvr, name_type, firm_name, gyldig_fra, gyldig_til, is_current`).
+  - Remaining: rerun the pull (`CVR_EMPLOYMENT_OVERWRITE=true`) to populate the key, then join it into the name-validation / matching workflow (accept a match if the tender name equals any historical name, or the name valid at the award date).
 
 ## OpenTender Cleaning
 
@@ -101,6 +108,12 @@ This file tracks development work against the current codebase and the project b
   - Target: add a readable, documented short-name mapping for tender-level
     columns before calling `haven::write_dta()`, while keeping the full column
     names in the `.rds` outputs.
+- [x] Recover OpenTender extraction failures from the TED XML (added after PI discussion, 2026-08-03).
+  - Target the AWARDED/PREAWARDED lots that have a value field but **no winner CVR and no winner name** — the winner-extraction failures where OpenTender captured the lot/value/buyer but not the winning supplier (~3,774 AWARDED rows across ~1,024 notices; e.g. TED `350431-2022` "FR18 Flexrute" €55.7M, `00030333-2024` Rødovre madservice).
+  - Pull the winning supplier (name + CVR) directly from the TED XML notice at `tender_publications_lastContractAwardUrl`.
+  - Done: `code/scraping/3_recover_ted_missing_winners.R` reuses the cache-aware fetcher from `2_extract_ted_notices.R` (sourced with `SKIP_TED_RUN`) and adds lot-level parsers for both eForms and legacy TED_EXPORT schemas, exposing `recover_ted_missing_winners()` (standalone run still writes the inspection artifact `data/intermediates/ted/ted_missing_winner_recovery.{rds,csv}`). Across 5,307 extraction-failure lots (2,815 notices) it recovers a winner for **1,475 lots (28%)**.
+  - Done: `code/processing/1_2b_recover_ted_winners.R` folds the recovered winners into `clean_winner_data_ot.rds` as a standard cleaning step (runs right after `1_2`, before matching, in `run_replication.sh`). Multi-winner lots are expanded to one row per winner; provenance is schema-compatible (`winner_name_original`/`winner_cvr_original` stay empty, `winner_name`/`winner_cvr_clean` hold the TED values, `flag_winner_recovered_from_ted = TRUE`, `source = "recovered from TED"`). Adds **2,079 recovered winner rows over 758 lots** (926 CVR-resolved, 1,153 name-only).
+  - Scope decision: only the **precise** tiers are folded — `single_lot_notice` (one TED lot, mapped exactly) and `lot_no_match` (a multi-lot notice where the TED `LOT_NO` matched the OT lot suffix). The **notice-level tier** (`multi_lot_notice_level`, 717 lots) is deliberately **dropped**: investigation showed it is ~99% duplication (51 of 65 such notices already hold every winner on OpenTender's populated lot-rows; TED adds only ~26 marginal winners, about half spelling variants). Those blank lots are left as unrecovered extraction failures, untouched. Revisit only if a clean TED-award-block rebuild is later judged worth it (`VAL_TOTAL` is available per block for ~67% of the legacy notices).
 
 ## Overall cleaning
 - [ ] Fill missing tender-level amounts within a multi-lot tender from the non-missing rows. `tender_amount` (and its EUR/DKK versions) is a tender-level field, so all lots of one `tender_id` should share the same value; where some lot rows carry it and others are NA, backfill the NAs from the non-missing value for that `tender_id`. Applies to both KFST and OpenTender.
@@ -110,6 +123,13 @@ This file tracks development work against the current codebase and the project b
 - [x] Convert tender/lot amounts to a common currency (EUR and DKK). KFST amounts are DKK; OpenTender amounts are already EUR (built from the `_EUR` columns), so pooling them (e.g. `data_tender` in the employment report) previously mixed currencies.
   - Done: added `tender_amount_eur`/`tender_amount_dkk` and `lot_amount_eur`/`lot_amount_dkk` to both the winner and buyer tables in `1_1` (KFST) and `1_2` (OpenTender), using Denmark's fixed ERM II central rate (7.46038 DKK per EUR, +/-2.25% band; https://economy-finance.ec.europa.eu/euro/eu-countries-and-euro/denmark-and-euro_en). Propagated to the matched outputs by the 2026-07-23 full run (all four columns present in `*_name_matched.rds`).
   - Possible future refinement (not needed given the peg): contract-date daily EUR/DKK rates joined on `award_date` differ <1% from the fixed peg. Not yet converted: `bid_amount` and the annualised amounts (they inherit their source currency). And OpenTender's EUR was itself converted from native by OpenTender, so EUR->DKK double-converts DKK-native OT tenders - re-deriving from OT native `tender_finalPrice` + currency is the faithful fix if ever needed.
+
+## Employment analysis & control group
+- [ ] Build a matched control group from the wider Virk firm universe (added after PI discussion, 2026-08-03).
+  - Pull employment / age / location / sector / industry (etc.) for the *rest* of the firms in the Virk API (non-winning firms), beyond the procurement winners already pulled in `code/scraping/1_build_cvr_employment_history.R`.
+  - Produce a balance table comparing winners vs the candidate control pool.
+  - For each winner, find the closest match on: **employment level 2 years before the award, same sector, same location, same age**.
+  - Construct two comparison firms per winner: (a) a **never-winning** match, and (b) a **winning** match drawn from firms that win *within* the data itself.
 
 ## Code robustness (from July 2026 systematic review)
 None of these fire on the current data/API (the 2026-07-23 full run completed cleanly), but the High items are latent crashes that abort under other inputs/environments (a subset run, different data vintage, an API format change) - so they matter for replication-readiness.
@@ -137,3 +157,4 @@ None of these fire on the current data/API (the 2026-07-23 full run completed cl
 
 ## Replication readiness
 - [ ] Document data provenance for the raw inputs (KFST `udbudsdata_kfst.xlsx`, OpenTender CSVs, Virk CVR keys). Ask PI's coauthors where each source comes from and how a replicator obtains access, then add a "Data availability" section to the README.
+- [ ] Make `config.R` set up all output directories on first run, so a fresh clone works out of the box. It currently only creates `data/raw` and `data/clean` (`config.R:37`); `data/cvr_matching_data` (`dirs$cvr_key`), `data/intermediates`, and the TED cache `data/intermediates/ted/raw_xml` are not created, so a first-time runner hits "no such file or directory" errors when a script writes there. Extend the `dir.create()` call to cover every output entry in `dirs` (all except `code`) plus the TED `raw_xml` subdirectory.
