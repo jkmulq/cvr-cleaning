@@ -299,142 +299,270 @@ tender_lot_data <- data %>%
   distinct(tender_id, lot_id, lot_number, .keep_all = TRUE)
 
 
-# 2 Winners
-winner_data <- data %>% 
-  select(tender_id, lot_id, winner_cvr, winner_name, winner_country)
+# 2 Winners 
+## (CONSORTIUM extraction: ';' = winners via tiers, ',' = consortium members)
+original_winner_data <- data %>%
+  transmute(tender_id, lot_id, winner_cvr_original = winner_cvr,
+            winner_name_original = winner_name, winner_country_original = winner_country) %>%
+  distinct(tender_id, lot_id, .keep_all = TRUE)
 
-# Store original winner fields separately. The cleaned table keeps both the raw
-# source field and the standardized CVR field.
-original_winner_data <- winner_data %>%
-  rename(
-    winner_cvr_original = winner_cvr,
-    winner_name_original = winner_name,
-    winner_country_original = winner_country
-  )
+# Winner fields as the consortium extraction consumes them (blank -> "", one row/lot).
+# Named `raw` so the ';'-split below (and downstream consumers) are unchanged.
+raw <- data %>%
+  transmute(tender_id, lot_id,
+            winner_cvr      = replace_na(as.character(winner_cvr), ""),
+            winner_name     = replace_na(as.character(winner_name), ""),
+            winner_country  = replace_na(as.character(winner_country), ""),
+            consortium_flag = replace_na(as.character(consortium_winner), ""))
 
-## 2.1 Separate winners
-## Goal: Separate winners into single winners and multiple winners.
 
-## Number of winners using number of winner names
-## Winner names are separate by a comma or semicolon
-winner_data <- winner_data %>% 
-  mutate(n_winner_name = str_count(winner_name, ",|;") + 1,
-         n_winner_cvr = str_count(winner_cvr, ",|;|[.]") + 1,
-         n_winner_country = str_count(winner_country, ",|;"))
+## 2.1 CVR extraction
+### 2.2.1 Make different cases for separation
+w_semi <- raw %>%
+  mutate(nc = n_pieces(winner_cvr), nn = n_pieces(winner_name),
+         nk = n_pieces(winner_country), ncons = n_pieces(consortium_flag),
+         nvc = compute_distinct_valid_cvr(winner_cvr, collapse_whitespace = FALSE, drop_invalid = TRUE),  # distinct valid field CVRs
+         semi_tier = case_when(
+           nc == nn & nn == nk & nn == ncons ~ 1L,   # all agree
+           nc == nn & (nk == nn | nk == 1L) & (ncons == nn | ncons == 1L) ~ 2L,  # cvr & name agree; country/consortium agree-or-single)
+           TRUE ~ 3L))  # cvr & name disagree (or a partial-count country/flag)
 
-## Missing winner CVR column
-winner_data <- winner_data %>% 
-  mutate(missing_winner_cvr = is.na(winner_cvr))
+cat("separation tier counts:\n")
+print(w_semi %>% count(semi_tier))
 
-## Find reliably single CVRs
-# CVRs without any commas, semi-colons, periods, etc. 
-# and with exactly 8 digits are likely to be single CVRs; flag these
-winner_data <- winner_data %>% 
-  mutate(single_cvr = ifelse(grepl("^\\d{8}$", winner_cvr) & 
-                               !str_detect(winner_cvr, regex("[.,; ]")), 
-                             TRUE, NA))
+### 2.2.2: tier 1 -- split cvr + name + country + consortium flag on ';'
+winners_semi_t1 <- w_semi %>% 
+  filter(semi_tier == 1L) %>%
+  select(tender_id, lot_id, winner_cvr, winner_name, winner_country, consortium_flag) %>%
+  separate_longer_delim(c(winner_cvr, winner_name, winner_country, consortium_flag), delim = ";") %>%
+  group_by(tender_id, lot_id) %>% 
+  mutate(winner_number = row_number()) %>% 
+  ungroup() %>%
+  mutate(semi_tier = "1_all_agree")
 
-# Print result
-cat("Share of easily identifiable single CVRs:", 
-    sum(winner_data$single_cvr, na.rm = TRUE) / nrow(winner_data), "\n")
+### 2.2.3: tier 2 -- split cvr + name on ';'
+# The country/consortium entry is applied to each winner
+winners_semi_t2 <- w_semi %>% 
+  filter(semi_tier == 2L) %>%
+  select(tender_id, lot_id, winner_cvr, winner_name, winner_country, consortium_flag, nc, nk, nn, ncons) %>%
+  rowwise() %>% 
+  # Apply consortium/country to each winner
+  mutate(consortium_flag = ifelse(ncons == 1, 
+                                  paste(rep(consortium_flag, nc), collapse = ";"),
+                                  consortium_flag),
+         winner_country = ifelse(nk == 1, 
+                                 paste(rep(winner_country, nc), collapse = ";"),
+                                 winner_country)) %>% 
+  ungroup() %>% 
+  separate_longer_delim(c(winner_cvr, winner_name, winner_country, consortium_flag), delim = ";") %>%
+  group_by(tender_id, lot_id) %>%
+  mutate(winner_number = row_number()) %>%
+  ungroup() %>%
+  mutate(semi_tier = "2_country_differs") %>%
+  select(-nc, -nk, -nn, -ncons)  
 
-# CVRs with spaces but whose characters are all numbers and 
-# with exactly 8 characters are likely to be single CVRs; flag these
-winner_data <- winner_data %>% 
-  mutate(single_cvr = ifelse(grepl("^\\d{8}$", gsub(" ", "", winner_cvr)) & # removes white space first before checking digits
-                               str_detect(winner_cvr, regex(" ")) & 
-                               !str_detect(winner_cvr, regex("[.,;]")), 
-                             TRUE, single_cvr))
+### 2.2.4: tier 3 -- cvr & name winner-counts disagree
+# More precise extraction required since naive separate_longer_delim() 
+# would mispair everything after a mid-string gap.
 
-# Print result
-cat("Share of identifiable single CVRs (including separated spaces):", 
-    sum(winner_data$single_cvr, na.rm = TRUE) / nrow(winner_data), "\n")
+# --- tier 3a: more valid CVRs than names -> keep every field CVR 
+winners_semi_t3a <- w_semi %>% 
+  filter(semi_tier == 3L, nc != nn, nvc > nn) %>%
+  # Extract all valid CVR candidates from each lot:
+  lot_field_cvrs() %>%
+  group_by(tender_id, lot_id) %>% 
+  mutate(winner_number = row_number()) %>% 
+  ungroup() %>%
+  transmute(tender_id, lot_id, winner_cvr = cvr,
+            winner_name = NA_character_, winner_country = NA_character_,
+            consortium_flag = NA_character_, winner_number,
+            semi_tier = "3_more_cvrs_than_names", registry_score = NA_real_)
 
-# Keep object
-single_winner_data <- winner_data %>% 
-  filter(single_cvr) %>% 
-  mutate(winner_number = 1, 
-         source = "single winners")
+# --- tier 3b: fewer/equal valid CVRs than names. 
+# Split the names (the anchor) and line up country/flag positionally
+# leave winner_cvr NA and tag the rows "3b_pending" so the matching code
+# (i.e. 2_1) can pair each name to the lot's OWN field CVRs via the registry.
+t3b_src <- w_semi %>%
+  filter(semi_tier == 3L, nc != nn, nvc <= nn)
 
-multi_winner_data <- winner_data %>% 
-  filter(is.na(single_cvr))
+# names are the anchor (one winner_number per name); country + flag lined up positionally.
+# Keep empty name pieces as rows (a lot whose name field is all ';' -> empty winner rows).
+t3_names <- semi_split(t3b_src, "winner_name") %>% # Splits by winner name and does some other operations; see functions.R.
+  mutate(winner_name = str_trim(winner_name))
 
-## 2.2 Deal with multiple winners
-## Goal: Create long dataframe with one row per winner (identified by tender_id/lot_id)
-# Map function over rows and bind.
-cvr_cols_to_sep <- c("winner_cvr", "winner_name", "winner_country")
-multi_winner_data_sep <- map(1:nrow(multi_winner_data), 
-                             .f = extract_multiple_cvr,
-                             data = multi_winner_data,
-                             entity_cols = cvr_cols_to_sep,
-                             cvr_column = "winner_cvr") %>%
-  bind_rows()
+# recycle a single country to every name (nn pieces) so we send DK lots to matching if needed
+# the flag stays positional (recycling it could re-route a paired comma-name into name-matching)
+t3_context <- semi_split(t3b_src %>% 
+                           mutate(winner_country = recycle_single(winner_country, nn)),
+                         "winner_country") %>%
+  mutate(winner_country = str_trim(winner_country)) %>%
+  full_join(semi_split(t3b_src, "consortium_flag") %>% mutate(consortium_flag = str_trim(consortium_flag)),
+            by = c("tender_id", "lot_id", "winner_number"))
 
-# Order columns
-column_pattern <- paste0(cvr_cols_to_sep, collapse = "|")
-column_pattern <- paste0("(", column_pattern, ")_(\\d+)$")
-multi_winner_data_sep <- multi_winner_data_sep %>% 
-  select(tender_id, lot_id, max_detected, matches(column_pattern))
+winners_semi_t3b <- t3_names %>%
+  left_join(t3_context, by = c("tender_id", "lot_id", "winner_number")) %>%
+  mutate(winner_cvr = NA_character_,        # NA -> matched in 2_1; field CVRs paired there (needs keys)
+         registry_score = NA_real_,
+         semi_tier = case_when(
+           winner_name != "" & winner_name != "NA" ~ "3b_pending",  # 2_1 does the registry field pairing
+           TRUE                                    ~ "3_blank")) %>% # empty placeholder row
+  select(tender_id, lot_id, winner_cvr, winner_name, winner_country, consortium_flag,
+         winner_number, semi_tier, registry_score)
 
-# Pivot longer
-multi_winner_long <- multi_winner_data_sep %>%
-  
-  # Convert each variable type separately into long form
-  pivot_longer(
-    cols = matches("^winner_cvr_\\d+|^winner_name_\\d+|^winner_country_\\d+"),
-    names_to = c("variable", "winner_number"),
-    names_pattern = "(winner_cvr|winner_name|winner_country)_(\\d+)",
-    values_to = "value"
-  ) %>%
-  
-  # Spread variable types back into columns
-  pivot_wider(
-    names_from = variable,
-    values_from = value
-  ) %>%
-  
-  # Clean winner_number type
-  mutate(winner_number = as.integer(winner_number),
-         source = "multiple winners") %>%
-  arrange(tender_id, lot_id, winner_number)
+# --- tier 3c: EQUAL cvr & name counts (only aux partial) -> positional lockstep --------------
+t3c_src <- w_semi %>% filter(semi_tier == 3L, nc == nn)
 
-# Filter out 'fake' winners (bind_rows() takes global max, not within lot_id max)
-multi_winner_long <- multi_winner_long %>% 
-  filter(winner_number <= max_detected)
+# cvr & name align 1:1, so split them lockstep; country + flag joined best-effort by position
+t3c_anchor <- t3c_src %>%
+  select(tender_id, lot_id, winner_cvr, winner_name) %>%
+  separate_longer_delim(c(winner_cvr, winner_name), delim = ";") %>%
+  group_by(tender_id, lot_id) %>% 
+  mutate(winner_number = row_number()) %>% 
+  ungroup()
 
-## 2.3 Bind single and multi winner together
+t3c_context <- semi_split(t3c_src %>% 
+                            mutate(winner_country = recycle_single(winner_country, nn)),
+                          "winner_country") %>%
+  mutate(winner_country = str_trim(winner_country)) %>%
+  full_join(semi_split(t3c_src, "consortium_flag") %>% mutate(consortium_flag = str_trim(consortium_flag)),
+            by = c("tender_id", "lot_id", "winner_number"))
+
+winners_semi_t3c <- t3c_anchor %>%
+  left_join(t3c_context, by = c("tender_id", "lot_id", "winner_number")) %>%
+  mutate(semi_tier = "3_name_country_positional", registry_score = NA_real_) %>%
+  select(tender_id, lot_id, winner_cvr, winner_name, winner_country, consortium_flag,
+         winner_number, semi_tier, registry_score)
+
+# combine the tiers and trim. Each tier already carries consortium_flag (split lockstep in
+# tiers 1-2/3c, positionally joined in 3b, NA in 3a), so no separate flag join is needed.
+winners <- bind_rows(winners_semi_t1, 
+                     winners_semi_t2,
+                     winners_semi_t3a, 
+                     winners_semi_t3b, 
+                     winners_semi_t3c) %>%
+  mutate(across(c(winner_cvr, winner_name, winner_country, consortium_flag), str_trim))
+
+# 3 Consortiums
+# Above logic splits only on ';'. More splitting can happen on ',' for consortia
+# These are flagged with "Ja" -> TRUE (case-insensitive), or a de-facto
+#   flag for any winner whose CVR field already holds >=2 CVRs
+winners <- winners %>%
+  mutate(is_consortium = replace_na(str_to_lower(consortium_flag) == "ja", FALSE) |
+           str_count(replace_na(winner_cvr, ""), "(?<![0-9])[0-9]{8}(?![0-9])") >= 2L)
+
+cat("Number of consortia rows detected:\n")
+print(winners %>% count(is_consortium))
+
+## 3.1 Consortium splitting
+winners_consort <- winners %>%
+  filter(is_consortium) %>%
+  mutate(consortium_name = winner_name,
+         consortium_cvr  = winner_cvr)
+
+### 3.1.1 Count after standardising delimiters
+winners_consort <- winners_consort %>%
+  mutate(winner_cvr = gsub("[.:]", ",", winner_cvr),
+         winner_country = gsub("[.:]", ",", winner_country)) %>%
+  mutate(n_cvr_implied = str_count(replace_na(winner_cvr, ""), ",") + 1L,
+         n_name_implied = str_count(replace_na(winner_name, ""), ",") + 1L,
+         n_country_implied = str_count(replace_na(winner_country, ""), ",") + 1L) %>%
+  mutate(to_split = (n_cvr_implied == n_name_implied) & (n_name_implied == n_country_implied))
+
+# First split: naive on ','
+winners_consort_s1 <- winners_consort %>%
+  filter(to_split) %>%
+  separate_longer_delim(cols = c(winner_cvr, winner_name, winner_country), delim = ",")
+
+# For leftovers, find rows where to_split check failed due to only one listed country
+winners_consort_s1_resid <- winners_consort %>%
+  filter(!to_split) %>%
+  mutate(to_split_s2 = n_cvr_implied == n_name_implied &
+           (n_cvr_implied != n_country_implied) &
+           (n_country_implied == 1))
+
+winners_consort_s2 <- winners_consort_s1_resid %>%
+  filter(to_split_s2) %>%
+  separate_longer_delim(cols = c(winner_cvr, winner_name), delim = ",")
+
+# For leftovers of step 2, I separate only by name and these will be sent off the matching.
+to_review_via_match <- winners_consort_s1_resid %>%
+  filter(!to_split_s2 & str_detect(winner_country, "DK"))
+
+to_review_via_match <- to_review_via_match %>%
+  separate_longer_delim(winner_name, ",")
+
+## 3.2 put back together
 clean_winner_data <- bind_rows(
-  single_winner_data %>% 
-    select(tender_id, lot_id, winner_number, winner_cvr, winner_name, winner_country, source),
-  multi_winner_long %>%
-    select(tender_id, lot_id, winner_number, winner_cvr, winner_name, winner_country, source)
-) %>% 
-  arrange(tender_id)
-
-# Normalise the working country code once at the winner grain (upper-case + trim)
-# so the stored value is clean and downstream winner_country == "DK" comparisons
-# are reliable. winner_country_original (joined below) keeps the raw source value.
-clean_winner_data <- clean_winner_data %>%
-  mutate(winner_country = toupper(trimws(winner_country)))
-
-clean_winner_data <- clean_winner_data %>%
-  rename(winner_cvr_candidate_original = winner_cvr)
-
-clean_winner_data <- clean_winner_data %>%
+  winners %>% filter(!is_consortium) %>% mutate(type = "simple split on ;"),
+  winners_consort_s1 %>% mutate(type = "simple consort split on ,"),
+  winners_consort_s2 %>% mutate(type = "only split on name, cvr, ignore country"),
+  to_review_via_match %>% mutate(type = "no easy split - send to matching")
+) %>%
+  # Bridge to the existing production CVR-cleaning (§2.5): the member CVR becomes the "candidate
+  # original", and winner_cvr_clean is seeded from it (§2.5 then standardises/validates it).
+  rename(winner_cvr_candidate_original = winner_cvr) %>%
   mutate(winner_cvr_clean = winner_cvr_candidate_original)
 
-## 2.4 Join original tender data and original winner data
-clean_winner_data <- left_join(clean_winner_data, tender_lot_data, 
-                               by = c("tender_id", "lot_id"))
-clean_winner_data <- left_join(clean_winner_data, original_winner_data, 
-                               by = c("tender_id", "lot_id"),
-                               suffix = c("", "_original"))
+## 3.3 Recycled-consortium repair (conservative; fully-DK consortia only). A consortium listing more
+## member firms than distinct valid CVRs has had a CVR recycled onto members it may not belong to
+## Repair it ONLY when every member's country is Danish -- the CVR registry is Danish, so name-matching a foreign
+## member is meaningless, and touching a mixed DK/foreign consortium would leave the foreign member on
+## the recycled copy. For an eligible consortium: clear the recycled CVR and tag every member
+## "3b_pending" so 2_1 pairs each listed CVR to the member it name-matches (graft A) and sends the rest
+## to the registry matcher (graft C); normalise country to a clean "DK" so the matcher's exact
+## `winner_country == "DK"` gate lets the unpaired members through. Registry-free (counts + country).
+clean_winner_data <- clean_winner_data %>%
+  mutate(.country_up = str_to_upper(replace_na(winner_country, "")),
+         .member_dk  = str_detect(.country_up, "DK") & str_remove_all(.country_up, "DK|[^A-Z]") == "") %>%
+  group_by(tender_id, lot_id, winner_number) %>%
+  mutate(.n_members   = n(),
+         .n_valid_cvr = compute_distinct_valid_cvr(paste(winner_cvr_candidate_original, collapse = ";"),
+                                                   collapse_whitespace = FALSE, drop_invalid = TRUE),
+         .recycled    = replace_na(is_consortium, FALSE) & .n_valid_cvr >= 1L &
+                        .n_members > .n_valid_cvr & all(.member_dk)) %>%   # all() => whole consortium DK
+  ungroup()
 
-### Only keep lots that had winners (defined by original data)
-clean_winner_data <- clean_winner_data %>% 
-  filter(n_lot_winners > 0)
+cat(sprintf("Recycled-consortium repair (fully-DK only): %d members in %d winners re-routed\n",
+            sum(clean_winner_data$.recycled),
+            clean_winner_data %>% filter(.recycled) %>% distinct(tender_id, lot_id, winner_number) %>% nrow()))
 
-## 2.5 Clean up/standardise CVR numbers
+clean_winner_data <- clean_winner_data %>%
+  mutate(winner_cvr_candidate_original = ifelse(.recycled, NA_character_, winner_cvr_candidate_original),
+         winner_cvr_clean              = ifelse(.recycled, NA_character_, winner_cvr_clean),
+         semi_tier                     = ifelse(.recycled, "3b_pending", semi_tier)) %>%
+  select(-.country_up, -.member_dk, -.n_members, -.n_valid_cvr, -.recycled)
+
+# DK-gate normalisation (ALL winners -- one consistent rule for the main and consortium tranches).
+# Source/consortium country fields are often all-Danish but not a clean "DK": an un-split consortium
+# country ("DK,DK,DK"), or the malformed source value "DK04". Those fail the matcher's exact
+# `winner_country == "DK"` gate in 2_1 and silently exclude Danish firms. Collapse any country whose
+# tokens are ALL Danish (DK, optionally with trailing digits) to "DK"; leave mixed DK+foreign (e.g.
+# "DK,DE") untouched. This REPLACES the §3.3-local country fix, so recycled and non-recycled winners
+# are treated identically. winner_country_original (joined below) preserves the raw value.
+clean_winner_data <- clean_winner_data %>%
+  mutate(winner_country = if_else(
+    replace_na(grepl("DK", toupper(winner_country)) &
+                 gsub("DK|[^A-Z]", "", toupper(winner_country)) == "", FALSE),
+    "DK", winner_country))
+
+# Join the full production tender-lot context + original (raw) winner fields, exactly as
+# 1_1 does, so the winner rows carry all the production columns.
+clean_winner_data <- clean_winner_data %>%
+  left_join(tender_lot_data, by = c("tender_id", "lot_id")) %>%
+  left_join(original_winner_data, by = c("tender_id", "lot_id"))
+
+# Number the consortia within each lot: members of the same consortium share a
+# consortium_number (1, 2, ...); non-consortium rows get NA.
+clean_winner_data <- clean_winner_data %>%
+  group_by(tender_id, lot_id) %>%
+  mutate(consortium_number = dense_rank(if_else(is_consortium, winner_number, NA_integer_))) %>%
+  ungroup()
+
+# Keep only lots that had winners (as production 1_1 does).
+clean_winner_data <- clean_winner_data %>% filter(n_lot_winners > 0)
+
+
+# 4 Clean up/standardise CVR numbers
 ## Cleaning flags treat NAs as FALSE: a missing source value is not counted as
 ## evidence that a cleaning operation was performed.
 clean_winner_data <- clean_winner_data %>%
@@ -460,7 +588,7 @@ clean_winner_data <- clean_winner_data %>%
     )
     )
 
-## 2.6 Standardise winner names for matching
+## 4.1 Standardise winner names for matching
 winner_name_prepared <- prepare_cvr_name(clean_winner_data$winner_name)
 
 clean_winner_data <- clean_winner_data %>%
@@ -473,7 +601,7 @@ clean_winner_data <- clean_winner_data %>%
     winner_name_first_letter = winner_name_prepared$first_letter
   )
 
-## 2.7 Initial winner CVR quality flags
+## 4.2 Initial winner CVR quality flags
 ## Quality flags treat NAs as FALSE: missing values are captured by explicit
 ## missingness flags, not by propagating NA through boolean indicators.
 # Flag valid CVR numbers (exactly 8 digits, no letters or special characters)
@@ -493,8 +621,8 @@ clean_winner_data <- clean_winner_data %>%
     )
   )
 
-## 2.8 Fill missing CVRs when the same winner name has one valid CVR elsewhere
-### 2.8.1 Count the distinct valid CVRs observed for each exact winner name
+## 4.3 Fill missing CVRs when the same winner name has one valid CVR elsewhere
+### 4.3.1 Count the distinct valid CVRs observed for each exact winner name
 # This uses the original winner name rather than a standardised name. Exact-name
 # matching is more conservative because it does not combine similar-looking firms.
 valid_invalid_cvr_winner_key <- clean_winner_data %>%
@@ -506,7 +634,7 @@ valid_invalid_cvr_winner_key <- clean_winner_data %>%
     .by = winner_name
   )
 
-### 2.8.2 Record which KFST lots supplied each valid winner-name/CVR pair
+### 4.3.2 Record which KFST lots supplied each valid winner-name/CVR pair
 # lot_id uniquely identifies the original KFST lot. Keeping every source lot
 # makes each borrowed CVR traceable back to the rows that supplied it.
 valid_cvr_sources <- clean_winner_data %>%
@@ -516,7 +644,7 @@ valid_cvr_sources <- clean_winner_data %>%
     .by = c(winner_name, winner_cvr_clean)
   )
 
-### 2.8.3 Keep only names linked to exactly one distinct valid CVR
+### 4.3.3 Keep only names linked to exactly one distinct valid CVR
 # Names linked to several valid CVRs are ambiguous and are not filled.
 single_valid_cvr_key <- valid_invalid_cvr_winner_key %>%
   filter(n_valid_cvr == 1, n_total_cvr > 1, valid_cvr) %>%
@@ -533,7 +661,7 @@ single_valid_cvr_key <- single_valid_cvr_key %>%
     )
   )
 
-### 2.8.4 Join the same-name CVR onto the full winner data
+### 4.3.4 Join the same-name CVR onto the full winner data
 # Missing winner names cannot match each other. This prevents unrelated rows
 # with missing names from borrowing a CVR from one another.
 n_winner_rows_before_cvr_fill <- nrow(clean_winner_data)
@@ -549,7 +677,7 @@ if (nrow(clean_winner_data) != n_winner_rows_before_cvr_fill) {
   stop("Joining same-name CVRs changed the number of KFST winner rows.")
 }
 
-### 2.8.5 Fill only rows whose cleaned CVR is missing
+### 4.3.5 Fill only rows whose cleaned CVR is missing
 # Use winner_cvr_clean here rather than winner_cvr_original. A multiple-winner
 # source row can contain CVRs overall while one separated winner still has none.
 clean_winner_data <- clean_winner_data %>%
@@ -595,7 +723,7 @@ if (any(clean_winner_data$flag_fill_missing_cvr &
   stop("At least one borrowed KFST winner CVR is missing its source lot.")
 }
 
-## 2.9 Other winner quality flags
+## 4.4 Other winner quality flags
 # Flag missing CVR number
 clean_winner_data <- clean_winner_data %>%
   mutate(flag_missing_winner_cvr =
@@ -676,13 +804,13 @@ clean_winner_data <- clean_winner_data %>%
     )
   )
 
-# 3 Buyers
+# 5 Buyers
 ## Buyers do not have CVR numbers, but they have names.
 buyer_data <- data %>%
   select(tender_id, lot_id, buyer_name, joint_tender) # joint_tender already recoded to English above
 original_buyer_data <- buyer_data # Store original for later joining
 
-## 3.1 Separate into single and multiple buyer tenders
+## 5.1 Separate into single and multiple buyer tenders
 ## According to the documentation (page 27, variable 19: 'Navn på ordregiver')
 ## multiple contracting authorities are separated by a semicolon.
 ## Buyer name is always populated (no NAs); so this split completely covers the data
@@ -691,13 +819,13 @@ single_buyer_data <- buyer_data %>%
 multi_buyer_data <- buyer_data %>%
   filter(str_detect(buyer_name, ";"))
 
-## 3.2 Split multiple buyers into one row per buyer.
+## 5.2 Split multiple buyers into one row per buyer.
 ## Note, I don't need the extract_multiple_cvr() function because 
 ## the documentation is clear about how multiple buyers are separated
 multiple_buyer_long <- multi_buyer_data %>%
   separate_rows(buyer_name, sep = ";")
 
-## 3.3 Clean up/add buyer_numbers
+## 5.3 Clean up/add buyer_numbers
 multiple_buyer_long <- multiple_buyer_long %>%
   mutate(
     buyer_name = str_squish(buyer_name),
@@ -706,7 +834,7 @@ multiple_buyer_long <- multiple_buyer_long %>%
     .by = c(tender_id, lot_id)
   )
 
-## 3.4 Clean single buyer data
+## 5.4 Clean single buyer data
 ## If only one buyer is listed, keep one row. Joint tenders with unlisted buyers
 ## remain one row because the unlisted buyers cannot be separated from this field.
 single_buyer_data <- single_buyer_data %>%
@@ -715,12 +843,12 @@ single_buyer_data <- single_buyer_data %>%
     source = "single buyer or joint tender with unlisted buyers"
   )
 
-## 3.5 Bind single and multiple buyers
+## 5.5 Bind single and multiple buyers
 clean_buyer_data <- bind_rows(single_buyer_data, multiple_buyer_long) %>%
   arrange(tender_id, buyer_number) %>%
   select(tender_id, lot_id, buyer_number, buyer_name, source)
 
-## 3.6 Join original tender data and original buyer data
+## 5.6 Join original tender data and original buyer data
 clean_buyer_data <- left_join(clean_buyer_data, tender_lot_data %>% select(-buyer_name), # Don't need to add buyer_name here. 
                                by = c("tender_id", "lot_id"),
                               suffix = c("", "_original"))
@@ -729,7 +857,7 @@ clean_buyer_data <- left_join(clean_buyer_data, original_buyer_data,
                                suffix = c("", "_original"))
 
 
-## 3.6 Standardise buyer names for matching
+## 5.6 Standardise buyer names for matching
 buyer_name_prepared <- prepare_cvr_name(clean_buyer_data$buyer_name)
 
 clean_buyer_data <- clean_buyer_data %>%
@@ -742,7 +870,7 @@ clean_buyer_data <- clean_buyer_data %>%
     buyer_name_first_letter = buyer_name_prepared$first_letter
   )
 
-## 3.7 Quality/processing flags
+## 5.7 Quality/processing flags
 ## Flag joint tenders with unlisted buyers 
 ## (i.e. joint tenders that do not have multiple buyers 
 ## listed in the buyer_name field)
@@ -783,13 +911,15 @@ clean_buyer_data <- clean_buyer_data %>%
 clean_buyer_data <- clean_buyer_data %>% 
   mutate(flag_check_fuzzy_match = coalesce(!flag_missing_buyer_name, FALSE))
 
-# Ensure natural row grains for each of winner/buyer side
-# Not strictly necessary for KFST data, but done here for consistency with 
-# OpenTender data cleaning.
-# winner = tender-lot-winner
-# buyer = tender-lot-buyer
+# Ensure natural row grains for each of winner/buyer side.
+# Winner grain = tender-lot-winner-MEMBER: consortium members share a winner_number but are
+# distinct firms, so the member's candidate CVR + name are part of the grain. Deduping only on
+# (winner_number, winner_cvr_clean) would collapse name-only members (all NA winner_cvr_clean)
+# into one row and silently drop real consortium members.
 clean_winner_data <- clean_winner_data %>%
-  distinct(tender_id, lot_id, winner_number, winner_cvr_clean, .keep_all = TRUE)
+  distinct(tender_id, lot_id, winner_number, consortium_number,
+           winner_cvr_candidate_original, winner_name, .keep_all = TRUE)
+# buyer = tender-lot-buyer
 clean_buyer_data <- clean_buyer_data %>%
   distinct(tender_id, lot_id, buyer_number, .keep_all = TRUE)
 
@@ -801,6 +931,6 @@ required_amount_cols <- c("tender_amount", "lot_amount",
 stopifnot(all(required_amount_cols %in% names(clean_winner_data)))
 stopifnot(all(required_amount_cols %in% names(clean_buyer_data)))
 
-# 4 Save
+# 6 Save
 saveRDS(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_kfst.rds"))
 saveRDS(clean_buyer_data, file.path(dirs$clean_data, "clean_buyer_data_kfst.rds"))

@@ -71,6 +71,92 @@ cvr_key[, source_order := fifelse(name_source == "name", 1L, 2L)]
 winner_data[, match_row_id := .I]
 winner_data[, winner_name_in_data := winner_name]
 
+# --- 1.3 Registry-validity: a name-bearing row whose cleaned CVR is NOT a registered CVR is
+# erroneous (typo/extra digit/malformed), so clear it and send it to the name matcher. The
+# original stays in winner_cvr_candidate_original; winner_cvr_final can fall back to the match.
+registered_cvrs <- unique(cvr_key$cvr)
+winner_data[!is.na(winner_name) & winner_name != "" &
+              !is.na(winner_cvr_clean) & winner_cvr_clean != "" &
+              !(winner_cvr_clean %chin% registered_cvrs),
+            `:=`(winner_cvr_clean = NA_character_, valid_cvr = FALSE, flag_check_fuzzy_match = TRUE)]
+
+# Force every tier-3b name through the open matcher (even if borrow-filled) so each 3b row stores
+# BOTH a field score (graft 1.4) and an open-match score -> the field-vs-open cut is re-tunable later.
+winner_data[semi_tier == "3b_pending" & !is.na(winner_name) & winner_name != "",
+            flag_check_fuzzy_match := TRUE]
+
+# --- 1.4 Tier-3b field pairing (resolve semi_tier == "3b_pending") ---------------------------
+# For lots with more names than field CVRs, prefer the lot's OWN listed field CVRs. Each 3b name
+# is scored against the lot's field CVRs (from winner_cvr_original) via the registry; a name keeps
+# its best field CVR when that match clears the fuzzy bar (field_prefer_threshold). If two names
+# claim the same field CVR, the stronger match keeps it and the other name falls to the open
+# matcher below (so no field CVR is attached to two winners). The top-3 candidates are recorded.
+field_prefer_threshold <- 85
+
+# Create the field-pairing columns up front (stable schema even when there are no 3b rows).
+winner_data[, field_paired_cvr    := NA_character_]
+winner_data[, field_paired_score  := NA_real_]
+winner_data[, field_cvr_1         := NA_character_]
+winner_data[, field_cvr_2         := NA_character_]
+winner_data[, field_cvr_3         := NA_character_]
+winner_data[, field_cvr_score_1   := NA_real_]
+winner_data[, field_cvr_score_2   := NA_real_]
+winner_data[, field_cvr_score_3   := NA_real_]
+winner_data[, field_cvr_regname_1 := NA_character_]
+winner_data[, field_cvr_regname_2 := NA_character_]
+winner_data[, field_cvr_regname_3 := NA_character_]
+
+t3b_names <- winner_data[
+  semi_tier == "3b_pending" & !is.na(winner_name_match) & winner_name_match != "",
+  .(match_row_id, tender_id, lot_id, winner_name_match)
+]
+
+if (nrow(t3b_names) > 0L) {
+  # The lot's valid field CVRs (raw field). lot_field_cvrs() is the shared functions.R helper.
+  t3b_cvrs <- as.data.table(lot_field_cvrs(
+    unique(winner_data[semi_tier == "3b_pending",
+                       .(tender_id, lot_id, winner_cvr = winner_cvr_original)])
+  ))
+  # Registry: cvr -> registered names (main + bi-names), restricted to those field CVRs.
+  registry_lookup <- unique(cvr_key[
+    !is.na(name_match) & name_match != "" & cvr %chin% t3b_cvrs$cvr,
+    .(cvr, reg_name = name_match)
+  ])
+
+  # Score every (name, field CVR, registered name); keep each (name, CVR)'s best registered name.
+  pairs <- merge(t3b_names, t3b_cvrs, by = c("tender_id", "lot_id"), allow.cartesian = TRUE)
+  pairs <- merge(pairs, registry_lookup, by = "cvr", allow.cartesian = TRUE)
+  pairs[, score := levenshtein_ratio(winner_name_match, reg_name, pairwise = TRUE)]
+  setorder(pairs, match_row_id, cvr, -score)
+  best <- pairs[, .SD[1L], by = .(match_row_id, cvr)]
+
+  # Rank each name's field CVRs best-first and record the top 3 (one explicit join per rank).
+  setorder(best, match_row_id, -score)
+  best[, field_rank := rowid(match_row_id)]
+  winner_data[best[field_rank == 1L], on = "match_row_id",
+              `:=`(field_cvr_1 = i.cvr, field_cvr_score_1 = i.score, field_cvr_regname_1 = i.reg_name)]
+  winner_data[best[field_rank == 2L], on = "match_row_id",
+              `:=`(field_cvr_2 = i.cvr, field_cvr_score_2 = i.score, field_cvr_regname_2 = i.reg_name)]
+  winner_data[best[field_rank == 3L], on = "match_row_id",
+              `:=`(field_cvr_3 = i.cvr, field_cvr_score_3 = i.score, field_cvr_regname_3 = i.reg_name)]
+
+  # Assign each name its best field CVR when it clears the bar ...
+  assigned <- best[field_rank == 1L & score >= field_prefer_threshold]
+  # ... then if two names in a lot claim the same field CVR, keep only the stronger match.
+  setorder(assigned, tender_id, lot_id, cvr, -score)
+  assigned <- assigned[, .SD[1L], by = .(tender_id, lot_id, cvr)]
+  winner_data[assigned, on = "match_row_id",
+              `:=`(field_paired_cvr = i.cvr, field_paired_score = i.score)]
+}
+
+# Relabel 3b_pending -> 3_field_paired / 3_open_match / 3_blank; carry the paired score.
+winner_data[semi_tier == "3b_pending", semi_tier := fcase(
+  !is.na(field_paired_cvr),                 "3_field_paired",
+  !is.na(winner_name) & winner_name != "",  "3_open_match",
+  default =                                 "3_blank"
+)]
+winner_data[!is.na(field_paired_cvr), registry_score := field_paired_score]
+
 # The CVR key contains Danish firms, so only rows marked DK are automatically
 remaining <- winner_data[
   flag_check_fuzzy_match &
@@ -161,6 +247,9 @@ new_matches <- add_winner_context_to_matches(new_matches)
 keep_step_matches(new_matches)
 cat("Step 4 matches:", nrow(new_matches), "\n")
 
+# Preserve the CVR -> registered-name forms for the PART-6 quality scores below,
+# before cvr_key (large) is freed ahead of the fuzzy pass.
+cvr_key_quality <- unique(cvr_key[, .(cvr, name_match, name_basic, name_no_spaces, name_broad)])
 rm(new_matches, cvr_key)
 gc()
 
@@ -392,6 +481,8 @@ winner_data[
 # Give each numeric matching step a stable, descriptive code. The numeric step
 # is retained so the original matching order remains easy to inspect.
 winner_data[, name_match_step_code := fcase(
+  !is.na(field_paired_cvr),
+  "CVR from tier-3b field pairing: winner name matched a CVR listed on this lot (lots with more names than field CVRs)",
   name_match_method == "exact" & name_match_step == 1L,
   "exact matching: basic name and firm type",
   name_match_method == "exact" & name_match_step == 2L,
@@ -413,13 +504,13 @@ winner_data[, name_match_step_code := fcase(
     name_match_source == "biname",
   "fuzzy matching: broad biname",
   !is.na(winner_cvr_clean) & winner_cvr_clean != "" &
-    source == "single winners",
-  "CVR source: single CVR row",
+    type == "simple split on ;",
+  "CVR from the original winner field: extracted after separting by semi-colon",
   !is.na(winner_cvr_clean) & winner_cvr_clean != "" &
-    source == "multiple winners",
-  "CVR source: multiple CVR separation",
+    type %chin% c("simple consort split on ,", "only split on name, cvr, ignore country"),
+  "CVR from the original winner field: extracted after separating consortium members by comma",
   !is.na(winner_cvr_clean) & winner_cvr_clean != "",
-  "existing CVR, unclassified",
+  "CVR from the original winner field: existing CVR, other misc split",
   flag_check_fuzzy_match &
     toupper(trimws(winner_country)) == "DK",
   "matching candidate: no match found",
@@ -450,13 +541,24 @@ winner_data[, flag_manual_name_review := (
     )
 )]
 
-# Keep the original cleaned CVR unchanged. winner_cvr_final uses the proposed
-# CVR only when the original cleaned field was missing.
-winner_data[, winner_cvr_final := fifelse(
-  is.na(winner_cvr_clean) | winner_cvr_clean == "",
-  winner_cvr_name_match,
-  as.character(winner_cvr_clean)
+# winner_cvr_final precedence: a preferred tier-3b field CVR wins first (a CVR listed for THIS lot
+# beats a whole-registry name match), then the directly-clean/borrowed CVR, then the open name match.
+winner_data[, winner_cvr_final := fcase(
+  !is.na(field_paired_cvr),                            field_paired_cvr,
+  !is.na(winner_cvr_clean) & winner_cvr_clean != "",   as.character(winner_cvr_clean),
+  default =                                            winner_cvr_name_match
 )]
+
+# Provenance: winner_cvr_final was recovered (matched / field-paired / borrowed) BECAUSE the field
+# candidate held no valid, REGISTERED CVR -- so the final differs from the original candidate due to its
+# invalidity. Rows with no candidate (e.g. name-only tier-3b members) are NOT flagged -- see semi_tier.
+reg_cvrs_prov <- unique(as.character(cvr_key_quality$cvr))
+cand_prov <- ifelse(is.na(winner_data$winner_cvr_candidate_original), "",
+                    as.character(winner_data$winner_cvr_candidate_original))
+cand_has_reg_prov <- vapply(regmatches(cand_prov, gregexpr("(?<![0-9])[0-9]{8}(?![0-9])", cand_prov, perl = TRUE)),
+                            function(v) any(v %chin% reg_cvrs_prov), logical(1))
+winner_data[, flag_cvr_recovered_from_invalid :=
+  cand_prov != "" & !cand_has_reg_prov & !is.na(winner_cvr_final) & as.character(winner_cvr_final) != ""]
 
 winner_data[, name_match_status := fcase(
   !flag_check_fuzzy_match,
@@ -469,6 +571,50 @@ winner_data[, name_match_status := fcase(
   "manual review - not marked as Danish",
   default = "manual review - no automatic match"
 )]
+
+# --- 6 Data quality (NOT in the old pipeline): how well the winner's name agrees with the REGISTERED
+# name of its final CVR -- the best levenshtein ratio over that CVR's registered names (main + bi-names).
+# Computed for EACH prepared name form: the clean form is the strict default (cvr_name_match_quality);
+# basic/no-spaces/broad are looser variants (kept so you can pick your own quality bar). Independent of
+# the matcher, for every row with a final CVR. cvr_key_quality (all forms) was preserved above.
+for (qf in list(c("winner_name_match",     "name_match",     "cvr_name_match_quality"),
+                c("winner_name_basic",     "name_basic",     "cvr_name_match_quality_basic"),
+                c("winner_name_no_spaces", "name_no_spaces", "cvr_name_match_quality_nospaces"),
+                c("winner_name_broad",     "name_broad",     "cvr_name_match_quality_broad"))) {
+  win_col <- qf[1]; key_col <- qf[2]; q_col <- qf[3]
+  reg_lookup <- unique(data.table(cvr = as.character(cvr_key_quality$cvr),
+                                  reg_name = cvr_key_quality[[key_col]]))[!is.na(reg_name) & reg_name != ""]
+  qual <- data.table(match_row_id = winner_data$match_row_id,
+                     cvr = as.character(winner_data$winner_cvr_final),
+                     win_name = winner_data[[win_col]])
+  qual <- qual[!is.na(cvr) & cvr != "" & !is.na(win_name) & win_name != ""]
+  qual <- merge(qual, reg_lookup, by = "cvr", allow.cartesian = TRUE)
+  qual[, score := levenshtein_ratio(win_name, reg_name, pairwise = TRUE)]
+  setorder(qual, match_row_id, -score)
+  best_qual <- qual[, .SD[1L], by = match_row_id]
+  winner_data[, (q_col) := NA_real_]
+  winner_data[best_qual, on = "match_row_id", (q_col) := i.score]
+  if (q_col == "cvr_name_match_quality") {   # keep the matched registry name for the strict (clean) form
+    winner_data[, cvr_name_match_quality_name := NA_character_]
+    winner_data[best_qual, on = "match_row_id", cvr_name_match_quality_name := i.reg_name]
+  }
+}
+# is the cleaned winner name a verbatim substring of that best registered name? (rescues terse names)
+winner_data[, cvr_name_is_substring := NA]
+winner_data[!is.na(cvr_name_match_quality_name) & !is.na(winner_name_match) & winner_name_match != "",
+            cvr_name_is_substring := str_detect(cvr_name_match_quality_name, fixed(winner_name_match))]
+
+## Dedup phantom convergent duplicates (post-match). When a firm's raw CVR field holds two tokens -- one
+## valid, one a typo -- the "."->"," step in the consortium split makes two member rows that then converge to
+## the SAME winner_cvr_final after matching. Example: lot 9855-1 lists "NCC Danmark A/S" with CVR
+## "69894011.698940098", so one NCC row keeps 69894011 while the other's invalid 9-digit token 698940098 is
+## cleared and name-matched right back to 69894011 -- the same firm+CVR in the same lot slot. Keep one,
+## preferring the row that kept a valid field CVR. (The 1_1 winner distinct can't catch this: it keys on
+## winner_cvr_candidate_original, which differs here, 69894011 vs 698940098. The cancelled/non-cancelled
+## dedup is at the tender-lot grain, not winner rows, so it is unrelated.)
+setorder(winner_data, tender_id, lot_id, winner_number, consortium_number, winner_name, -valid_cvr)
+winner_data <- unique(winner_data,
+  by = c("tender_id", "lot_id", "winner_number", "consortium_number", "winner_name", "winner_cvr_final"))
 
 # Save a compact table containing only rows that need a person to inspect.
 manual_name_review <- winner_data[

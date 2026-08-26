@@ -78,12 +78,18 @@ clean_cvr_candidate <- function(x) {
 # require exactly eight digits, so longer identifiers such as "111151609" are
 # not counted as CVRs. Whitespace is removed before matching so a spaced CVR can
 # be read as one number; consequently, whitespace alone cannot separate two CVRs.
-extract_valid_cvr_candidates <- function(x) {
-  x <- clean_cvr_candidate(x)
+extract_valid_cvr_candidates <- function(x,
+                                         collapse_whitespace = TRUE,
+                                         drop_invalid = FALSE) {
+  x <- if (collapse_whitespace) clean_cvr_candidate(x) else tidyr::replace_na(as.character(x), "")
   out <- unlist(stringr::str_extract_all(
     x,
     "(?<!\\d)\\d{8}(?!\\d)"
   ))
+
+  if (drop_invalid) {
+    out <- out[!out %in% known_invalid_cvr_numbers()]
+  }
   
   if (length(out) == 0) {
     return(NA_character_)
@@ -94,11 +100,11 @@ extract_valid_cvr_candidates <- function(x) {
 }
 
 # Find number of unique candidates
-compute_distinct_valid_cvr <- function(x) {
+compute_distinct_valid_cvr <- function(x, collapse_whitespace = TRUE, drop_invalid = FALSE) {
   vapply(
     x,
     function(value) {
-      cands <- extract_valid_cvr_candidates(value)
+      cands <- extract_valid_cvr_candidates(value, collapse_whitespace, drop_invalid)
       cands <- cands[!is.na(cands)]
       cands <- unique(cands)
       length(cands)
@@ -151,6 +157,45 @@ recover_formatted_danish_cvr <- function(cvr_candidate,
   )
   
   return(recovered_cvr)
+}
+
+# --- KFST consortium winner-split helpers -----------------------------------
+# Shared by 1_1_process_kfst.R (the ';'=winners / ','=members tier split) and
+# 2_1_match_kfst.R (tier-3b registry field pairing). All are registry-free.
+
+# Number of ';'-separated pieces in a field (= what separate_longer_delim() produces).
+n_pieces <- function(x) {
+  stringr::str_count(tidyr::replace_na(x, ""), ";") + 1L
+}
+
+# Split one ';'-delimited column to one row per piece, numbering pieces within a lot.
+semi_split <- function(df, col) {
+  df %>%
+    dplyr::select(tender_id, lot_id, dplyr::all_of(col)) %>%
+    tidyr::separate_longer_delim(dplyr::all_of(col), delim = ";") %>%
+    dplyr::group_by(tender_id, lot_id) %>%
+    dplyr::mutate(winner_number = dplyr::row_number()) %>%
+    dplyr::ungroup()
+}
+
+# Recycle a single (one-piece, comma-free) value across n ';'-pieces; leave multi-piece values.
+recycle_single <- function(x, n) {
+  single <- (stringr::str_count(tidyr::replace_na(x, ""), ";") + 1L == 1L) &
+    !stringr::str_detect(tidyr::replace_na(x, ""), ",")
+  ifelse(single, mapply(function(v, k) paste(rep(v, k), collapse = ";"), x, n), x)
+}
+
+# Per-lot long table of DISTINCT valid field CVRs. Reuses extract_valid_cvr_candidates() with
+# collapse_whitespace = FALSE (count the listed multi-CVR structure as-written) and
+# drop_invalid = TRUE (exclude placeholder CVRs). Input needs tender_id, lot_id, winner_cvr.
+lot_field_cvrs <- function(df) {
+  df %>%
+    dplyr::transmute(tender_id, lot_id,
+      cvr = lapply(winner_cvr, extract_valid_cvr_candidates,
+                   collapse_whitespace = FALSE, drop_invalid = TRUE)) %>%
+    tidyr::unnest_longer(cvr) %>%
+    dplyr::filter(!is.na(cvr)) %>%
+    dplyr::distinct(tender_id, lot_id, cvr)
 }
 
 # Add source context to a name-match table. match_row_id is temporary and
@@ -784,8 +829,23 @@ select_preferred_exact_match <- function(candidates, step) {
 }
 
 # The documentation describes a Levenshtein similarity score from 0 to 100.
-levenshtein_ratio <- function(value, candidates) {
-  distance <- as.numeric(adist(value, candidates))
+levenshtein_ratio <- function(value, candidates, pairwise = FALSE) {
+  if (pairwise) {
+    # elementwise: value[i] vs candidates[i] -> the two vectors MUST align
+    if (length(value) != length(candidates)) {
+      stop("levenshtein_ratio(pairwise = TRUE) needs value and candidates of equal length.")
+    }
+    distance <- mapply(function(a, b) as.numeric(adist(a, b)), value, candidates)
+  } else {
+    # one-vs-many: a single value against many candidates (or vice versa). Two multi-element
+    # vectors here would flatten adist()'s cross-product and recycle `total_length` wrongly
+    # (producing out-of-[0,100] garbage), so require at least one side to be length 1.
+    if (length(value) > 1L && length(candidates) > 1L) {
+      stop("levenshtein_ratio(): two multi-element vectors need pairwise = TRUE (elementwise); ",
+           "the default compares one value against many candidates.")
+    }
+    distance <- as.numeric(adist(value, candidates))
+  }
   total_length <- nchar(value) + nchar(candidates)
   100 * (total_length - distance) / total_length
 }
