@@ -16,11 +16,11 @@ contents below.
 
 ## Contents
 
-- [Replication](#replication)
-- [Required local inputs](#required-local-inputs)
-- [Configuration](#configuration)
 - [Repository structure](#repository-structure)
 - [What each script does](#what-each-script-does)
+- [Required local inputs](#required-local-inputs)
+- [Configuration](#configuration)
+- [Replication](#replication)
 - [Main outputs](#main-outputs)
 - [Match quality and cleaning flags](#match-quality-and-cleaning-flags)
 
@@ -34,28 +34,46 @@ cvr-cleaning/
 ├── run_replication.sh
 ├── code/
 │   ├── functions.R
+│   ├── view_data.R                       # quick RDS lister / CSV exporter for eyeballing outputs
 │   ├── processing/                      # data cleaning + CVR matching pipeline
 │   │   ├── 0_build_cvr_lookup.R
 │   │   ├── 1_1_process_kfst.R
 │   │   ├── 1_2_process_open_tender.R
+│   │   ├── 1_2b_recover_ted_winners.R
 │   │   ├── 1_3_process_keys.R
 │   │   ├── 2_1_match_kfst.R
+│   │   ├── 2_1b_build_kfst_winner_datasets.R
 │   │   ├── 2_2_match_kfst_buyers.R
 │   │   ├── 2_3_match_opentender.R
 │   │   ├── 2_4_match_opentender_buyers.R
-│   │   └── 2_5_augment_matched_variables.R
+│   │   ├── 2_5_augment_matched_variables.R
+│   │   └── 2_7_build_ot_winner_datasets.R
 │   ├── analysis/                        # R Markdown quality/analysis reports
 │   │   ├── 3_quality_analysis.Rmd
 │   │   ├── 4_summary_stats.Rmd
 │   │   ├── 5_cvr_key_concordance.Rmd
 │   │   ├── 6_firm_employment_quality.Rmd
-│   │   └── 7_tender_amounts_eu.Rmd
+│   │   ├── 6a_estudy_control.Rmd
+│   │   ├── 7_tender_amounts_eu.Rmd
+│   │   ├── 8_notice_date_gaps.Rmd
+│   │   ├── 9_reconcile_processed_data.Rmd
+│   │   ├── 10_twfe_estudy_cvr_method.Rmd
+│   │   └── find_control_firms.R
 │   └── scraping/                        # optional web/API pulls (run after matching)
 │       ├── 1_build_cvr_employment_history.R
-│       └── 2_extract_ted_notices.R
+│       ├── 1_2a_fetch_notices.R
+│       ├── 1_2b_build_notice_lineage.R
+│       ├── 1_2c_extract_notice_dates.R
+│       ├── 1_2d_build_field_dictionary.R
+│       ├── 1_2e_build_date_panel.R
+│       ├── 2_extract_ted_notices.R
+│       └── notice_lineage_utils.R
 ├── docs/
 │   ├── cleaning_flags.md
+│   ├── functions_manual.md
 │   └── 3_quality_analysis.html
+├── tests/
+│   └── test_kfst_winner_datasets.R
 ├── data/
 │   ├── raw/
 │   ├── cvr_matching_data/
@@ -73,22 +91,42 @@ repository source code.
 ## What each script does
 
 The workflow is staged. Scripts beginning with `1_` clean inputs and prepare
-lookup keys. Scripts beginning with `2_` perform name matching. The quality
-report is generated separately.
+lookup keys; scripts beginning with `2_` perform name matching and build the
+winner datasets. KFST winners are consortium-expanded (one row per member), and
+both sources ship a "robustness stack" of winner-CVR variants (see
+[Main outputs](#main-outputs)). Analysis notebooks and the quality report are
+generated separately (listed below the pipeline table).
 
 | Script | Purpose | Main outputs |
 |---|---|---|
 | [code/functions.R](code/functions.R) | Shared helper functions for CVR extraction, CVR formatting, name preparation, name partitioning, and matching support. | No direct output. |
 | [code/processing/0_build_cvr_lookup.R](code/processing/0_build_cvr_lookup.R) | Optional script for users with Virk system-to-system API access. Builds CVR official-name and alternative-name lookup CSVs, or runs a small API timing sample. | Timestamped `cvr_names_virk_*.csv` and `cvr_binavne_virk_*.csv`, or sample CSVs. |
-| [code/processing/1_1_process_kfst.R](code/processing/1_1_process_kfst.R) | Cleans KFST winner and buyer data. Splits multi-winner and multi-buyer rows where possible, standardises winner CVRs, creates matching-ready name fields, and saves clean KFST objects. | `clean_winner_data_kfst.rds`, `clean_buyer_data_kfst.rds`. |
+| [code/processing/1_1_process_kfst.R](code/processing/1_1_process_kfst.R) | Cleans KFST winner and buyer data with a **consortium-aware tiered split**: `;` separates winners and `,` separates consortium members, so each member becomes its own row tagged with `semi_tier`, `is_consortium`, and `consortium_number`. Standardises winner CVRs (all-Danish country tokens are normalised to `"DK"`), creates matching-ready name fields, and saves clean KFST objects. | `clean_winner_data_kfst.rds`, `clean_buyer_data_kfst.rds`. |
 | [code/processing/1_2_process_open_tender.R](code/processing/1_2_process_open_tender.R) | Reads all annual OpenTender CSVs present in `data/raw/OpenTender/`, checks column-name concordance before binding, keeps source-file and source-row provenance, derives tender/lot amount and framework-duration variables, cleans winner and buyer CVR fields, removes non-CVR tokens from multi-CVR buyer rows, fills some missing CVRs when the same firm name appears elsewhere with one valid CVR, prepares matching-ready names, and saves clean OpenTender objects with the original tender fields attached. | `clean_winner_data_ot.rds`, `clean_buyer_data_ot.rds`. |
+| [code/processing/1_2b_recover_ted_winners.R](code/processing/1_2b_recover_ted_winners.R) | Optional/manual. Folds TED-recovered winners (from the notice-lineage pull under `code/scraping/`) back into the OpenTender winner table. Run only when the TED notice data has been built. | updated OpenTender winner data. |
 | [code/processing/1_3_process_keys.R](code/processing/1_3_process_keys.R) | Cleans the CVR register name keys used for later matching. It prepares both official names and alternative names. | `clean_cvr_name_key.rds`, `clean_cvr_biname_key.rds`. |
-| [code/processing/2_1_match_kfst.R](code/processing/2_1_match_kfst.R) | Matches missing KFST winner CVRs against the prepared CVR-name keys. | `clean_winner_data_kfst_name_matched.rds`, `manual_name_review_kfst.rds`. |
+| [code/processing/2_1_match_kfst.R](code/processing/2_1_match_kfst.R) | Matches KFST winner names to CVRs against the prepared CVR-name keys (tier-3b consortium members are paired to the lot's own listed field CVRs first). Writes the **consortium-expanded** canonical winner table with the CVR-name **quality columns** and the provenance flag `flag_cvr_recovered_from_invalid`. | `clean_winner_data_kfst_name_matched.rds`, `manual_name_review_kfst.rds`. |
+| [code/processing/2_1b_build_kfst_winner_datasets.R](code/processing/2_1b_build_kfst_winner_datasets.R) | Builds the KFST winner **robustness stack** — `base` / `extraction` / `name_only` variants in one table (a `dataset` factor). Not consumed downstream; for robustness comparison. | `kfst_winner_datasets_stacked.rds`. |
 | [code/processing/2_2_match_kfst_buyers.R](code/processing/2_2_match_kfst_buyers.R) | Matches KFST buyer names to CVRs, since KFST buyer CVRs are not supplied in the raw source. | `clean_buyer_data_kfst_name_matched.rds`, `manual_buyer_name_review_kfst.rds`. |
-| [code/processing/2_3_match_opentender.R](code/processing/2_3_match_opentender.R) | Matches missing OpenTender winner CVRs and records ambiguous or fuzzy cases for review. Also writes winner-name partition diagnostics. | `clean_winner_data_ot_name_matched.rds`, `manual_name_review_ot.rds`, `winner_name_partition_diagnostics_ot.rds`. |
+| [code/processing/2_3_match_opentender.R](code/processing/2_3_match_opentender.R) | Matches missing OpenTender winner CVRs, records ambiguous/fuzzy cases for review, and writes winner-name partition diagnostics. Also **scores CVR-name quality inline** — the same quality columns + `flag_cvr_recovered_from_invalid` as KFST `2_1` (this scoring used to be a separate step). | `clean_winner_data_ot_name_matched.rds`, `manual_name_review_ot.rds`, `winner_name_partition_diagnostics_ot.rds`. |
 | [code/processing/2_4_match_opentender_buyers.R](code/processing/2_4_match_opentender_buyers.R) | Matches missing OpenTender buyer CVRs and records ambiguous or fuzzy cases for review. Also writes buyer-name partition diagnostics. | `clean_buyer_data_ot_name_matched.rds`, `manual_buyer_name_review_ot.rds`, `buyer_name_partition_diagnostics_ot.rds`. |
 | [code/processing/2_5_augment_matched_variables.R](code/processing/2_5_augment_matched_variables.R) | Maintenance utility for additive tender/lot-level updates. Re-attaches newly created variables from the clean datasets onto the existing `*_name_matched.rds` files without re-running the slow name-matching scripts. Use only when the cleaning changes are add-only and do not alter names, CVRs, or row expansion. | refreshed `*_name_matched.rds` files in place. |
-| [code/analysis/3_quality_analysis.Rmd](code/analysis/3_quality_analysis.Rmd) | Builds the match-quality and data-quality report from the cleaned and matched outputs. | `docs/3_quality_analysis.html`. |
+| [code/processing/2_7_build_ot_winner_datasets.R](code/processing/2_7_build_ot_winner_datasets.R) | Builds the OpenTender winner **robustness stack** — `base` / `extraction` / `name_only` variants (a `dataset` factor), mirroring KFST `2_1b`. Not consumed downstream. | `ot_winner_datasets_stacked.rds`. |
+
+The [code/analysis/](code/analysis) notebooks and helpers run **manually, after matching**:
+
+| Notebook / script | Purpose |
+|---|---|
+| [3_quality_analysis.Rmd](code/analysis/3_quality_analysis.Rmd) | Match-quality and data-quality report → `docs/3_quality_analysis.html`. |
+| [4_summary_stats.Rmd](code/analysis/4_summary_stats.Rmd) | Summary statistics for the matched winner/buyer datasets. |
+| [5_cvr_key_concordance.Rmd](code/analysis/5_cvr_key_concordance.Rmd) | Concordance checks on the CVR-name keys. |
+| [6_firm_employment_quality.Rmd](code/analysis/6_firm_employment_quality.Rmd) | Quality of the pulled Virk firm-employment data. |
+| [6a_estudy_control.Rmd](code/analysis/6a_estudy_control.Rmd) | Control-matched firm-employment event studies. |
+| [7_tender_amounts_eu.Rmd](code/analysis/7_tender_amounts_eu.Rmd) | Tender/lot-amount and EUR-conversion checks. |
+| [8_notice_date_gaps.Rmd](code/analysis/8_notice_date_gaps.Rmd) | Coverage and gaps in the TED notice dates. |
+| [9_reconcile_processed_data.Rmd](code/analysis/9_reconcile_processed_data.Rmd) | Reconcile the KFST vs OpenTender processed data. |
+| [10_twfe_estudy_cvr_method.Rmd](code/analysis/10_twfe_estudy_cvr_method.Rmd) | TWFE event study testing whether the CVR-resolution method (matched / extraction / old) changes the firm-employment estimates. |
+| [find_control_firms.R](code/analysis/find_control_firms.R) | Builds the matched control group (one control per winner-event) for the event study. |
 
 The [code/scraping/](code/scraping) folder holds optional web/API data pulls
 that run **after** matching, because they consume the matched datasets. They
@@ -96,7 +134,13 @@ need network access and are off by default:
 
 | Script | Purpose | Main outputs |
 |---|---|---|
-| [code/scraping/1_build_cvr_employment_history.R](code/scraping/1_build_cvr_employment_history.R) | Pulls annual/quarterly/monthly employment history from the Virk CVR API for every matched winner/buyer CVR (requires Virk credentials). Feeds `6_firm_employment_quality.Rmd`. | `data/clean/cvr_employment_history_virk.csv` (+ `_status.csv`). |
+| [code/scraping/1_build_cvr_employment_history.R](code/scraping/1_build_cvr_employment_history.R) | Pulls annual/quarterly/monthly employment history from the Virk CVR API for the winner/buyer CVRs across all winner variants (matched + extraction/name_only + prior-production sets). Resumable and tolerant of missing optional inputs (requires Virk credentials). Feeds `6_firm_employment_quality.Rmd`. | `data/clean/cvr_employment_history_virk.csv` (+ `_status.csv`). |
+| [code/scraping/1_2a_fetch_notices.R](code/scraping/1_2a_fetch_notices.R) | TED notice lineage, stage 1: fetches award/competition/planning notice XML in dependency order (requires internet; cached). | cached TED notice XML. |
+| [code/scraping/1_2b_build_notice_lineage.R](code/scraping/1_2b_build_notice_lineage.R) | TED notice lineage, stage 2: assembles the notice-links lineage from the cached XML (parsing only, no network). | `notice_links` lineage table. |
+| [code/scraping/1_2c_extract_notice_dates.R](code/scraping/1_2c_extract_notice_dates.R) | Extracts every date from every notice in the lineage, tied back to tender/lot. | extracted notice dates. |
+| [code/scraping/1_2d_build_field_dictionary.R](code/scraping/1_2d_build_field_dictionary.R) | Builds a TED field dictionary (XML element → plain-English) from the EU schema label files and annotates the extracted dates. | annotated dates + field dictionary. |
+| [code/scraping/1_2e_build_date_panel.R](code/scraping/1_2e_build_date_panel.R) | Builds the OpenTender notice-date panel from the extracted/annotated dates. | OpenTender date panel. |
+| [code/scraping/notice_lineage_utils.R](code/scraping/notice_lineage_utils.R) | Shared helpers for the TED notice-lineage pair (`1_2a`/`1_2b`). | No direct output. |
 | [code/scraping/2_extract_ted_notices.R](code/scraping/2_extract_ted_notices.R) | Fetches TED notice XML for OpenTender award notices and flags whether non-winning tenderers are listed (requires internet). | `data/intermediates/ted/` (cached XML + per-notice indicators). |
 
 Enable them in a run with `BUILD_EMPLOYMENT_HISTORY=true` and/or
@@ -255,9 +299,11 @@ code/processing/1_2_process_open_tender.R
 code/processing/0_build_cvr_lookup.R  # only if BUILD_CVR_LOOKUP=true
 code/processing/1_3_process_keys.R
 code/processing/2_1_match_kfst.R
+code/processing/2_1b_build_kfst_winner_datasets.R
 code/processing/2_2_match_kfst_buyers.R
 code/processing/2_3_match_opentender.R
 code/processing/2_4_match_opentender_buyers.R
+code/processing/2_7_build_ot_winner_datasets.R
 code/scraping/1_build_cvr_employment_history.R  # only if BUILD_EMPLOYMENT_HISTORY=true
 code/scraping/2_extract_ted_notices.R           # only if EXTRACT_TED_NOTICES=true
 ```
@@ -273,7 +319,7 @@ Outputs are written to `data/clean/` (and, for the optional TED pull,
 `data/intermediates/`).
 
 Expected run time depends on the machine. The figures below are from a full
-reference run (2026-07-29, **1h 41m** total); they scale with the hardware but the
+reference run (2026-08-25, **~2h 15m** total); they scale with the hardware but the
 shape holds — name matching dominates, and buyer matching most of all. (The
 matching scripts fuzzy-match distinct names once and join the results back, which
 roughly halved the pipeline from an earlier ~3h 32m.)
@@ -285,14 +331,15 @@ R 4.5.1.
 |---|---|---|
 | Input checks | built into `run_replication.sh` | seconds |
 | Environment restore, if `RESTORE_RENV=true` | `renv::restore()` | depends on whether packages are already installed |
-| Cleaning only | `code/processing/1_1_process_kfst.R`, `code/processing/1_2_process_open_tender.R` | ~2 minutes (22s + 1m 34s) |
-| CVR-name-key preparation | `code/processing/1_3_process_keys.R` | ~3.5 minutes (3m 38s) |
-| Winner matching | `code/processing/2_1_match_kfst.R`, `code/processing/2_3_match_opentender.R` | ~17 minutes (1m 23s + 16m; mostly OpenTender) |
-| Buyer matching | `code/processing/2_2_match_kfst_buyers.R`, `code/processing/2_4_match_opentender_buyers.R` | ~1h 18m — still the main bottleneck (KFST 23m 31s, OpenTender 54m 54s) |
+| Cleaning only | `code/processing/1_1_process_kfst.R`, `code/processing/1_2_process_open_tender.R` | ~1.5 minutes |
+| CVR-name-key preparation | `code/processing/1_3_process_keys.R` | ~4 minutes |
+| Winner matching | `code/processing/2_1_match_kfst.R`, `code/processing/2_3_match_opentender.R` | ~22 minutes (KFST ~5m; OpenTender ~16m, now incl. inline quality scoring) |
+| Winner robustness stacks | `code/processing/2_1b_build_kfst_winner_datasets.R`, `code/processing/2_7_build_ot_winner_datasets.R` | ~45 minutes (the OpenTender name-only pass in `2_7` dominates) |
+| Buyer matching | `code/processing/2_2_match_kfst_buyers.R`, `code/processing/2_4_match_opentender_buyers.R` | ~57 minutes (KFST ~24m, OpenTender ~33m) |
 
 For a quick check that the cleaning scripts still run, use `RUN_MATCHING=false`.
-For a full matched dataset, plan for roughly **1h 45m**, most of it in the
-buyer-matching scripts (the OpenTender buyer match alone is ~55m).
+For a full matched dataset, plan for roughly **~2h 15m**, split mainly between
+the OpenTender name-only robustness pass in `2_7` and the buyer-matching scripts.
 
 ### 5. Run cleaning only
 
@@ -373,6 +420,29 @@ clean_buyer_data_kfst_name_matched.rds
 clean_winner_data_ot_name_matched.rds
 clean_buyer_data_ot_name_matched.rds
 ```
+
+The KFST winner table (`clean_winner_data_kfst_name_matched.rds`) is now
+**consortium-expanded** — one row per consortium member, tagged `semi_tier`,
+`is_consortium`, and `consortium_number`. Every matched winner row (KFST and
+OpenTender) also carries CVR-name **quality columns** — `cvr_name_match_quality`
+(plus `_basic` / `_nospaces` / `_broad` variants), `cvr_name_match_quality_name`
+(the registered name that scored best), and `cvr_name_is_substring` — plus a
+provenance flag `flag_cvr_recovered_from_invalid` (the final CVR was recovered
+because the listed candidate was not a valid registered CVR). See
+[docs/cleaning_flags.md](docs/cleaning_flags.md) for full definitions.
+
+Robustness stacks (one row-stacked file per source, **not** consumed downstream;
+they exist for robustness comparison):
+
+```text
+kfst_winner_datasets_stacked.rds
+ot_winner_datasets_stacked.rds
+```
+
+Each carries a `dataset` factor with three winner-CVR variants: `base` (the
+canonical matched table), `extraction` (every standalone 8-digit CVR in the raw
+field, no matching), and `name_only` (winner names matched with the field CVR
+ignored).
 
 Manual-review files:
 
