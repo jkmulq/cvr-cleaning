@@ -33,13 +33,26 @@ suppressWarnings(suppressPackageStartupMessages({
 
 source(file.path(PROJECT_DIR, "code", "functions.R"))
 
-employment_pull_schema <- "spliced_production_units_v1"
+employment_pull_schema <- "spliced_production_units_v2_location"
 
 # -- Inputs: matched datasets to pull CVRs from -------------------------------
 
 matched_cvr_files <- list(
   kfst_winners = list(
     path = file.path(dirs$clean_data, "clean_winner_data_kfst_name_matched.rds"),
+    column = "winner_cvr_final"
+  ),
+  # Robustness-stack variants (base / extraction / name_only in one file): pulls the raw-extraction and
+  # name-only winner CVRs too, so the CVR-method employment comparison (10_twfe_estudy_cvr_method.Rmd)
+  # has employment for every variant, not just the matched production CVRs.
+  kfst_winner_variants = list(
+    path = file.path(dirs$clean_data, "kfst_winner_datasets_stacked.rds"),
+    column = "winner_cvr_final"
+  ),
+  # Previous (pre-consortium) production winners, for the old-vs-new employment comparison. This is a
+  # comparison artifact -- remove this entry once that comparison is retired.
+  kfst_winners_oldprod = list(
+    path = file.path(dirs$clean_data, "clean_winner_data_kfst_name_matched_OLDPROD.rds"),
     column = "winner_cvr_final"
   ),
   kfst_buyers = list(
@@ -50,6 +63,11 @@ matched_cvr_files <- list(
     path = file.path(dirs$clean_data, "clean_winner_data_ot_name_matched.rds"),
     column = "winner_cvr_final"
   ),
+  # Uncomment to also top up the OpenTender extraction / name_only variant CVRs:
+  # opentender_winner_variants = list(
+  #   path = file.path(dirs$clean_data, "ot_winner_datasets_stacked.rds"),
+  #   column = "winner_cvr_final"
+  # ),
   opentender_buyers = list(
     path = file.path(dirs$clean_data, "clean_buyer_data_ot_name_matched.rds"),
     column = "buyer_cvr_final"
@@ -70,6 +88,7 @@ if (!nzchar(output_file)) {
   output_file <- file.path(dirs$clean_data, "cvr_employment_history_virk.csv")
 }
 status_file <- sub("[.]csv$", "_status.csv", output_file)
+name_output_file <- sub("[.]csv$", "_names.csv", output_file)
 
 if (is.na(batch_size) || batch_size < 1L || batch_size > 3000L) {
   stop("CVR_EMPLOYMENT_BATCH_SIZE must be between 1 and 3000.", call. = FALSE)
@@ -141,6 +160,16 @@ empty_employment_table <- function() {
     secondary_industry_2_text = character(),
     secondary_industry_3_code = character(),
     secondary_industry_3_text = character(),
+    # Location as of the period (time-varying; from historical beliggenhedsadresse)
+    kommune_code = character(),
+    kommune_name = character(),
+    postnummer = character(),
+    city = character(),
+    # Current headquarters location (static; from nyesteBeliggenhedsadresse)
+    hq_kommune_code = character(),
+    hq_kommune_name = character(),
+    hq_postnummer = character(),
+    hq_city = character(),
     capital_amount = numeric(),
     capital_currency = character(),
     derived_from_monthly = logical(),
@@ -168,6 +197,20 @@ empty_production_unit_employment_table <- function() {
     updated_at_new = character(),
     period_start = character(),
     period_end = character()
+  )
+}
+
+# Separate "key" of a firm's historical names: one row per (name, validity period).
+# name_type = "primary" (Vrvirksomhed.navne) or "secondary" (binavne). is_current
+# TRUE where the name has no end date (gyldigTil is null), i.e. the current name.
+empty_name_history_table <- function() {
+  data.table(
+    cvr = character(),
+    name_type = character(),
+    firm_name = character(),
+    gyldig_fra = character(),
+    gyldig_til = character(),
+    is_current = logical()
   )
 }
 
@@ -274,6 +317,31 @@ record_at_date <- function(records, date) {
   )
   starts[is.na(starts)] <- "0001-01-01"
   matching_records[[which(starts == max(starts))[1L]]]
+}
+
+# Extract the location fields we keep from a CVR address object. Works for both
+# the current headquarters address (virksomhedMetadata$nyesteBeliggenhedsadresse,
+# a single object) and a single period record from the historical
+# beliggenhedsadresse array. `kommune` is nested (kommuneKode / kommuneNavn).
+address_parts <- function(addr) {
+  if (is.null(addr) || length(addr) == 0) {
+    return(list(
+      kommune_code = NA_character_, kommune_name = NA_character_,
+      postnummer   = NA_character_, city         = NA_character_
+    ))
+  }
+
+  city <- virk_scalar(addr$postdistrikt)
+  if (is.na(city) || !nzchar(city)) {
+    city <- virk_scalar(addr$bynavn)
+  }
+
+  list(
+    kommune_code = as.character(virk_scalar(addr$kommune$kommuneKode)),
+    kommune_name = virk_scalar(addr$kommune$kommuneNavn),
+    postnummer   = as.character(virk_scalar(addr$postnummer)),
+    city         = city
+  )
 }
 
 employment_period_bounds <- function(record, frequency) {
@@ -516,10 +584,16 @@ company_context <- function(firm) {
     registration_date <- as.character(lifecycle_bounds$lifecycle_start)
   }
 
+  hq_address <- address_parts(firm$virksomhedMetadata$nyesteBeliggenhedsadresse)
+
   list(
     cvr = format_virk_cvr(firm$cvrNummer),
     firm_name = virk_scalar(firm$virksomhedMetadata$nyesteNavn$navn),
     registration_date = registration_date,
+    hq_kommune_code = hq_address$kommune_code,
+    hq_kommune_name = hq_address$kommune_name,
+    hq_postnummer = hq_address$postnummer,
+    hq_city = hq_address$city,
     lifecycle_periods = lifecycle_periods,
     lifecycle_start = lifecycle_bounds$lifecycle_start,
     lifecycle_end = lifecycle_bounds$lifecycle_end,
@@ -538,6 +612,10 @@ empty_company_context <- function(cvr) {
     cvr = cvr,
     firm_name = NA_character_,
     registration_date = NA_character_,
+    hq_kommune_code = NA_character_,
+    hq_kommune_name = NA_character_,
+    hq_postnummer = NA_character_,
+    hq_city = NA_character_,
     lifecycle_periods = lifecycle_periods,
     lifecycle_start = as.IDate(NA_character_),
     lifecycle_end = as.IDate(NA_character_),
@@ -570,6 +648,10 @@ set_context_fields <- function(rows, firm, context) {
 
     set(rows, i, "firm_name", context$firm_name)
     set(rows, i, "registration_date", context$registration_date)
+    set(rows, i, "hq_kommune_code", context$hq_kommune_code)
+    set(rows, i, "hq_kommune_name", context$hq_kommune_name)
+    set(rows, i, "hq_postnummer", context$hq_postnummer)
+    set(rows, i, "hq_city", context$hq_city)
     set(rows, i, "lifecycle_start", as.character(context$lifecycle_start))
     set(rows, i, "lifecycle_end", as.character(context$lifecycle_end))
     set(rows, i, "exists_at_period_start", firm_exists_on(context$lifecycle_periods, period_start))
@@ -600,6 +682,13 @@ set_context_fields <- function(rows, firm, context) {
       set(rows, i, "secondary_industry_2_text", virk_scalar(secondary_2$branchetekst))
       set(rows, i, "secondary_industry_3_code", virk_scalar(secondary_3$branchekode))
       set(rows, i, "secondary_industry_3_text", virk_scalar(secondary_3$branchetekst))
+
+      address <- record_at_date(firm$beliggenhedsadresse, period_end)
+      ap <- address_parts(address)
+      set(rows, i, "kommune_code", ap$kommune_code)
+      set(rows, i, "kommune_name", ap$kommune_name)
+      set(rows, i, "postnummer", ap$postnummer)
+      set(rows, i, "city", ap$city)
     }
 
     capital_value <- attribute_value_at(context$capital_periods, period_end)
@@ -611,6 +700,56 @@ set_context_fields <- function(rows, firm, context) {
   }
 
   rows
+}
+
+# -- Name-history parsing ------------------------------------------------------
+
+# Flatten a firm's name arrays (navne = primary, binavne = secondary) into the
+# name-history key. Each element carries a validity period exactly like the other
+# CVR arrays (periode$gyldigFra / gyldigTil), so we reuse virk_date() and treat a
+# null gyldigTil as "still current".
+extract_name_history <- function(firm) {
+  cvr <- format_virk_cvr(firm$cvrNummer)
+
+  parse_names <- function(records, name_type) {
+    if (is.null(records) || length(records) == 0) {
+      return(empty_name_history_table())
+    }
+
+    rbindlist(
+      lapply(records, function(record) {
+        gyldig_til <- virk_date(record$periode$gyldigTil)
+        data.table(
+          cvr = cvr,
+          name_type = name_type,
+          firm_name = virk_scalar(record$navn),
+          gyldig_fra = as.character(virk_date(record$periode$gyldigFra)),
+          gyldig_til = as.character(gyldig_til),
+          is_current = is.na(gyldig_til)
+        )
+      }),
+      use.names = TRUE,
+      fill = TRUE
+    )
+  }
+
+  out <- rbindlist(
+    list(
+      parse_names(firm$navne, "primary"),
+      parse_names(firm$binavne, "secondary")
+    ),
+    use.names = TRUE,
+    fill = TRUE
+  )
+
+  # Drop blank names; keep genuine history (a name can recur across periods).
+  out <- out[!is.na(firm_name) & nzchar(firm_name)]
+  if (nrow(out) == 0) {
+    return(empty_name_history_table())
+  }
+
+  setcolorder(out, names(empty_name_history_table()))
+  out[]
 }
 
 # -- Employment parsing --------------------------------------------------------
@@ -682,6 +821,14 @@ extract_historical_employment_rows <- function(firm, records, frequency) {
         secondary_industry_2_text = NA_character_,
         secondary_industry_3_code = NA_character_,
         secondary_industry_3_text = NA_character_,
+        kommune_code = NA_character_,
+        kommune_name = NA_character_,
+        postnummer = NA_character_,
+        city = NA_character_,
+        hq_kommune_code = NA_character_,
+        hq_kommune_name = NA_character_,
+        hq_postnummer = NA_character_,
+        hq_city = NA_character_,
         capital_amount = NA_real_,
         capital_currency = NA_character_,
         derived_from_monthly = FALSE,
@@ -867,6 +1014,14 @@ build_new_monthly_rows <- function(new_monthly, firms_by_cvr) {
           secondary_industry_2_text = NA_character_,
           secondary_industry_3_code = NA_character_,
           secondary_industry_3_text = NA_character_,
+          kommune_code = NA_character_,
+          kommune_name = NA_character_,
+          postnummer = NA_character_,
+          city = NA_character_,
+          hq_kommune_code = NA_character_,
+          hq_kommune_name = NA_character_,
+          hq_postnummer = NA_character_,
+          hq_city = NA_character_,
           capital_amount = NA_real_,
           capital_currency = NA_character_,
           derived_from_monthly = FALSE,
@@ -1065,6 +1220,14 @@ make_derived_rows <- function(monthly_rows, firms_by_cvr, frequency) {
     secondary_industry_2_text = NA_character_,
     secondary_industry_3_code = NA_character_,
     secondary_industry_3_text = NA_character_,
+    kommune_code = NA_character_,
+    kommune_name = NA_character_,
+    postnummer = NA_character_,
+    city = NA_character_,
+    hq_kommune_code = NA_character_,
+    hq_kommune_name = NA_character_,
+    hq_postnummer = NA_character_,
+    hq_city = NA_character_,
     capital_amount = NA_real_,
     capital_currency = NA_character_
   )]
@@ -1140,7 +1303,8 @@ add_spliced_frequencies <- function(data) {
 read_matched_cvrs <- function(file_specs) {
   cvrs <- unlist(lapply(file_specs, function(spec) {
     if (!file.exists(spec$path)) {
-      stop("Missing matched dataset: ", spec$path, call. = FALSE)
+      warning("Skipping missing matched dataset (optional input): ", spec$path, call. = FALSE)
+      return(NULL)
     }
 
     data <- readRDS(spec$path)
@@ -1188,6 +1352,22 @@ append_status_chunk <- function(data, path) {
   invisible(NULL)
 }
 
+append_name_chunk <- function(data, path) {
+  if (nrow(data) == 0) {
+    return(invisible(NULL))
+  }
+
+  fwrite(
+    data,
+    path,
+    append = file.exists(path),
+    col.names = !file.exists(path),
+    na = ""
+  )
+
+  invisible(NULL)
+}
+
 already_processed_cvrs <- function(path) {
   if (!file.exists(path)) {
     return(character())
@@ -1220,6 +1400,24 @@ validate_resume_state <- function(output_path, status_path, overwrite) {
     return(invisible(NULL))
   }
 
+  # A column-schema change (e.g. the new location columns) makes appending onto an
+  # existing output misalign; force a rebuild rather than silently corrupt it.
+  if (file.exists(output_path)) {
+    header <- names(fread(output_path, nrows = 0))
+    missing <- setdiff(names(empty_employment_table()), header)
+    if (length(missing) > 0) {
+      stop(
+        paste(
+          "Existing output was written with a different column schema.",
+          paste0("Missing columns: ", paste(missing, collapse = ", "), "."),
+          "Set CVR_EMPLOYMENT_OVERWRITE=true to rebuild, or write to a new CVR_EMPLOYMENT_OUTPUT_FILE.",
+          sep = "\n"
+        ),
+        call. = FALSE
+      )
+    }
+  }
+
   if (file.exists(output_path) && !file.exists(status_path)) {
     stop(
       paste(
@@ -1241,6 +1439,8 @@ company_source_fields <- function() {
   c(
     "Vrvirksomhed.cvrNummer",
     "Vrvirksomhed.virksomhedMetadata.nyesteNavn",
+    "Vrvirksomhed.navne",
+    "Vrvirksomhed.binavne",
     "Vrvirksomhed.stiftelsesDato",
     "Vrvirksomhed.livsforloeb",
     "Vrvirksomhed.status",
@@ -1253,6 +1453,8 @@ company_source_fields <- function() {
     "Vrvirksomhed.bibranche1",
     "Vrvirksomhed.bibranche2",
     "Vrvirksomhed.bibranche3",
+    "Vrvirksomhed.beliggenhedsadresse",
+    "Vrvirksomhed.virksomhedMetadata.nyesteBeliggenhedsadresse",
     "Vrvirksomhed.attributter"
   )
 }
@@ -1416,6 +1618,9 @@ if (file.exists(output_file) && overwrite) {
 if (file.exists(status_file) && overwrite) {
   file.remove(status_file)
 }
+if (file.exists(name_output_file) && overwrite) {
+  file.remove(name_output_file)
+}
 
 validate_resume_state(output_file, status_file, overwrite)
 
@@ -1429,6 +1634,7 @@ cat("Batch size:", batch_size, "\n")
 cat("Production-unit scroll size:", scroll_size, "\n")
 cat("Output file:", output_file, "\n")
 cat("Status file:", status_file, "\n")
+cat("Name-history file:", name_output_file, "\n")
 
 if (length(cvrs_to_pull) == 0) {
   cat("No CVRs left to pull.\n")
@@ -1500,6 +1706,14 @@ timed <- system.time({
     setorder(employment_data, cvr, frequency, year, quarter, month)
 
     append_employment_chunk(employment_data, output_file)
+
+    # Separate name-history key (from the same company documents already fetched).
+    name_history_data <- if (length(firms) == 0) {
+      empty_name_history_table()
+    } else {
+      rbindlist(lapply(firms, extract_name_history), use.names = TRUE, fill = TRUE)
+    }
+    append_name_chunk(name_history_data, name_output_file)
 
     rows_by_cvr <- employment_data[
       ,
