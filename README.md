@@ -73,19 +73,15 @@ cvr-cleaning/
 │   └── 3_quality_analysis.html
 ├── tests/
 │   └── test_kfst_winner_datasets.R
-├── data/
-│   ├── raw/
-│   ├── cvr_matching_data/
-│   └── clean/
-├── output/
-│   └── docs/
 ├── renv/
 └── renv.lock
 ```
 
-The `data/` and `output/` folders are local working folders. They are expected
-to contain inputs and generated outputs, and should not be treated as complete
-repository source code.
+Input data and generated outputs are **not** committed to the repository. By
+default they live in git-ignored local `data/` and `output/` folders; the data
+folder can be redirected to a shared location with `CVR_DATA_DIR` (see
+[Configuration](#configuration)). The datasets are not publicly distributed — see
+[Required local inputs](#required-local-inputs) to request access.
 
 ## What each script does
 
@@ -148,6 +144,10 @@ and can also be run on their own with `Rscript` once the matched datasets exist.
 
 ## Required local inputs
 
+The underlying datasets are not publicly distributed. To request the data — or
+access to the shared Box data folder — contact the maintainer, Jack Mulqueeney
+(jmulqueeney@uchicago.edu).
+
 The repository expects the following local input folders:
 
 ```text
@@ -186,7 +186,8 @@ If you run an individual R script or knit a report manually, keep the
 or clone the repo intact). `config.R` falls back to the working directory, with a
 warning, only if the marker cannot be found.
 
-The derived paths in `config.R` are:
+The derived paths in `config.R` (under the data root — `<project>/data` by
+default, or `$CVR_DATA_DIR`) are:
 
 ```text
 dirs$raw_data      -> data/raw/
