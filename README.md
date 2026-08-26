@@ -34,7 +34,6 @@ cvr-cleaning/
 ├── run_replication.sh
 ├── code/
 │   ├── functions.R
-│   ├── view_data.R                       # quick RDS lister / CSV exporter for eyeballing outputs
 │   ├── processing/                      # data cleaning + CVR matching pipeline
 │   │   ├── 0_build_cvr_lookup.R
 │   │   ├── 1_1_process_kfst.R
