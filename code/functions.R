@@ -1,5 +1,16 @@
 ## Helper functions for the CVR data cleaning process.
 
+# Derive the TED notice id (NNNNNN-YYYY) from a TED award-notice URL, else NA. This
+# is the shared join key that links the KFST, OpenTender and TED-extract datasets
+# (all three carry the TED award URL). Vectorised.
+derive_ted_notice_id <- function(url) {
+  vapply(url, function(u) {
+    if (is.na(u) || u == "") return(NA_character_)
+    m <- regmatches(u, regexpr("[0-9]{6,8}-[0-9]{4}", u, perl = TRUE))
+    if (length(m) == 0L) NA_character_ else m[[1]]
+  }, character(1), USE.NAMES = FALSE)
+}
+
 extract_multiple_cvr <- function(
     data,
     row_id,

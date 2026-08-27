@@ -295,8 +295,11 @@ tender_lot_data <- data %>%
     "annualised_tender_amount", "annualised_lot_amount",
     "n_lot_id"
   ))) %>%
-  arrange(tender_id, lot_id, lot_number) %>% 
-  distinct(tender_id, lot_id, lot_number, .keep_all = TRUE)
+  arrange(tender_id, lot_id, lot_number) %>%
+  distinct(tender_id, lot_id, lot_number, .keep_all = TRUE) %>%
+  # Shared TED notice id (tender-level) so KFST links to OpenTender + the TED extract.
+  # See derive_ted_notice_id() in functions.R. Flows to winner + buyer via the join.
+  mutate(ted_notice_id = derive_ted_notice_id(award_url))
 
 
 # 2 Winners 

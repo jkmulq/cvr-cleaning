@@ -317,6 +317,11 @@ data <- data %>%
     )
   )
 
+## TED notice id (tender-level join key linking OpenTender to KFST + the TED extract).
+## See derive_ted_notice_id() in functions.R.
+data <- data %>%
+  mutate(ted_notice_id = derive_ted_notice_id(tender_publications_lastContractAwardUrl))
+
 ## CPV code
 ## Tenders can list several CPV codes (comma-separated here); as a first pass
 ## keep the first listed code and map it to its EU CPV division (the broadest
