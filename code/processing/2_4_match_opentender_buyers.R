@@ -64,7 +64,7 @@ buyer_data[, buyer_name_in_data := buyer_name]
 
 # The CVR key contains Danish firms, so only rows marked DK are automatically
 remaining <- buyer_data[
-  flag_check_fuzzy_match & toupper(trimws(buyer_country)) == "DK"
+  flag_check_fuzzy_match & grepl("DK", toupper(trimws(buyer_country)))
 ]
 
 cat("Number observations to fuzzy match:", nrow(remaining), "\n")
@@ -995,7 +995,7 @@ buyer_data[, name_match_step_code := fcase(
   !is.na(buyer_cvr_clean) & buyer_cvr_clean != "",
   "source: existing CVR, unclassified",
   flag_check_fuzzy_match &
-    toupper(trimws(buyer_country)) == "DK",
+    grepl("DK", toupper(trimws(buyer_country))),
   "matching candidate: no match found",
   flag_check_fuzzy_match,
   "not a matching candidate: not marked as Danish",
@@ -1026,7 +1026,7 @@ buyer_data[, buyer_cvr_final := as.character(buyer_cvr_clean)]
 
 # Fill missing CVRs from name matching
 buyer_data[flag_check_fuzzy_match & # Candidates for matching
-              toupper(trimws(buyer_country)) == "DK" & # Danish firm 
+              grepl("DK", toupper(trimws(buyer_country))) & # Danish firm 
               !flag_potential_multiple_names & # Not a potential multiple-name row
               !is.na(buyer_cvr_name_match), # Has a matched CVR number
   buyer_cvr_final := buyer_cvr_name_match]
@@ -1048,7 +1048,7 @@ buyer_data[, name_match_status := fcase(
   "matched - consortium language removed",
   flag_name_match_found,
   "matched",
-  is.na(buyer_country) | toupper(trimws(buyer_country)) != "DK",
+  is.na(buyer_country) | !grepl("DK", toupper(trimws(buyer_country))),
   "manual review - not marked as Danish",
   default = "manual review - no automatic match"
 )]

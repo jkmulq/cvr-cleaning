@@ -68,7 +68,7 @@ winner_data[, winner_name_in_data := winner_name]
 # The CVR key contains Danish firms, so only rows marked DK are automatically
 remaining <- winner_data[
   flag_check_fuzzy_match &
-    toupper(trimws(winner_country)) == "DK"
+    grepl("DK", toupper(trimws(winner_country)))
 ]
 
 cat("Number observations to fuzzy match:", nrow(remaining), "\n")
@@ -990,11 +990,22 @@ winner_data[, name_match_step_code := fcase(
   !is.na(winner_cvr_clean) & winner_cvr_clean != "",
   "source: existing CVR, unclassified",
   flag_check_fuzzy_match &
-    toupper(trimws(winner_country)) == "DK",
+    grepl("DK", toupper(trimws(winner_country))),
   "matching candidate: no match found",
   flag_check_fuzzy_match,
   "not a matching candidate: not marked as Danish",
   default = "not a matching candidate: no CVR name"
+)]
+
+# Reliability of a matching candidate's Danish gate. The matcher only searches the Danish registry, so a
+# row is sent to matching when its country CONTAINS "DK" (see `remaining` above). "exact DK" = the country
+# is exactly DK (most reliable). "contains DK" = a mixed/multi-country value like "DK,IE" -- these may be
+# foreign firms admitted to matching only because the string contains DK, so their matches are less
+# reliable. NA for rows that are not matching candidates.
+winner_data[, matching_candidate_type := fcase(
+  flag_check_fuzzy_match & toupper(trimws(winner_country)) == "DK",         "exact DK",
+  flag_check_fuzzy_match & grepl("DK", toupper(trimws(winner_country))),    "contains DK",
+  default = NA_character_
 )]
 
 # Fuzzy matches and matches tied across several CVRs are retained but flagged.
@@ -1021,7 +1032,7 @@ winner_data[, winner_cvr_final := as.character(winner_cvr_clean)]
 
 # Fill missing CVRs from name matching
 winner_data[flag_check_fuzzy_match & # Candidates for matching
-              toupper(trimws(winner_country)) == "DK" & # Danish firm 
+              grepl("DK", toupper(trimws(winner_country))) & # Danish firm 
               !flag_potential_multiple_names & # Not a potential multiple-name row
               !is.na(winner_cvr_name_match), # Has a matched CVR number
   winner_cvr_final := winner_cvr_name_match]
@@ -1043,7 +1054,7 @@ winner_data[, name_match_status := fcase(
   "matched - consortium language removed",
   flag_name_match_found,
   "matched",
-  is.na(winner_country) | toupper(trimws(winner_country)) != "DK",
+  is.na(winner_country) | !grepl("DK", toupper(trimws(winner_country))),
   "manual review - not marked as Danish",
   default = "manual review - no automatic match"
 )]

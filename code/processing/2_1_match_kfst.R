@@ -160,7 +160,7 @@ winner_data[!is.na(field_paired_cvr), registry_score := field_paired_score]
 # The CVR key contains Danish firms, so only rows marked DK are automatically
 remaining <- winner_data[
   flag_check_fuzzy_match &
-    toupper(trimws(winner_country)) == "DK"
+    grepl("DK", toupper(trimws(winner_country)))
 ]
 
 cat("No. observations to fuzzy match:", nrow(remaining), "\n")
@@ -512,11 +512,22 @@ winner_data[, name_match_step_code := fcase(
   !is.na(winner_cvr_clean) & winner_cvr_clean != "",
   "CVR from the original winner field: existing CVR, other misc split",
   flag_check_fuzzy_match &
-    toupper(trimws(winner_country)) == "DK",
+    grepl("DK", toupper(trimws(winner_country))),
   "matching candidate: no match found",
   flag_check_fuzzy_match,
   "not a matching candidate: not marked as Danish",
   default = "not a matching candidate: no CVR name"
+)]
+
+# Reliability of a matching candidate's Danish gate. The matcher only searches the Danish registry, so a
+# row is sent to matching when its country CONTAINS "DK" (see `remaining` above). "exact DK" = the country
+# is exactly DK (most reliable). "contains DK" = a mixed/multi-country value like "DK,IE" -- these may be
+# foreign firms admitted to matching only because the string contains DK, so their matches are less
+# reliable. NA for rows that are not matching candidates.
+winner_data[, matching_candidate_type := fcase(
+  flag_check_fuzzy_match & toupper(trimws(winner_country)) == "DK",         "exact DK",
+  flag_check_fuzzy_match & grepl("DK", toupper(trimws(winner_country))),    "contains DK",
+  default = NA_character_
 )]
 
 # Fuzzy matches and matches tied across several CVRs are retained but flagged.
@@ -568,7 +579,7 @@ winner_data[, name_match_status := fcase(
   "manual review - fuzzy or ambiguous match",
   flag_name_match_found,
   "matched",
-  is.na(winner_country) | toupper(trimws(winner_country)) != "DK",
+  is.na(winner_country) | !grepl("DK", toupper(trimws(winner_country))),
   "manual review - not marked as Danish",
   default = "manual review - no automatic match"
 )]
