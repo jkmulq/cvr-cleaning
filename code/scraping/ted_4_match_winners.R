@@ -226,6 +226,15 @@ winner_data[, cvr_number_source := fcase(
   flag_check_fuzzy_match, "not a matching candidate: not marked as Danish",
   default = "not a matching candidate: no CVR name")]
 
+# Reliability of a matching candidate's Danish gate (as in 2_1/2_3). "exact DK" = country is exactly
+# DK/DNK (most reliable); "contains DK" = a mixed value merely containing DK; NA for non-candidates.
+# TED country is a single ISO code, so in practice only "exact DK" occurs here.
+winner_data[, matching_candidate_type := fcase(
+  flag_check_fuzzy_match & toupper(trimws(winner_country)) %chin% c("DK", "DNK"), "exact DK",
+  flag_check_fuzzy_match & grepl("DK", toupper(trimws(winner_country))),          "contains DK",
+  default = NA_character_
+)]
+
 # Flags (as in 2_3)
 winner_data[, flag_name_match_found := !is.na(winner_cvr_name_match)]
 winner_data[, flag_name_match_ambiguous := (flag_name_match_found & name_match_n_candidates > 1)]

@@ -205,6 +205,15 @@ buyer_data[, cvr_number_source := fcase(
   flag_check_fuzzy_match, "not a matching candidate: not marked as Danish",
   default = "not a matching candidate: no CVR name")]
 
+# Reliability of a matching candidate's Danish gate (as in the winner matchers). "exact DK" = country
+# is exactly DK/DNK; "contains DK" = a mixed value merely containing DK; NA for non-candidates. TED
+# country is a single ISO code, so in practice only "exact DK" occurs here.
+buyer_data[, matching_candidate_type := fcase(
+  flag_check_fuzzy_match & toupper(trimws(buyer_country)) %chin% c("DK", "DNK"), "exact DK",
+  flag_check_fuzzy_match & grepl("DK", toupper(trimws(buyer_country))),          "contains DK",
+  default = NA_character_
+)]
+
 buyer_data[, flag_name_match_found := !is.na(buyer_cvr_name_match)]
 buyer_data[, flag_name_match_ambiguous := (flag_name_match_found & name_match_n_candidates > 1)]
 buyer_data[, flag_review_name_match :=
@@ -260,6 +269,12 @@ cand_has_reg_prov <- vapply(regmatches(cand_prov, gregexpr("(?<![0-9])[0-9]{8}(?
                             function(v) any(v %chin% reg_cvrs_prov), logical(1))
 buyer_data[, flag_cvr_recovered_from_invalid :=
   cand_prov != "" & !cand_has_reg_prov & !is.na(buyer_cvr_final) & as.character(buyer_cvr_final) != ""]
+
+# Registry membership of the FINAL CVR: TRUE iff buyer_cvr_final is a CVR present in the registry
+# name key -- independent of HOW it was obtained. Distinct from valid_cvr (format check only) and
+# from flag_cvr_recovered_from_invalid (about the original candidate). NA / blank final CVRs are FALSE.
+buyer_data[, flag_cvr_final_in_registry :=
+  !is.na(buyer_cvr_final) & as.character(buyer_cvr_final) %chin% reg_cvrs_prov]
 
 manual_name_review <- buyer_data[flag_manual_name_review == TRUE,
   .(notice_id, lot_id, lot, buyer_name_in_data, buyer_name, buyer_name_match, buyer_firm_type,
