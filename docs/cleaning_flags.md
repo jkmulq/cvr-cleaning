@@ -84,19 +84,22 @@ These flags appear in all four final matched datasets:
 | `flag_review_name_match` | A found match should still be reviewed. | Usually means the match was fuzzy or ambiguous. In OpenTender it can also mean an unresolved potential multiple-name row. |
 | `flag_manual_name_review` | The row is included in the compact manual-review output. | Includes no-match rows, fuzzy matches, ambiguous matches, and unresolved OpenTender name partitions. |
 
-### Final-CVR registry membership (winner datasets)
+### Final-CVR registry membership (all matched datasets)
 
-`flag_cvr_final_in_registry` appears on the three matched **winner** datasets —
-KFST (`clean_winner_data_kfst_name_matched.rds`), OpenTender
-(`clean_winner_data_ot_name_matched.rds`), and the TED/XML build
-(`ted_winner_data_name_matched.rds`). It is `TRUE` when `winner_cvr_final` is a
-CVR that actually exists in the CVR registry name key, and `FALSE` when the final
-CVR is missing/blank or is not in the registry. It is **independent of how the CVR
-was obtained** (raw field, same-name backfill, or name match), so it is the single
-indicator of registry membership across all three sources. Note it is stricter
-than `valid_cvr` (which checks only the 8-digit format, not registry presence) and
+`flag_cvr_final_in_registry` appears on **every matched winner and buyer dataset** —
+KFST, OpenTender, and the TED/XML build, for both entity sides
+(`clean_winner_data_kfst_name_matched.rds`,
+`clean_winner_data_ot_name_matched.rds`, `ted_winner_data_name_matched.rds`, and
+the matching `*_buyer_*` / `ted_buyer_data_name_matched.rds` files). It is `TRUE`
+when the resolved final CVR (`winner_cvr_final` / `buyer_cvr_final`) actually
+exists in the CVR registry name key, and `FALSE` when the final CVR is
+missing/blank or is not in the registry. It is **independent of how the CVR was
+obtained** (raw field, same-name backfill, or name match), so it is the single
+indicator of registry membership across all sources. Note it is stricter than
+`valid_cvr` (which checks only the 8-digit format, not registry presence) and
 distinct from `flag_cvr_recovered_from_invalid` (which describes the original field
-candidate, not the resolved final CVR).
+candidate, not the resolved final CVR). For KFST buyers, where the final CVR only
+ever comes from a name match, it is `TRUE` whenever a match was found.
 
 The matched datasets also contain non-flag matching metadata such as
 `name_match_step`, `cvr_number_source`, `name_match_method`,
@@ -111,12 +114,36 @@ OpenTender winners/buyers). Its ordering mirrors the `winner_cvr_final`
 precedence, which differs by source: in KFST a valid field/backfilled CVR beats a
 name match, while in OpenTender a name match overrides the field/backfilled CVR.
 
-`matching_candidate_type` (KFST and OpenTender winners) records why a row was
-admitted to name matching, since the matcher only searches the Danish registry
-and gates on the country string *containing* `DK`. `"exact DK"` = the country was
-exactly `DK` (most reliable). `"contains DK"` = a mixed value like `DK,IE`, which
-may be a foreign firm admitted only because the string contains `DK`, so its match
-is less reliable. `NA` for rows that were not matching candidates.
+`matching_candidate_type` (all six matched winner and buyer datasets) records why
+a row was admitted to name matching, since the matcher only searches the Danish
+registry and gates on the country. `"exact DK"` = the country was exactly `DK`
+(most reliable). `"contains DK"` = a mixed value like `DK,IE`, which may be a
+foreign firm admitted only because the string contains `DK`, so its match is less
+reliable. `NA` for rows that were not matching candidates. Two source-specific
+notes: TED country is a single ISO code, so only `"exact DK"` occurs there; and
+KFST **buyer** data has no country field (buyers are Danish public authorities,
+gated on name only), so its candidates are tagged `"DK assumed (no country field)"`
+instead.
+
+`flag_cvr_recovered_from_invalid` (all six matched datasets) is `TRUE` when the
+row's original field CVR candidate held **no valid, registered CVR** (it was
+missing, malformed, a placeholder, or a foreign/unregistered number) **yet a final
+CVR was still resolved** — by name match, same-name backfill, or tier-3b field
+pairing. It is broader than a typo check and is distinct from KFST's
+`flag_winner_cvr_changed` (a purely *syntactic* cleanup such as stripping spaces).
+For KFST buyers it is always `FALSE` (that source has no CVR field to be invalid).
+
+`cvr_name_match_quality` (+ `_basic`, `_nospaces`, `_broad`; plus
+`cvr_name_match_quality_name` and `cvr_name_is_substring`) (all six matched
+datasets) scores how well the firm name agrees with the **registered name of the
+final CVR** — the best Levenshtein ratio over that CVR's registered names, computed
+under four name-normalisation forms (`cvr_name_match_quality` is the default; the
+others are looser variants for sensitivity checks). It is **independent of the
+matcher** and is filled for every row whose final CVR is in the registry;
+`cvr_name_match_quality_name` records the registered name it was compared against,
+and `cvr_name_is_substring` flags whether the firm name is a verbatim substring of
+it. It differs from `name_match_score`, which is the score of the accepted name
+match (populated only for rows resolved by matching).
 
 ## Other Flags
 
