@@ -510,24 +510,22 @@ clean_winner_data <- bind_rows(
   rename(winner_cvr_candidate_original = winner_cvr) %>%
   mutate(winner_cvr_clean = winner_cvr_candidate_original)
 
-## 3.3 Recycled-consortium repair (conservative; fully-DK consortia only). A consortium listing more
-## member firms than distinct valid CVRs has had a CVR recycled onto members it may not belong to
-## Repair it ONLY when every member's country is Danish -- the CVR registry is Danish, so name-matching a foreign
-## member is meaningless, and touching a mixed DK/foreign consortium would leave the foreign member on
-## the recycled copy. For an eligible consortium: clear the recycled CVR and tag every member
-## "3b_pending" so 2_1 pairs each listed CVR to the member it name-matches (graft A) and sends the rest
-## to the registry matcher (graft C). The general DK-gate normalisation below then collapses each member's
-## all-Danish country to "DK" so the matcher's exact `winner_country == "DK"` gate lets the unpaired
-## members through. Registry-free (counts + country).
+## 3.3 Recycled-consortium repair. A consortium listing more member firms than distinct valid CVRs has
+## had a CVR recycled onto members it may not belong to. Fire the repair whenever ANY member's country
+## contains DK (all-DK OR mixed DK/foreign): clear the recycled CVR and tag every member "3b_pending" so
+## 2_1 pairs each listed CVR to the member it name-matches (graft A) and sends the rest to the registry
+## matcher (graft C). Clearing is safe for the foreign members too -- once cleared, the matcher's DK-detect
+## gate leaves a cleanly-foreign member (no DK in its country) unmatched (final CVR NA), rather than
+## keeping the wrong recycled copy on it. Registry-free (counts + country).
 clean_winner_data <- clean_winner_data %>%
   mutate(.country_up = str_to_upper(replace_na(winner_country, "")),
-         .member_dk  = str_detect(.country_up, "DK") & str_remove_all(.country_up, "DK|[^A-Z]") == "") %>%
+         .member_dk  = str_detect(.country_up, "DK")) %>%   # DK detected anywhere (incl. mixed DK/foreign)
   group_by(tender_id, lot_id, winner_number) %>%
   mutate(.n_members   = n(),
          .n_valid_cvr = compute_distinct_valid_cvr(paste(winner_cvr_candidate_original, collapse = ";"),
                                                    collapse_whitespace = FALSE, drop_invalid = TRUE),
          .recycled    = replace_na(is_consortium, FALSE) & .n_valid_cvr >= 1L &
-                        .n_members > .n_valid_cvr & all(.member_dk)) %>%   # all() => whole consortium DK
+                        .n_members > .n_valid_cvr & any(.member_dk)) %>%   # any DK member => re-pair via registry
   ungroup()
 
 cat(sprintf("Recycled-consortium repair (fully-DK only): %d members in %d winners re-routed\n",
