@@ -9,7 +9,6 @@ Most functions are used by the staged scripts:
 - `code/processing/0_build_cvr_lookup.R`
 - `code/processing/1_1_process_kfst.R`
 - `code/processing/1_2_process_open_tender.R`
-- `code/processing/1_2b_recover_ted_winners.R`
 - `code/processing/1_3_process_keys.R`
 - `code/processing/2_1_match_kfst.R`
 - `code/processing/2_2_match_kfst_buyers.R`
@@ -126,9 +125,8 @@ regular expression used later.
 **Used for:** OpenTender winner and buyer CVR cleaning, and helper functions
 that count CVRs.
 
-**Used in:** `1_2_process_open_tender.R`, `1_2b_recover_ted_winners.R`; also
-called internally by `compute_distinct_valid_cvr()` (and, in `1_2b`, by the
-recovered-TED CVR cleaner `ted_cvr_to_clean()`).
+**Used in:** `1_2_process_open_tender.R`; also called internally by
+`compute_distinct_valid_cvr()`.
 
 **How it works:**
 
@@ -223,9 +221,8 @@ c(1, 2, 0)
 
 **Used for:** Winner and buyer CVR cleaning in OpenTender. Called in multiple functions to make them cleaner.
 
-**Used in:** `1_2_process_open_tender.R`, `1_2b_recover_ted_winners.R`; also
-referenced internally (e.g., the `recover_formatted_danish_cvr()` default
-argument).
+**Used in:** `1_2_process_open_tender.R`; also referenced internally (e.g., the
+`recover_formatted_danish_cvr()` default argument).
 
 **Current placeholders:**
 
@@ -405,7 +402,7 @@ and fuzzy matching.
 and alternative CVR names.
 
 **Used in:** `1_1_process_kfst.R`, `1_2_process_open_tender.R`,
-`1_2b_recover_ted_winners.R`, `1_3_process_keys.R`, `2_3_match_opentender.R`,
+`1_3_process_keys.R`, `2_3_match_opentender.R`,
 `2_4_match_opentender_buyers.R`, and `code/analysis/5_cvr_key_concordance.Rmd`.
 
 **How it works:**
@@ -875,7 +872,7 @@ CVR for the query).
 Direct call sites for every function in `code/functions.R`. "internal" means the
 function is only invoked by another function in `code/functions.R`. Script codes:
 `0` = `processing/0_build_cvr_lookup.R`; `1_1` = `1_1_process_kfst.R`;
-`1_2` = `1_2_process_open_tender.R`; `1_2b` = `1_2b_recover_ted_winners.R`;
+`1_2` = `1_2_process_open_tender.R`;
 `1_3` = `1_3_process_keys.R`; `2_1`–`2_4` = the four matching scripts;
 `scrape/1` = `scraping/employment_1_winners.R`;
 `an/3` = `analysis/3_quality_analysis.Rmd`;
@@ -885,15 +882,15 @@ function is only invoked by another function in `code/functions.R`. Script codes
 |---|---|
 | `extract_multiple_cvr()` | `1_1` |
 | `clean_cvr_candidate()` | internal (`extract_valid_cvr_candidates()`) |
-| `extract_valid_cvr_candidates()` | `1_2`, `1_2b` (+ internal: `compute_distinct_valid_cvr()`) |
+| `extract_valid_cvr_candidates()` | `1_2` (+ internal: `compute_distinct_valid_cvr()`) |
 | `compute_distinct_valid_cvr()` | `1_2` |
-| `known_invalid_cvr_numbers()` | `1_2`, `1_2b` (+ internal) |
+| `known_invalid_cvr_numbers()` | `1_2` (+ internal) |
 | `recover_formatted_danish_cvr()` | `1_2` |
 | `add_entity_context_to_matches()` | internal (winner/buyer wrappers) |
 | `add_winner_context_to_matches()` | `2_1`, `2_3` |
 | `add_buyer_context_to_matches()` | `2_2`, `2_4` |
 | `cvr_firm_type_patterns()` | internal (`prepare_cvr_name()`, `make_name_partitions()`) |
-| `prepare_cvr_name()` | `1_1`, `1_2`, `1_2b`, `1_3`, `2_3`, `2_4`, `an/5` |
+| `prepare_cvr_name()` | `1_1`, `1_2`, `1_3`, `2_3`, `2_4`, `an/5` |
 | `make_name_partitions()` | `2_3`, `2_4`, `an/3` |
 | `keep_valid_dates()` | `1_3` (+ indirect `2_1`–`2_4`) |
 | `select_preferred_exact_match()` | `2_1`, `2_2`, `2_3`, `2_4` |

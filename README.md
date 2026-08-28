@@ -38,7 +38,6 @@ cvr-cleaning/
 │   │   ├── 0_build_cvr_lookup.R
 │   │   ├── 1_1_process_kfst.R
 │   │   ├── 1_2_process_open_tender.R
-│   │   ├── 1_2b_recover_ted_winners.R
 │   │   ├── 1_3_process_keys.R
 │   │   ├── 2_1_match_kfst.R
 │   │   ├── 2_2_match_kfst_buyers.R
@@ -98,7 +97,6 @@ generated separately (listed below the pipeline table).
 | [code/processing/0_build_cvr_lookup.R](code/processing/0_build_cvr_lookup.R) | Optional script for users with Virk system-to-system API access. Builds CVR official-name and alternative-name lookup CSVs, or runs a small API timing sample. | Timestamped `cvr_names_virk_*.csv` and `cvr_binavne_virk_*.csv`, or sample CSVs. |
 | [code/processing/1_1_process_kfst.R](code/processing/1_1_process_kfst.R) | Cleans KFST winner and buyer data with a **consortium-aware tiered split**: `;` separates winners and `,` separates consortium members, so each member becomes its own row tagged with `semi_tier`, `is_consortium`, and `consortium_number`. Standardises winner CVRs (all-Danish country tokens are normalised to `"DK"`), creates matching-ready name fields, and saves clean KFST objects. | `clean_winner_data_kfst.rds`, `clean_buyer_data_kfst.rds`. |
 | [code/processing/1_2_process_open_tender.R](code/processing/1_2_process_open_tender.R) | Reads all annual OpenTender CSVs present in `data/raw/OpenTender/`, checks column-name concordance before binding, keeps source-file and source-row provenance, derives tender/lot amount and framework-duration variables, cleans winner and buyer CVR fields, removes non-CVR tokens from multi-CVR buyer rows, fills some missing CVRs when the same firm name appears elsewhere with one valid CVR, prepares matching-ready names, and saves clean OpenTender objects with the original tender fields attached. | `clean_winner_data_ot.rds`, `clean_buyer_data_ot.rds`. |
-| [code/processing/1_2b_recover_ted_winners.R](code/processing/1_2b_recover_ted_winners.R) | Optional/manual. Folds TED-recovered winners (recovered from the TED notice XML by `code/scraping/ted_2_recover_winners.R`) back into the OpenTender winner table. Run only when the TED notice data has been built. | updated OpenTender winner data. |
 | [code/processing/1_3_process_keys.R](code/processing/1_3_process_keys.R) | Cleans the CVR register name keys used for later matching. It prepares both official names and alternative names. | `clean_cvr_name_key.rds`, `clean_cvr_biname_key.rds`. |
 | [code/processing/2_1_match_kfst.R](code/processing/2_1_match_kfst.R) | Matches KFST winner names to CVRs against the prepared CVR-name keys (tier-3b consortium members are paired to the lot's own listed field CVRs first). Writes the **consortium-expanded** canonical winner table with the CVR-name **quality columns** and the provenance flag `flag_cvr_recovered_from_invalid`. | `clean_winner_data_kfst_name_matched.rds`, `manual_name_review_kfst.rds`. |
 | [code/processing/2_2_match_kfst_buyers.R](code/processing/2_2_match_kfst_buyers.R) | Matches KFST buyer names to CVRs, since KFST buyer CVRs are not supplied in the raw source. | `clean_buyer_data_kfst_name_matched.rds`, `manual_buyer_name_review_kfst.rds`. |
