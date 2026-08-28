@@ -116,6 +116,10 @@ data <- data %>%
   filter(lot_status %in% c("AWARDED", "PREAWARDED"),
          !tender_cancelled)
 
+# Winner definition is "admission": every tenderer in an awarded/preawarded lot is kept
+# (no bid_isWinning filter), so framework/DPS lots carry all bidders and inflate winner
+# counts vs the true awardee. Intentional; TED's SettledContract dataset is the cross-check.
+
 # Rearrange so easier to keep good data entries and dedup
 # Also keep a stable reference to the original OpenTender row.
 # This lets expanded winner rows point back to the raw bid row.
