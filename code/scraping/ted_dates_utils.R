@@ -18,7 +18,10 @@ source("config.R")
 # base_delay, and the packages (xml2/httr/dplyr/furrr/progressr).
 SKIP_TED_RUN <- TRUE
 source(file.path(PROJECT_DIR, "code", "scraping", "ted_1_extract_notices.R"))
-suppressWarnings(suppressPackageStartupMessages(library(data.table)))
+suppressWarnings(suppressPackageStartupMessages({
+  library(data.table)
+  library(readxl)
+}))
 
 # ── Per-level cache dirs + output paths ───────────────────────────────────────
 award_cache_dir    <- cache_dir                              # = ted_dir/raw_xml
@@ -30,8 +33,27 @@ for (d in c(ted_dir, award_cache_dir, comp_cache_dir, planning_cache_dir)) {
   dir.create(d, showWarnings = FALSE, recursive = TRUE)
 }
 
-# ── Award universe: distinct award-notice ids + URLs from OpenTender ───────────
-# Used by BOTH scripts so they agree on the set (and on NOTICE_LINEAGE_SAMPLE_SIZE).
+# ── KFST award map: (tender_id, lot_id, award_url, award_notice_id) from the raw KFST xlsx ─────
+# Mirrors the OpenTender award source so the date chain can cover KFST notices too. Reads only the
+# tender/lot/award-url columns from sheet "2.0 Udbudsdata". Returns an empty table if the file is absent.
+kfst_award_map <- function() {
+  empty <- data.table(tender_id = character(), lot_id = character(),
+                      award_url = character(), award_notice_id = character())
+  xlsx <- file.path(dirs$raw_data, "kfst", "udbudsdata_kfst.xlsx")
+  if (!file.exists(xlsx)) return(empty)
+  k <- as.data.table(readxl::read_excel(xlsx, sheet = "2.0 Udbudsdata", col_types = "text"))
+  k <- k[, .(tender_id = `Løbenummer`, lot_id = `Nummerplade`,
+             award_url = `Link til bekendtgørelse om indgået kontrakt`)]
+  k <- k[!is.na(award_url) & trimws(award_url) != ""]
+  if (!nrow(k)) return(empty)
+  k[, award_notice_id := derive_notice_id(award_url)]
+  unique(k[!is.na(award_notice_id)], by = c("tender_id", "lot_id", "award_notice_id"))
+}
+
+# ── Award universe: distinct award-notice ids + URLs from OpenTender AND KFST ──────────────────
+# Used by BOTH ted_dates_1_fetch and ted_dates_2_lineage so they agree on the set (and on
+# NOTICE_LINEAGE_SAMPLE_SIZE). Notices shared by the two sources are deduped by award_notice_id, so
+# each is fetched/linked once (no double-pull; fetch_notices() is cache-first on top of that).
 award_universe <- function() {
   raw_dir <- file.path(dirs$raw_data, "OpenTender")
   files   <- list.files(raw_dir, pattern = "[.]csv$", full.names = TRUE)
@@ -40,7 +62,10 @@ award_universe <- function() {
   setnames(u, "award_url")
   u <- u[!is.na(award_url) & trimws(award_url) != ""]
   u[, award_notice_id := derive_notice_id(award_url)]
-  u <- unique(u[!is.na(award_notice_id)], by = "award_notice_id")
+  u <- u[!is.na(award_notice_id), .(award_url, award_notice_id)]
+  # Union in the KFST award notices (they overlap OT heavily; dedup keeps each notice once).
+  u <- unique(rbindlist(list(u, kfst_award_map()[, .(award_url, award_notice_id)])),
+              by = "award_notice_id")
   sample_n <- suppressWarnings(as.integer(Sys.getenv("NOTICE_LINEAGE_SAMPLE_SIZE", "")))
   if (!is.na(sample_n) && sample_n > 0L) {
     u <- head(u, sample_n)

@@ -301,6 +301,24 @@ tender_lot_data <- data %>%
   # See derive_ted_notice_id() in functions.R. Flows to winner + buyer via the join.
   mutate(ted_notice_id = derive_ted_notice_id(award_url))
 
+## Join extracted dates from the TED notice lineage (mirrors 1_2 for OpenTender). First-time replication
+## has no KFST date panel yet, so the source() calls build the whole date chain -- fetching all OT+KFST
+## notice XML into the (Box) cache, cache-first + resumable -- and writing BOTH the OT and KFST panels.
+## Because run_replication runs 1_1 before 1_2, this is where the one-time full fetch happens.
+detect_kfst_notice_dates <- file.exists(file.path(dirs$intermediates, "ted", "kfst_notice_dates.rds"))
+if (!detect_kfst_notice_dates) {
+  source(file.path(PROJECT_DIR, "code", "scraping", "ted_dates_1_fetch.R"))
+  source(file.path(PROJECT_DIR, "code", "scraping", "ted_dates_2_lineage.R"))
+  source(file.path(PROJECT_DIR, "code", "scraping", "ted_dates_3_extract.R"))
+  source(file.path(PROJECT_DIR, "code", "scraping", "ted_dates_5_panel.R"))
+}
+kfst_notice_dates <- readRDS(file.path(dirs$intermediates, "ted", "kfst_notice_dates.rds"))
+# Panel keys come from the raw xlsx read as text; match tender_lot_data's types (tender_id numeric,
+# lot_id character) so the join keys line up.
+kfst_notice_dates <- kfst_notice_dates %>%
+  mutate(tender_id = as.numeric(tender_id), lot_id = as.character(lot_id))
+tender_lot_data <- left_join(tender_lot_data, kfst_notice_dates, by = c("tender_id", "lot_id"))
+
 
 # 2 Winners 
 ## (CONSORTIUM extraction: ';' = winners via tiers, ',' = consortium members)

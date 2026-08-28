@@ -87,6 +87,14 @@ setnames(map, c("tender_id", "lot_id", "award_url"))
 map <- map[!is.na(award_url) & trimws(award_url) != ""]
 map[, award_notice_id := derive_notice_id(award_url)]
 map <- unique(map[!is.na(award_notice_id)], by = c("tender_id", "lot_id", "award_notice_id"))
+map[, source := "ot"]
+
+# KFST tender/lot -> award notice, from the raw KFST xlsx. KFST is a SEPARATE tender/lot ID space, kept
+# apart via `source`; the two sources share many notices, but the notice-level extraction below runs over
+# DISTINCT notice ids, so a shared notice is fetched/parsed once (no double-pull). Helper: kfst_award_map().
+map_kfst <- kfst_award_map()[, .(tender_id, lot_id, award_url, award_notice_id)]
+map_kfst[, source := "kfst"]
+map <- rbindlist(list(map, map_kfst), use.names = TRUE)
 
 sample_n <- suppressWarnings(as.integer(Sys.getenv("NOTICE_LINEAGE_SAMPLE_SIZE", "")))
 if (!is.na(sample_n) && sample_n > 0L) {
@@ -114,16 +122,16 @@ notice_dates[, date_iso := to_iso(date_value)]
 join_level <- function(level, id_col) {
   d <- notice_dates[notice_level == level]
   if (!nrow(d)) return(NULL)
-  tl <- unique(tenderlot[!is.na(get(id_col)), .(tender_id, lot_id, notice_id = get(id_col))])
+  tl <- unique(tenderlot[!is.na(get(id_col)), .(source, tender_id, lot_id, notice_id = get(id_col))])
   merge(tl, d, by = "notice_id", allow.cartesian = TRUE)[
-    , .(tender_id, lot_id, notice_level, notice_id, date_field, date_value, date_iso)]
+    , .(source, tender_id, lot_id, notice_level, notice_id, date_field, date_value, date_iso)]
 }
 out <- rbindlist(list(
   join_level("award",       "award_notice_id"),
   join_level("competition", "competition_notice_id"),
   join_level("planning",    "planning_notice_id")
 ), use.names = TRUE)
-setorder(out, tender_id, lot_id, notice_level, date_field)
+setorder(out, source, tender_id, lot_id, notice_level, date_field)
 
 # ── 5. save + summary ─────────────────────────────────────────────────────────
 out_rds <- file.path(ted_dir, "notice_dates.rds")
