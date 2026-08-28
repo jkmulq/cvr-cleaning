@@ -49,7 +49,12 @@ cvr_key <- rbindlist(
   use.names = TRUE
 )
 
-# If the same match is available as both a main name and a biname, 
+# Registry lookups, captured before cvr_key is removed below: cvr_key_quality (cvr -> registered name
+# forms) for the CVR-name quality scores, and reg_cvrs_prov (membership test) -- both used near the end.
+cvr_key_quality <- unique(cvr_key[, .(cvr, name_match, name_basic, name_no_spaces, name_broad)])
+reg_cvrs_prov <- unique(as.character(cvr_key_quality$cvr))
+
+# If the same match is available as both a main name and a biname,
 # prioritise main name
 cvr_key[, source_order := fifelse(name_source == "name", 1L, 2L)]
 
@@ -1002,6 +1007,15 @@ buyer_data[, cvr_number_source := fcase(
   default = "not a matching candidate: no CVR name"
 )]
 
+# Reliability of a matching candidate's Danish gate (as in the winner matchers). "exact DK" = country
+# is exactly DK (most reliable); "contains DK" = a mixed value like "DK,IE" merely containing DK; NA
+# for non-candidates.
+buyer_data[, matching_candidate_type := fcase(
+  flag_check_fuzzy_match & toupper(trimws(buyer_country)) == "DK",        "exact DK",
+  flag_check_fuzzy_match & grepl("DK", toupper(trimws(buyer_country))),   "contains DK",
+  default = NA_character_
+)]
+
 # Fuzzy matches and matches tied across several CVRs are retained but flagged.
 buyer_data[, flag_name_match_found := !is.na(buyer_cvr_name_match)]
 buyer_data[, flag_name_match_ambiguous := (flag_name_match_found & name_match_n_candidates > 1)]
@@ -1033,6 +1047,50 @@ buyer_data[flag_check_fuzzy_match & # Candidates for matching
 
 # Successfully separated multiple firms use their segment-level CVR matches.
 buyer_data[flag_name_partition_expanded == TRUE, buyer_cvr_final := buyer_cvr_name_match]
+
+# CVR-name quality: how well the buyer name agrees with the REGISTERED name of its final CVR, scored
+# for each prepared name form (mirrors the winner matchers and ted_5). Independent of the matcher;
+# filled for every row whose buyer_cvr_final is in the registry.
+for (qf in list(c("buyer_name_match",     "name_match",     "cvr_name_match_quality"),
+                c("buyer_name_basic",     "name_basic",     "cvr_name_match_quality_basic"),
+                c("buyer_name_no_spaces", "name_no_spaces", "cvr_name_match_quality_nospaces"),
+                c("buyer_name_broad",     "name_broad",     "cvr_name_match_quality_broad"))) {
+  buy_col <- qf[1]; key_col <- qf[2]; q_col <- qf[3]
+  reg_lookup <- unique(data.table(cvr = as.character(cvr_key_quality$cvr),
+                                  reg_name = cvr_key_quality[[key_col]]))[!is.na(reg_name) & reg_name != ""]
+  qual <- data.table(match_row_id = buyer_data$match_row_id,
+                     cvr = as.character(buyer_data$buyer_cvr_final),
+                     buy_name = buyer_data[[buy_col]])
+  qual <- qual[!is.na(cvr) & cvr != "" & !is.na(buy_name) & buy_name != ""]
+  qual <- merge(qual, reg_lookup, by = "cvr", allow.cartesian = TRUE)
+  qual[, score := levenshtein_ratio(buy_name, reg_name, pairwise = TRUE)]
+  setorder(qual, match_row_id, -score)
+  best_qual <- qual[, .SD[1L], by = match_row_id]
+  buyer_data[, (q_col) := NA_real_]
+  buyer_data[best_qual, on = "match_row_id", (q_col) := i.score]
+  if (q_col == "cvr_name_match_quality") {
+    buyer_data[, cvr_name_match_quality_name := NA_character_]
+    buyer_data[best_qual, on = "match_row_id", cvr_name_match_quality_name := i.reg_name]
+  }
+}
+buyer_data[, cvr_name_is_substring := NA]
+buyer_data[!is.na(cvr_name_match_quality_name) & !is.na(buyer_name_match) & buyer_name_match != "",
+           cvr_name_is_substring := stringr::str_detect(cvr_name_match_quality_name, stringr::fixed(buyer_name_match))]
+
+# Provenance: buyer_cvr_final was recovered BECAUSE the original field candidate held no valid,
+# REGISTERED CVR (mirrors the winner matchers). reg_cvrs_prov captured above, before cvr_key removed.
+cand_prov <- ifelse(is.na(buyer_data$buyer_cvr_candidate), "",
+                    gsub("\\s+", "", as.character(buyer_data$buyer_cvr_candidate)))  # de-space first, like the CVR cleaner
+cand_has_reg_prov <- vapply(regmatches(cand_prov, gregexpr("(?<![0-9])[0-9]{8}(?![0-9])", cand_prov, perl = TRUE)),
+                            function(v) any(v %chin% reg_cvrs_prov), logical(1))
+buyer_data[, flag_cvr_recovered_from_invalid :=
+  cand_prov != "" & !cand_has_reg_prov & !is.na(buyer_cvr_final) & as.character(buyer_cvr_final) != ""]
+
+# Registry membership of the FINAL CVR: TRUE iff buyer_cvr_final is a CVR present in the registry
+# name key (reg_cvrs_prov captured above, before cvr_key was removed). Independent of HOW it was
+# obtained (field or name match). Distinct from valid_cvr (format check only). NA / blank are FALSE.
+buyer_data[, flag_cvr_final_in_registry :=
+  !is.na(buyer_cvr_final) & as.character(buyer_cvr_final) %chin% reg_cvrs_prov]
 
 # Readable name-match status
 buyer_data[, name_match_status := fcase(
