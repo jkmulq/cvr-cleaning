@@ -942,7 +942,7 @@ winner_data <- rbindlist(
 
 # Give each numeric matching step a stable, descriptive code. 
 # Keep numeric step so the matching route remains easy to inspect.
-winner_data[, name_match_step_code := fcase(
+winner_data[, cvr_number_source := fcase(
   flag_name_partition_expanded & name_match_step == 1L,
   "exact partition: basic name and firm type",
   flag_name_partition_expanded & name_match_step == 2L,
@@ -980,7 +980,7 @@ winner_data[, name_match_step_code := fcase(
     name_match_source == "biname",
   "fuzzy: broad biname",
   flag_fill_missing_cvr,
-  "source: same-name CVR fill",
+  "CVR backfilled from another lot: this winner had no valid CVR, so the CVR of a winner with the same exact name elsewhere in the dataset was borrowed",
   !is.na(winner_cvr_clean) & winner_cvr_clean != "" &
     source == "single winner",
   "source: single CVR cleaning",
@@ -1129,7 +1129,8 @@ manual_name_review <- winner_data[
     flag_consortium_text,
     flag_collaboration_text,
     name_match_step,
-    name_match_step_code,
+    cvr_number_source,
+    matching_candidate_type,
     name_match_method,
     name_match_score,
     name_match_n_candidates,

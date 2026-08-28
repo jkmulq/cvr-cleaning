@@ -947,7 +947,7 @@ buyer_data <- rbindlist(
 
 # Give each numeric matching step a stable, descriptive code. 
 # Keep numeric step so the matching route remains easy to inspect.
-buyer_data[, name_match_step_code := fcase(
+buyer_data[, cvr_number_source := fcase(
   flag_name_partition_expanded & name_match_step == 1L,
   "exact partition: basic name and firm type",
   flag_name_partition_expanded & name_match_step == 2L,
@@ -985,7 +985,7 @@ buyer_data[, name_match_step_code := fcase(
     name_match_source == "biname",
   "fuzzy: broad biname",
   flag_fill_missing_cvr,
-  "source: same-name CVR fill",
+  "CVR backfilled from another lot: this buyer had no valid CVR, so the CVR of a buyer with the same exact name elsewhere in the dataset was borrowed",
   !is.na(buyer_cvr_clean) & buyer_cvr_clean != "" &
     source == "single buyer",
   "source: single CVR cleaning",
@@ -1081,7 +1081,7 @@ manual_buyer_name_review <- buyer_data[
     flag_consortium_text,
     flag_collaboration_text,
     name_match_step,
-    name_match_step_code,
+    cvr_number_source,
     name_match_method,
     name_match_score,
     name_match_n_candidates,

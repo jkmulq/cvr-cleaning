@@ -381,7 +381,7 @@ buyer_data[
 
 # Give each numeric matching step a stable, descriptive code. The numeric step
 # is retained so the original matching order remains easy to inspect.
-buyer_data[, name_match_step_code := fcase(
+buyer_data[, cvr_number_source := fcase(
   name_match_method == "exact" & name_match_step == 1L,
   "exact matching: basic name and firm type",
   name_match_method == "exact" & name_match_step == 2L,
@@ -443,7 +443,7 @@ manual_buyer_name_review <- buyer_data[flag_manual_name_review == TRUE, ] %>%
     pub_date,
     buyer_cvr_name_match, registered_name_match,
     starts_with("fuzzy_candidate_cvr"), starts_with("fuzzy_candidate_name"), starts_with("fuzzy_candidate_score"),
-    name_match_step, name_match_step_code, name_match_method,
+    name_match_step, cvr_number_source, name_match_method,
     name_match_score, name_match_n_candidates,
     flag_name_match_found, flag_name_match_ambiguous,
     flag_review_name_match, flag_manual_name_review,

@@ -480,9 +480,12 @@ winner_data[
 
 # Give each numeric matching step a stable, descriptive code. The numeric step
 # is retained so the original matching order remains easy to inspect.
-winner_data[, name_match_step_code := fcase(
+winner_data[, cvr_number_source := fcase(
   !is.na(field_paired_cvr),
   "CVR from tier-3b field pairing: winner name matched a CVR listed on this lot (lots with more names than field CVRs)",
+  coalesce(flag_fill_missing_cvr, FALSE) &
+    !is.na(winner_cvr_clean) & winner_cvr_clean != "",
+  "CVR backfilled from another lot: this winner had no valid CVR, so the CVR of a winner with the same exact name elsewhere in the dataset was borrowed",
   name_match_method == "exact" & name_match_step == 1L,
   "exact matching: basic name and firm type",
   name_match_method == "exact" & name_match_step == 2L,
@@ -648,7 +651,8 @@ manual_name_review <- winner_data[
     starts_with("fuzzy_candidate_name"),
     starts_with("fuzzy_candidate_score"),
     name_match_step,
-    name_match_step_code,
+    cvr_number_source,
+    matching_candidate_type,
     name_match_method,
     name_match_score,
     name_match_n_candidates,
