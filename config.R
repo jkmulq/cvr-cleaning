@@ -35,6 +35,10 @@ dirs <- list(
   cvr_key = file.path(DATA_ROOT, "cvr_matching_data"),
   raw_data   = file.path(DATA_ROOT, "raw"),
   clean_data = file.path(DATA_ROOT, "clean"),
+  # Event-study employment-history family (winner + control panels, name keys, control event
+  # lists). Kept out of clean/ so the core cleaning/matching outputs stay uncluttered. Written by
+  # code/scraping/employment_*.R and read only by code/analysis/*; never by code/processing/.
+  employment = file.path(DATA_ROOT, "employment"),
   intermediates = file.path(DATA_ROOT, "intermediates"),
   code = file.path(PROJECT_DIR, "code")
 )
