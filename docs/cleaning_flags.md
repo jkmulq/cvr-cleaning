@@ -84,6 +84,20 @@ These flags appear in all four final matched datasets:
 | `flag_review_name_match` | A found match should still be reviewed. | Usually means the match was fuzzy or ambiguous. In OpenTender it can also mean an unresolved potential multiple-name row. |
 | `flag_manual_name_review` | The row is included in the compact manual-review output. | Includes no-match rows, fuzzy matches, ambiguous matches, and unresolved OpenTender name partitions. |
 
+### Final-CVR registry membership (winner datasets)
+
+`flag_cvr_final_in_registry` appears on the three matched **winner** datasets —
+KFST (`clean_winner_data_kfst_name_matched.rds`), OpenTender
+(`clean_winner_data_ot_name_matched.rds`), and the TED/XML build
+(`ted_winner_data_name_matched.rds`). It is `TRUE` when `winner_cvr_final` is a
+CVR that actually exists in the CVR registry name key, and `FALSE` when the final
+CVR is missing/blank or is not in the registry. It is **independent of how the CVR
+was obtained** (raw field, same-name backfill, or name match), so it is the single
+indicator of registry membership across all three sources. Note it is stricter
+than `valid_cvr` (which checks only the 8-digit format, not registry presence) and
+distinct from `flag_cvr_recovered_from_invalid` (which describes the original field
+candidate, not the resolved final CVR).
+
 The matched datasets also contain non-flag matching metadata such as
 `name_match_step`, `cvr_number_source`, `name_match_method`,
 `name_match_score`, `name_match_n_candidates`, and `name_match_status`. Those

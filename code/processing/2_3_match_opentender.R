@@ -1101,6 +1101,13 @@ cand_has_reg_prov <- vapply(regmatches(cand_prov, gregexpr("(?<![0-9])[0-9]{8}(?
 winner_data[, flag_cvr_recovered_from_invalid :=
   cand_prov != "" & !cand_has_reg_prov & !is.na(winner_cvr_final) & as.character(winner_cvr_final) != ""]
 
+# Registry membership of the FINAL CVR: TRUE iff winner_cvr_final is a CVR present in the registry
+# name key -- independent of HOW it was obtained (field / backfill / name match). Distinct from
+# valid_cvr (format check only) and from flag_cvr_recovered_from_invalid (about the original
+# candidate, not the final). NA / blank final CVRs are FALSE.
+winner_data[, flag_cvr_final_in_registry :=
+  !is.na(winner_cvr_final) & as.character(winner_cvr_final) %chin% reg_cvrs_prov]
+
 # Rows for review
 manual_name_review <- winner_data[
   flag_manual_name_review == TRUE,
