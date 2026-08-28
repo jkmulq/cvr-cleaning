@@ -476,12 +476,14 @@ winners_consort_s1 <- winners_consort %>%
   filter(to_split) %>%
   separate_longer_delim(cols = c(winner_cvr, winner_name, winner_country), delim = ",")
 
-# For leftovers, find rows where to_split check failed due to only one listed country
+# For leftovers, split on cvr+name whenever those two counts agree -- regardless of the country
+# count (single, partial, or otherwise). Country is left un-split on each member; the downstream
+# DK-gate normalisation + winner_country_original handle it. This is the ","-consortium analogue of
+# the ";" name/cvr tier: split the two fields that agree, and don't let a short country list block
+# the split (e.g. 5 CVRs = 5 names but only 4 listed countries, as in lot 3009-2).
 winners_consort_s1_resid <- winners_consort %>%
   filter(!to_split) %>%
-  mutate(to_split_s2 = n_cvr_implied == n_name_implied &
-           (n_cvr_implied != n_country_implied) &
-           (n_country_implied == 1))
+  mutate(to_split_s2 = n_cvr_implied == n_name_implied)
 
 winners_consort_s2 <- winners_consort_s1_resid %>%
   filter(to_split_s2) %>%
