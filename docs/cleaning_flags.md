@@ -85,9 +85,24 @@ These flags appear in all four final matched datasets:
 | `flag_manual_name_review` | The row is included in the compact manual-review output. | Includes no-match rows, fuzzy matches, ambiguous matches, and unresolved OpenTender name partitions. |
 
 The matched datasets also contain non-flag matching metadata such as
-`name_match_step`, `name_match_step_code`, `name_match_method`,
+`name_match_step`, `cvr_number_source`, `name_match_method`,
 `name_match_score`, `name_match_n_candidates`, and `name_match_status`. Those
 columns explain how the match was produced, but they are not themselves flags.
+`cvr_number_source` is the plain-English provenance of the resolved CVR
+(`winner_cvr_final` / `buyer_cvr_final`): whether it came from the raw field
+split, tier-3b field pairing, exact/fuzzy name matching, or was **backfilled from
+another lot** — i.e. borrowed from a record with the same exact name elsewhere in
+the dataset (the `flag_fill_missing_cvr` case, present for KFST winners and
+OpenTender winners/buyers). Its ordering mirrors the `winner_cvr_final`
+precedence, which differs by source: in KFST a valid field/backfilled CVR beats a
+name match, while in OpenTender a name match overrides the field/backfilled CVR.
+
+`matching_candidate_type` (KFST and OpenTender winners) records why a row was
+admitted to name matching, since the matcher only searches the Danish registry
+and gates on the country string *containing* `DK`. `"exact DK"` = the country was
+exactly `DK` (most reliable). `"contains DK"` = a mixed value like `DK,IE`, which
+may be a foreign firm admitted only because the string contains `DK`, so its match
+is less reliable. `NA` for rows that were not matching candidates.
 
 ## Other Flags
 
