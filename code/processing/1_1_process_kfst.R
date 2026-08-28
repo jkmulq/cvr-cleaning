@@ -916,6 +916,25 @@ clean_buyer_data <- clean_buyer_data %>%
 clean_buyer_data <- clean_buyer_data %>% 
   mutate(flag_check_fuzzy_match = coalesce(!flag_missing_buyer_name, FALSE))
 
+# Collapse consortium members that resolved to the SAME valid CVR within a lot. This happens when the
+# source lists a firm's CVR more than once in the consortium field, or when a positional consortium
+# split (§3.1) pairs the same CVR to more than one name fragment. The CVR is the firm key, so those
+# are the same member -- keep one row per (tender_id, lot_id, winner_cvr_clean). Scope STRICTLY to
+# consortium rows with a valid CVR: name-only members (NA/invalid CVR) are excluded so distinct firms
+# that lack a CVR are never merged (they are held out and re-bound untouched below).
+.cons_valid <- clean_winner_data %>% filter(is_consortium, valid_cvr)
+.rest       <- clean_winner_data %>% filter(!(is_consortium & valid_cvr))
+.dup_lots <- .cons_valid %>%
+  count(tender_id, lot_id, winner_cvr_clean) %>% filter(n > 1L) %>% distinct(tender_id, lot_id)
+.cons_valid <- .cons_valid %>%
+  arrange(winner_number, consortium_number) %>%
+  distinct(tender_id, lot_id, winner_cvr_clean, .keep_all = TRUE)
+cat(sprintf("Consortium duplicate-CVR dedup: %d member row(s) collapsed across %d lot(s)\n",
+            nrow(clean_winner_data %>% filter(is_consortium, valid_cvr)) - nrow(.cons_valid),
+            nrow(.dup_lots)))
+clean_winner_data <- bind_rows(.cons_valid, .rest)
+rm(.cons_valid, .rest, .dup_lots)
+
 # Ensure natural row grains for each of winner/buyer side.
 # Winner grain = tender-lot-winner-MEMBER: consortium members share a winner_number but are
 # distinct firms, so the member's candidate CVR + name are part of the grain. Deduping only on
