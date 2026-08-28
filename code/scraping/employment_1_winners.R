@@ -15,7 +15,7 @@
 #   CVR_EMPLOYMENT_BATCH_SIZE    CVRs per API request          (default 1000)
 #   CVR_EMPLOYMENT_SAMPLE_SIZE   pull a random N CVRs, not all (default: all)
 #   CVR_EMPLOYMENT_OVERWRITE     "true" rebuilds from scratch  (default false)
-#   CVR_EMPLOYMENT_OUTPUT_FILE   output path (default data/clean/cvr_employment_history_virk.csv)
+#   CVR_EMPLOYMENT_OUTPUT_FILE   working CSV path (default data/employment/cvr_employment_history_virk.csv)
 #   CVR_EMPLOYMENT_SCROLL_SIZE   production-unit scroll size   (default 1000)
 #   CVR_EMPLOYMENT_SCROLL        scroll lifetime               (default 5m)
 
@@ -85,10 +85,15 @@ overwrite <- tolower(Sys.getenv("CVR_EMPLOYMENT_OVERWRITE", "false")) == "true"
 output_file <- Sys.getenv("CVR_EMPLOYMENT_OUTPUT_FILE")
 
 if (!nzchar(output_file)) {
-  output_file <- file.path(dirs$clean_data, "cvr_employment_history_virk.csv")
+  output_file <- file.path(dirs$employment, "cvr_employment_history_virk.csv")
 }
 status_file <- sub("[.]csv$", "_status.csv", output_file)
 name_output_file <- sub("[.]csv$", "_names.csv", output_file)
+# Finalized, compressed analysis artifacts. The pull itself still appends to the CSVs above
+# (incremental + resumable via the status ledger); at the end we write gzip-compressed .rds
+# copies (~45x smaller) that the analysis scripts read. See finalize step after the pull loop.
+rds_output_file <- sub("[.]csv$", ".rds", output_file)
+rds_name_output_file <- sub("[.]csv$", ".rds", name_output_file)
 
 if (is.na(batch_size) || batch_size < 1L || batch_size > 3000L) {
   stop("CVR_EMPLOYMENT_BATCH_SIZE must be between 1 and 3000.", call. = FALSE)
@@ -1601,6 +1606,22 @@ fetch_production_units <- function(cvrs, credentials) {
   })
 }
 
+# Finalize: write gzip-compressed .rds copies of the completed CSVs for downstream analysis.
+# The CSVs remain the resumable working files; the .rds are the compact artifacts the analysis
+# scripts read (~45x smaller than the plain CSV on this panel). Safe to re-run.
+finalize_rds <- function() {
+  if (file.exists(output_file)) {
+    saveRDS(fread(output_file, na.strings = "", colClasses = list(character = "cvr")),
+            rds_output_file, compress = "gzip")
+    cat("Finalized employment RDS:", rds_output_file, "\n")
+  }
+  if (file.exists(name_output_file)) {
+    saveRDS(fread(name_output_file, na.strings = "", colClasses = list(character = "cvr")),
+            rds_name_output_file, compress = "gzip")
+    cat("Finalized name-history RDS:", rds_name_output_file, "\n")
+  }
+}
+
 # -- Run -----------------------------------------------------------------------
 
 all_cvrs <- read_matched_cvrs(matched_cvr_files)
@@ -1638,6 +1659,7 @@ cat("Name-history file:", name_output_file, "\n")
 
 if (length(cvrs_to_pull) == 0) {
   cat("No CVRs left to pull.\n")
+  finalize_rds()
   quit(save = "no")
 }
 
@@ -1779,6 +1801,8 @@ timed <- system.time({
     )
   }
 })
+
+finalize_rds()
 
 cat("Finished employment-history pull.\n")
 cat("Elapsed seconds:", unname(timed[["elapsed"]]), "\n")
