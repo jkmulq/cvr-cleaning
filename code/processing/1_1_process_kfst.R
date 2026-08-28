@@ -567,7 +567,6 @@ clean_winner_data <- clean_winner_data %>%
 # Keep only lots that had winners (as production 1_1 does).
 clean_winner_data <- clean_winner_data %>% filter(n_lot_winners > 0)
 
-
 # 4 Clean up/standardise CVR numbers
 ## Cleaning flags treat NAs as FALSE: a missing source value is not counted as
 ## evidence that a cleaning operation was performed.
