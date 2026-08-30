@@ -9,6 +9,10 @@ This file documents the flags in the final objects we normally inspect:
 - `clean_buyer_data_kfst_name_matched.rds` and
   `clean_buyer_data_ot_name_matched.rds`
 
+The same matching-flag and provenance schema (Section 2 below) also appears on the
+TED/XML-built matched datasets (`ted_winner_data_name_matched.rds`,
+`ted_buyer_data_name_matched.rds`) when the `ted_*` chain is run.
+
 The focus is on final flags, not temporary processing variables. The structure
 is:
 
@@ -18,6 +22,15 @@ is:
 
 The flags are intended for audit and review, not for mutually exclusive
 classification. A row can have several flags at once.
+
+**Cross-source parity.** KFST and OpenTender carry the *same shared analytical
+schema* — the matching flags, the provenance/quality columns
+(`cvr_number_source`, `matching_candidate_type`, `flag_cvr_final_in_registry`,
+`flag_cvr_recovered_from_invalid`, the `cvr_name_match_quality*` family), and the
+lineage date columns are present on both, winner and buyer. The two sources still
+differ in their *native* fields (OpenTender carries its many `tender_publications_*`
+source columns; KFST carries `semi_tier`/`consortium_*`/tier-3b field-pairing
+columns), which is expected and source-specific.
 
 ## Clean Data Flags
 
@@ -144,6 +157,25 @@ matcher** and is filled for every row whose final CVR is in the registry;
 and `cvr_name_is_substring` flags whether the firm name is a verbatim substring of
 it. It differs from `name_match_score`, which is the score of the accepted name
 match (populated only for rows resolved by matching).
+
+### Lineage date columns (winner and buyer, both sources)
+
+Both KFST and OpenTender matched datasets carry a common block of TED notice
+**lineage dates**, reconstructed from each lot's award notice and its
+competition/planning ancestors: `planning_dispatch_date`,
+`planning_publication_date`, `planning_tender_deadline_date`,
+`competition_dispatch_date`, `competition_publication_date`,
+`competition_tender_deadline_date`, `award_dispatch_date`,
+`award_publication_date`, `award_tender_deadline_date`, and `award_contract_date`.
+The two sources carry the **same ten columns** (schema parity); a column is `NA`
+where a source's notices genuinely lack that field — e.g. `award_tender_deadline_date`
+is populated only for OpenTender (no KFST or shared notice carries an award-level
+tender deadline; the meaningful submission deadline is
+`competition_tender_deadline_date`, which both sources populate well, ~96% for
+KFST). Dates are joined at the tender-lot grain, so they propagate to every
+winner/buyer row. On the KFST side the XML `award_contract_date` also agrees with
+KFST's own source `award_date` ~91% same-day / ~98% within 30 days, and fills some
+gaps where the source date was missing.
 
 ## Other Flags
 
