@@ -203,7 +203,14 @@ if [[ "$BUILD_EMPLOYMENT_HISTORY" == "true" ]]; then
 fi
 
 if [[ "$EXTRACT_TED_NOTICES" == "true" ]]; then
+  # Full TED/XML dataset chain: fetch notice XML -> extract parties/lots/CVRs/dates ->
+  # build tender-lot winner/buyer tables -> name-match winners + buyers. Each step is
+  # cache-first/resumable and consumes the previous step's outputs.
   run_r_script "code/scraping/ted_1_extract_notices.R"
+  run_r_script "code/scraping/ted_2_extract_party_cvrs.R"
+  run_r_script "code/scraping/ted_3_build_winner_buyer_datasets.R"
+  run_r_script "code/scraping/ted_4_match_winners.R"
+  run_r_script "code/scraping/ted_5_match_buyers.R"
 fi
 
 echo
