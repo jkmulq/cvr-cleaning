@@ -50,7 +50,7 @@ These flags appear in both final winner cleaning outputs:
 | `flag_cvr_alphabet` | The winner CVR candidate contained letters before cleaning. | Often catches country prefixes such as `DK12345678`. |
 | `flag_cvr_punct` | The winner CVR candidate contained punctuation before cleaning. | Useful for checking whether punctuation removal affected the CVR. |
 | `flag_cvr_standardised` | At least one CVR formatting cleanup flag is `TRUE`. | Summary flag for rows where the CVR candidate was changed syntactically. |
-| `flag_fill_missing_cvr` | A missing winner CVR was filled from another row with the same winner name, using a strict **one-to-one** rule: the name maps to exactly one valid CVR **and** that CVR maps to exactly one name. | Same-name borrowing; never overwrites an existing CVR. The one-to-one requirement drops CVRs shared across several names (often imperfect consortium expansions) — those rows keep a missing CVR and go to the name matcher instead. |
+| `flag_borrowed_cvr` | A missing winner CVR was filled from another row with the same winner name, using a strict **one-to-one** rule: the name maps to exactly one valid CVR **and** that CVR maps to exactly one name. | Same-name borrowing; never overwrites an existing CVR. The one-to-one requirement drops CVRs shared across several names (often imperfect consortium expansions) — those rows keep a missing CVR and go to the name matcher instead. |
 | `flag_missing_winner_cvr` | The cleaned winner CVR is missing or blank. | Main flag for rows that still need CVR recovery or matching. |
 | `flag_missing_winner_name` | The cleaned winner name is missing or blank. | Useful for separating rows that cannot be name matched. |
 | `flag_foreign_winner` | The winner is marked as non-Danish. | A Danish CVR may not be expected. |
@@ -59,7 +59,7 @@ These flags appear in both final winner cleaning outputs:
 | `flag_multilot` | The procurement has more than one lot. | Context flag for later analysis. |
 | `flag_cancelled` | The source indicates the tender or lot was cancelled. | Context flag for interpreting missing or unusual award data. |
 | `flag_missing_cvr_with_name` | Winner CVR is missing, but winner name is present. | These are natural candidates for name matching or external CVR lookup. |
-| `flag_check_fuzzy_match` | The row should be sent to the name-matching workflow. | For winners, this means winner name is present and winner CVR is missing. |
+| `flag_matching_candidate` | The row should be sent to the name-matching workflow. | For winners, this means winner name is present and winner CVR is missing. |
 | `flag_review_cvr` | A non-missing cleaned winner CVR is not syntactically valid. | Review cue for malformed CVRs. |
 | `flag_no_winner_info` | Winner CVR, name, and country are all missing. | Nothing useful is available for CVR verification. |
 | `flag_verify_cvr_external` | The row should be checked against an external CVR register. | Set for missing-CVR-with-name and invalid-CVR rows, but not for rows with no winner information. |
@@ -79,7 +79,7 @@ These flags appear in both final buyer cleaning outputs:
 | Flag | Meaning | How to read it |
 |---|---|---|
 | `flag_missing_buyer_name` | The cleaned buyer name is missing or blank. | Rows with missing buyer names cannot be name matched. |
-| `flag_check_fuzzy_match` | The row should be sent to the name-matching workflow. | In KFST this means buyer name is present. In OpenTender this means buyer name is present and buyer CVR is missing. |
+| `flag_matching_candidate` | The row should be sent to the name-matching workflow. | In KFST this means buyer name is present. In OpenTender this means buyer name is present and buyer CVR is missing. |
 
 ## Matching Flags
 
@@ -122,7 +122,7 @@ columns explain how the match was produced, but they are not themselves flags.
 (`winner_cvr_final` / `buyer_cvr_final`): whether it came from the raw field
 split, tier-3b field pairing, exact/fuzzy name matching, or was **backfilled from
 another lot** — i.e. borrowed from a record with the same exact name elsewhere in
-the dataset (the `flag_fill_missing_cvr` case, present for KFST winners and
+the dataset (the `flag_borrowed_cvr` case, present for KFST winners and
 OpenTender winners/buyers). Its ordering mirrors the `winner_cvr_final`
 precedence, which differs by source: in KFST a valid field/backfilled CVR beats a
 name match, while in OpenTender a name match overrides the field/backfilled CVR.
@@ -157,6 +157,32 @@ matcher** and is filled for every row whose final CVR is in the registry;
 and `cvr_name_is_substring` flags whether the firm name is a verbatim substring of
 it. It differs from `name_match_score`, which is the score of the accepted name
 match (populated only for rows resolved by matching).
+
+### Post-match review flags (`*_final`, all matched winner/buyer datasets incl. TED)
+
+The cleaning-stage CVR review flags (`flag_missing_winner_cvr`,
+`flag_missing_cvr_with_name`, `flag_review_cvr`, `flag_no_winner_info`,
+`flag_verify_cvr_external`, and their buyer equivalents) are computed in the
+**cleaning** scripts on the raw/cleaned CVR — i.e. **before matching**. The matched
+datasets add a parallel `*_final` set
+(`flag_missing_winner_cvr_final`, `flag_missing_cvr_with_name_final`,
+`flag_review_cvr_final`, `flag_no_winner_info_final`,
+`flag_verify_cvr_external_final`, and the `*_buyer_*_final` equivalents) computed on
+the **resolved** CVR (`winner_cvr_final` / `buyer_cvr_final`) **after** name
+matching, same-name backfill, and (KFST) tier-3b field pairing. A row whose CVR was
+recovered by matching is therefore `flag_missing_winner_cvr == TRUE` but
+`flag_missing_winner_cvr_final == FALSE`. `flag_review_cvr_final` uses
+`flag_cvr_final_in_registry` (registry membership) as its validity test rather than
+the syntactic `valid_cvr`. Read the `*_final` flags for the state of the delivered
+data and the un-suffixed ones for what the raw source provided. The pre-match
+`flag_matching_candidate` is deliberately **not** given a `*_final` version — it is a
+matcher input, not a description of the result. For KFST **buyers** (no source CVR
+field), the `*_final` flags are the only meaningful CVR missingness signal, and
+`flag_no_buyer_info_final` omits the country term (KFST buyers have no country).
+The **TED winner** build (`ted_4_match_winners.R`) carries the same pre-match and
+`*_final` flag families for parity — TED award notices rarely publish a winner CVR,
+so most TED winners are `flag_missing_winner_cvr == TRUE` (pre-match) but
+`flag_missing_winner_cvr_final == FALSE` once the CVR is recovered by name matching.
 
 ### Lineage date columns (winner and buyer, both sources)
 
@@ -203,7 +229,7 @@ included because they explain important source-specific choices.
 | `flag_buyer_count_agree` | KFST buyer data | The extracted buyer count agrees with the original listed buyer count. |
 | `flag_cvr_recovered_from_formatting` | OpenTender buyer data | A Danish CVR was recovered after cautious formatting cleanup. |
 | `flag_row_multiple_valid_cvr` | OpenTender buyer data | The original OpenTender source row contained more than one distinct valid Danish CVR. |
-| `flag_fill_missing_cvr` | OpenTender buyer data | A missing buyer CVR was filled from another row with the same buyer name. |
+| `flag_borrowed_cvr` | OpenTender buyer data | A missing buyer CVR was filled from another row with the same buyer name. |
 | `flag_cvr_placeholder` | OpenTender buyer data | The cleaned buyer CVR was a known placeholder or dummy value and was set to missing. |
 | `flag_non_cvr_identifier` | OpenTender buyer data | A multi-CVR buyer row also contained an invalid non-CVR token, which was removed rather than sent to name matching. |
 | `flag_cvr_ws` | OpenTender buyer data | The buyer CVR candidate contained whitespace before cleaning. |
