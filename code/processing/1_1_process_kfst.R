@@ -665,13 +665,10 @@ clean_winner_data <- clean_winner_data %>%
 # This uses the original winner name rather than a standardised name. Exact-name
 # matching is more conservative because it does not combine similar-looking firms.
 valid_invalid_cvr_winner_key <- clean_winner_data %>%
-  filter(!is.na(winner_name), winner_name != "") %>%
-  distinct(winner_name, winner_cvr_clean, valid_cvr) %>%
-  mutate(
-    n_valid_cvr = sum(valid_cvr),
-    n_total_cvr = n(), # Includes missing and invalid cleaned CVR values
-    .by = winner_name
-  )
+  filter(!is.na(winner_name), winner_name != "", valid_cvr) %>%
+  distinct(winner_name, winner_cvr_clean) %>%
+  mutate(n_valid_cvr    = n(), .by = winner_name) %>%      # distinct valid CVRs for this exact name
+  mutate(n_name_per_cvr = n(), .by = winner_cvr_clean)     # distinct names for this CVR
 
 ### 4.3.2 Record which KFST lots supplied each valid winner-name/CVR pair
 # lot_id uniquely identifies the original KFST lot. Keeping every source lot
@@ -683,12 +680,13 @@ valid_cvr_sources <- clean_winner_data %>%
     .by = c(winner_name, winner_cvr_clean)
   )
 
-### 4.3.3 Keep only names linked to exactly one distinct valid CVR
-# Names linked to several valid CVRs are ambiguous and are not filled.
+### 4.3.3 Keep only strict one-to-one pairs: the name maps to exactly one valid CVR AND that CVR maps to
+# exactly one name. A CVR shared across several names (often an imperfect consortium expansion, or a
+# near-placeholder CVR) is unreliable to borrow; those rows keep a missing CVR and go to the name matcher.
 single_valid_cvr_key <- valid_invalid_cvr_winner_key %>%
-  filter(n_valid_cvr == 1, n_total_cvr > 1, valid_cvr) %>%
+  filter(n_valid_cvr == 1, n_name_per_cvr == 1) %>%
   rename(winner_cvr_valid_from_same_name = winner_cvr_clean) %>%
-  select(-valid_cvr, -n_valid_cvr, -n_total_cvr) %>%
+  select(-n_valid_cvr, -n_name_per_cvr) %>%
   distinct()
 
 single_valid_cvr_key <- single_valid_cvr_key %>%
@@ -721,7 +719,7 @@ if (nrow(clean_winner_data) != n_winner_rows_before_cvr_fill) {
 # source row can contain CVRs overall while one separated winner still has none.
 clean_winner_data <- clean_winner_data %>%
   mutate(
-    flag_fill_missing_cvr = coalesce(
+    flag_borrowed_cvr = coalesce(
       (is.na(winner_cvr_clean) | winner_cvr_clean == "") &
         !is.na(winner_cvr_valid_from_same_name) &
         winner_cvr_valid_from_same_name != "",
@@ -732,13 +730,13 @@ clean_winner_data <- clean_winner_data %>%
 clean_winner_data <- clean_winner_data %>%
   mutate(
     winner_cvr_clean = ifelse(
-      flag_fill_missing_cvr,
+      flag_borrowed_cvr,
       winner_cvr_valid_from_same_name,
       winner_cvr_clean
     ),
     # Source lots are relevant only when a CVR was actually borrowed.
     lot_id_borrowed_from = ifelse(
-      flag_fill_missing_cvr,
+      flag_borrowed_cvr,
       lot_id_borrowed_from,
       NA_character_
     )
@@ -748,15 +746,15 @@ clean_winner_data <- clean_winner_data %>%
 clean_winner_data <- clean_winner_data %>%
   mutate(valid_cvr = coalesce(str_detect(winner_cvr_clean, "^\\d{8}$"), FALSE))
 
-n_filled_winner_cvrs <- sum(clean_winner_data$flag_fill_missing_cvr)
+n_filled_winner_cvrs <- sum(clean_winner_data$flag_borrowed_cvr)
 cat("Number of missing winner CVRs filled from the same exact winner name:",
     n_filled_winner_cvrs, "\n")
 
-if (any(clean_winner_data$flag_fill_missing_cvr & !clean_winner_data$valid_cvr)) {
+if (any(clean_winner_data$flag_borrowed_cvr & !clean_winner_data$valid_cvr)) {
   stop("At least one borrowed KFST winner CVR is not a valid eight-digit CVR.")
 }
 
-if (any(clean_winner_data$flag_fill_missing_cvr &
+if (any(clean_winner_data$flag_borrowed_cvr &
         (is.na(clean_winner_data$lot_id_borrowed_from) |
            clean_winner_data$lot_id_borrowed_from == ""))) {
   stop("At least one borrowed KFST winner CVR is missing its source lot.")

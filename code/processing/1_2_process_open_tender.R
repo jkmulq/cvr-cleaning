@@ -613,12 +613,13 @@ clean_winner_data <- clean_winner_data %>%
   mutate(valid_cvr = coalesce(str_detect(winner_cvr_clean, "^\\d{8}$"), FALSE))
 
 ## 2.8 Fill missing CVRs when present elsewhere in data
-### 2.8.1 Create key of CVR to firm names present in the data
+### 2.8.1 Count, over valid winner-name/CVR pairs, the distinct valid CVRs per name AND the distinct
+# names per CVR. Exact winner name (not standardised) -- conservative, does not merge similar firms.
 valid_invalid_cvr_winner_key <- clean_winner_data %>%
-  distinct(winner_name, winner_cvr_clean, valid_cvr) %>%
-  mutate(n_valid_cvr = sum(valid_cvr), 
-         n_total_cvr = n(), # Counts missings
-         .by = winner_name) 
+  filter(!is.na(winner_name), winner_name != "", valid_cvr) %>%
+  distinct(winner_name, winner_cvr_clean) %>%
+  mutate(n_valid_cvr    = n(), .by = winner_name) %>%      # distinct valid CVRs for this exact name
+  mutate(n_name_per_cvr = n(), .by = winner_cvr_clean)     # distinct names for this CVR
 
 ### 2.8.2 Identify a reproducible source row for each valid firm-name/CVR pairing
 valid_cvr_sources <- clean_winner_data %>%
@@ -628,17 +629,23 @@ valid_cvr_sources <- clean_winner_data %>%
     .by = c(winner_name, winner_cvr_clean)
   )
 
-### 2.8.3 Create subset of firms with 1 valid CVR, but more than 1 CVR entry (including missings)
-single_valid_cvr_key <- valid_invalid_cvr_winner_key %>% 
-  filter(n_valid_cvr == 1, n_total_cvr > 1, valid_cvr) %>% 
+### 2.8.3 Keep only strict one-to-one pairs: the name maps to exactly one valid CVR AND that CVR maps to
+# exactly one name. A CVR shared across several names (often an imperfect consortium expansion, or a
+# near-placeholder CVR) is unreliable to borrow; those rows keep a missing CVR and go to the name matcher.
+single_valid_cvr_key <- valid_invalid_cvr_winner_key %>%
+  filter(n_valid_cvr == 1, n_name_per_cvr == 1) %>%
   rename(winner_cvr_valid_from_same_name = winner_cvr_clean) %>%
-  select(-valid_cvr, -n_valid_cvr, -n_total_cvr) %>% 
+  select(-n_valid_cvr, -n_name_per_cvr) %>%
   distinct()
 
-# Join sources
 single_valid_cvr_key <- single_valid_cvr_key %>%
-  left_join(valid_cvr_sources, 
-            by = c("winner_name", "winner_cvr_valid_from_same_name" = "winner_cvr_clean"))
+  left_join(
+    valid_cvr_sources,
+    by = c(
+      "winner_name",
+      "winner_cvr_valid_from_same_name" = "winner_cvr_clean"
+    )
+  )
 
 # Join key
 clean_winner_data <- left_join(clean_winner_data, single_valid_cvr_key, 
@@ -647,17 +654,17 @@ clean_winner_data <- left_join(clean_winner_data, single_valid_cvr_key,
 
 ### 2.8.4 Overwrite missing CVR when valid alternative available 
 clean_winner_data <- clean_winner_data %>% 
-  mutate(flag_fill_missing_cvr = coalesce((winner_cvr_original == "" | is.na(winner_cvr_original)) &
+  mutate(flag_borrowed_cvr = coalesce((winner_cvr_original == "" | is.na(winner_cvr_original)) &
                                             !is.na(winner_cvr_valid_from_same_name) &
                                             winner_cvr_valid_from_same_name != "", 
                                           FALSE))
 clean_winner_data <- clean_winner_data %>%
   mutate(
-    winner_cvr_clean = ifelse(flag_fill_missing_cvr, winner_cvr_valid_from_same_name, winner_cvr_clean),
+    winner_cvr_clean = ifelse(flag_borrowed_cvr, winner_cvr_valid_from_same_name, winner_cvr_clean),
     # Keep source provenance only on rows whose CVR was actually filled (mirrors
     # the buyer path). Winner's row_id_borrowed_from is a ';'-collapsed string,
     # so reset to NA_character_.
-    row_id_borrowed_from = ifelse(flag_fill_missing_cvr, row_id_borrowed_from, NA_character_)
+    row_id_borrowed_from = ifelse(flag_borrowed_cvr, row_id_borrowed_from, NA_character_)
   )
 
 # Update valid CVR flag
@@ -790,7 +797,7 @@ clean_winner_data <- clean_winner_data %>%
       "winner_cvr_clean", "winner_cvr_candidate", "winner_cvr_original",
       "winner_cvr_recovered_from_formatting",
       "winner_cvr_valid_from_same_name", "row_id_borrowed_from",
-      "flag_fill_missing_cvr",
+      "flag_borrowed_cvr",
       "winner_name", "winner_name_original", "winner_name_basic",
       "winner_name_match", "winner_name_no_spaces", "winner_name_broad",
       "winner_firm_type", "winner_name_first_letter",
@@ -1089,32 +1096,39 @@ clean_buyer_data <- clean_buyer_data %>%
   mutate(valid_cvr = coalesce(str_detect(buyer_cvr_clean, "^\\d{8}$"), FALSE))
 
 ## 3.9 Fill missing CVRs when present elsewhere in data
-### 3.9.1 Create key of CVR to firm names present in the data
+### 3.9.1 Count, over valid buyer-name/CVR pairs, the distinct valid CVRs per name AND the distinct
+# names per CVR. Exact buyer name (not standardised) -- conservative, does not merge similar firms.
 valid_invalid_cvr_buyer_key <- clean_buyer_data %>%
-  distinct(buyer_name, buyer_cvr_clean, valid_cvr) %>%
-  mutate(n_valid_cvr = sum(valid_cvr), 
-         n_total_cvr = n(), # Counts missings
-         .by = buyer_name) 
+  filter(!is.na(buyer_name), buyer_name != "", valid_cvr) %>%
+  distinct(buyer_name, buyer_cvr_clean) %>%
+  mutate(n_valid_cvr    = n(), .by = buyer_name) %>%       # distinct valid CVRs for this exact name
+  mutate(n_name_per_cvr = n(), .by = buyer_cvr_clean)      # distinct names for this CVR
 
 ### 3.9.2 Identify a reproducible source row for each valid firm-name/CVR pairing
 valid_cvr_sources <- clean_buyer_data %>%
   filter(valid_cvr, !is.na(buyer_name), buyer_name != "") %>%
   summarise(
-    # One source row is enough to trace where the borrowed CVR came from.
-    row_id_borrowed_from = min(row_id),
+    row_id_borrowed_from = paste(sort(unique(row_id)), collapse = ";"),
     .by = c(buyer_name, buyer_cvr_clean)
   )
 
-### 3.9.3 Create subset of firms with 1 valid CVR, but more than 1 CVR entry (including missings)
-single_valid_cvr_key <- valid_invalid_cvr_buyer_key %>% 
-  filter(n_valid_cvr == 1, n_total_cvr > 1, valid_cvr) %>% 
+### 3.9.3 Keep only strict one-to-one pairs: the name maps to exactly one valid CVR AND that CVR maps to
+# exactly one name. A CVR shared across several names (often an imperfect consortium expansion, or a
+# near-placeholder CVR) is unreliable to borrow; those rows keep a missing CVR and go to the name matcher.
+single_valid_cvr_key <- valid_invalid_cvr_buyer_key %>%
+  filter(n_valid_cvr == 1, n_name_per_cvr == 1) %>%
   rename(buyer_cvr_valid_from_same_name = buyer_cvr_clean) %>%
-  select(-valid_cvr, -n_valid_cvr, -n_total_cvr) %>% 
+  select(-n_valid_cvr, -n_name_per_cvr) %>%
   distinct()
 
-# Join sources
 single_valid_cvr_key <- single_valid_cvr_key %>%
-  left_join(valid_cvr_sources, by = c("buyer_name", "buyer_cvr_valid_from_same_name" = "buyer_cvr_clean"))
+  left_join(
+    valid_cvr_sources,
+    by = c(
+      "buyer_name",
+      "buyer_cvr_valid_from_same_name" = "buyer_cvr_clean"
+    )
+  )
 
 # Join key
 clean_buyer_data <- left_join(clean_buyer_data, single_valid_cvr_key, 
@@ -1123,20 +1137,20 @@ clean_buyer_data <- left_join(clean_buyer_data, single_valid_cvr_key,
 
 ### 3.9.4 Overwrite missing CVR when valid alternative available 
 clean_buyer_data <- clean_buyer_data %>% 
-  mutate(flag_fill_missing_cvr = coalesce((buyer_cvr_original == "" | is.na(buyer_cvr_original)) &
+  mutate(flag_borrowed_cvr = coalesce((buyer_cvr_original == "" | is.na(buyer_cvr_original)) &
                                             !is.na(buyer_cvr_valid_from_same_name) &
                                             buyer_cvr_valid_from_same_name != "", 
                                           FALSE))
 clean_buyer_data <- clean_buyer_data %>% 
   mutate(
     buyer_cvr_clean = ifelse(
-      flag_fill_missing_cvr,
+      flag_borrowed_cvr,
       buyer_cvr_valid_from_same_name,
       buyer_cvr_clean
     ),
     # Keep source provenance only on rows whose CVR was actually filled.
     row_id_borrowed_from = ifelse(
-      flag_fill_missing_cvr,
+      flag_borrowed_cvr,
       row_id_borrowed_from,
       NA_integer_
     )
