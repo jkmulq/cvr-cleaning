@@ -50,7 +50,7 @@ These flags appear in both final winner cleaning outputs:
 | `flag_cvr_alphabet` | The winner CVR candidate contained letters before cleaning. | Often catches country prefixes such as `DK12345678`. |
 | `flag_cvr_punct` | The winner CVR candidate contained punctuation before cleaning. | Useful for checking whether punctuation removal affected the CVR. |
 | `flag_cvr_standardised` | At least one CVR formatting cleanup flag is `TRUE`. | Summary flag for rows where the CVR candidate was changed syntactically. |
-| `flag_fill_missing_cvr` | A missing winner CVR was filled from another row with the same winner name. | This is same-name borrowing. It should not overwrite an existing CVR. |
+| `flag_fill_missing_cvr` | A missing winner CVR was filled from another row with the same winner name, using a strict **one-to-one** rule: the name maps to exactly one valid CVR **and** that CVR maps to exactly one name. | Same-name borrowing; never overwrites an existing CVR. The one-to-one requirement drops CVRs shared across several names (often imperfect consortium expansions) — those rows keep a missing CVR and go to the name matcher instead. |
 | `flag_missing_winner_cvr` | The cleaned winner CVR is missing or blank. | Main flag for rows that still need CVR recovery or matching. |
 | `flag_missing_winner_name` | The cleaned winner name is missing or blank. | Useful for separating rows that cannot be name matched. |
 | `flag_foreign_winner` | The winner is marked as non-Danish. | A Danish CVR may not be expected. |
