@@ -71,7 +71,7 @@ cvr_key[, source_order := fifelse(name_source == "name", 1L, 2L)]
 ## 2.1 Row id for later joining
 buyer_data[, match_row_id := .I]
 buyer_data[, buyer_name_in_data := buyer_name]
-remaining <- buyer_data[flag_check_fuzzy_match == TRUE, ]
+remaining <- buyer_data[flag_matching_candidate == TRUE, ]
 cat("No. observations to match:", nrow(remaining), "\n")
 
 # The CVR key records when a name was valid. 
@@ -415,7 +415,7 @@ buyer_data[, cvr_number_source := fcase(
 # authorities), so the exact-vs-contains-DK split does not apply: candidates are tagged
 # "DK assumed (no country field)" and non-candidates are NA.
 buyer_data[, matching_candidate_type := fcase(
-  flag_check_fuzzy_match, "DK assumed (no country field)",
+  flag_matching_candidate, "DK assumed (no country field)",
   default = NA_character_
 )]
 
@@ -434,7 +434,7 @@ buyer_data[, flag_review_name_match := (
 #   - rows that did not receive a match;
 #   - fuzzy matches;
 #   - matches where several CVRs were possible.
-buyer_data[, flag_manual_name_review := (flag_check_fuzzy_match & (!flag_name_match_found | flag_review_name_match))]
+buyer_data[, flag_manual_name_review := (flag_matching_candidate & (!flag_name_match_found | flag_review_name_match))]
 
 # Create final CVR for buyers
 buyer_data[, buyer_cvr_final :=  buyer_cvr_name_match]
@@ -479,8 +479,26 @@ buyer_data[, flag_cvr_final_in_registry :=
 # nothing is ever "recovered from an invalid candidate" -- constant FALSE, kept for a consistent schema.
 buyer_data[, flag_cvr_recovered_from_invalid := FALSE]
 
+# Post-match ("_final") CVR review flags, mirroring the winner matchers for schema parity. KFST buyers
+# carry no source CVR (it is assigned entirely by matching here), so these are the ONLY meaningful CVR
+# missingness/review signals for KFST buyers. Computed on buyer_cvr_final; flag_cvr_final_in_registry is
+# the validity signal. KFST buyers have no country field, so flag_no_buyer_info_final omits it.
+buyer_data[, flag_missing_buyer_cvr_final :=
+  is.na(buyer_cvr_final) | buyer_cvr_final == ""]
+buyer_data[, flag_missing_cvr_with_name_final :=
+  flag_missing_buyer_cvr_final & !(is.na(buyer_name) | buyer_name == "")]
+buyer_data[, flag_review_cvr_final :=
+  !flag_missing_buyer_cvr_final & !flag_cvr_final_in_registry]
+buyer_data[, flag_no_buyer_info_final :=
+  flag_missing_buyer_cvr_final & (is.na(buyer_name) | buyer_name == "")]
+buyer_data[, flag_verify_cvr_external_final := fcase(
+  flag_missing_cvr_with_name_final, TRUE,
+  flag_review_cvr_final,            TRUE,
+  default = FALSE
+)]
+
 buyer_data[, name_match_status := fcase(
-  !flag_check_fuzzy_match,
+  !flag_matching_candidate,
   "not requested",
   flag_review_name_match,
   "manual review - fuzzy or ambiguous match",
