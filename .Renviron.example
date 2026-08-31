@@ -1,7 +1,8 @@
 VIRK_CVR_USER="your-virk-username"
 VIRK_CVR_PASSWORD="your-virk-password"
 
-# Optional: redirect the data folder off the repo to a shared location (e.g. a Box/Dropbox folder synced
-# across machines). Leave unset to use <project>/data. Only data moves; code/ stays in the repo. On macOS
-# a Box folder looks like: /Users/<you>/Library/CloudStorage/Box-Box/cvr-cleaning-data
+# Required: the data root. There is NO <project>/data fallback -- config.R errors if this is unset. Point
+# it at the shared data folder (e.g. a Box/Dropbox folder synced across machines); only the data moves,
+# code/ stays in the repo. On macOS a Box folder looks like:
+# /Users/<you>/Library/CloudStorage/Box-Box/cvr-cleaning-data
 CVR_DATA_DIR="/Users/you/Library/CloudStorage/Box-Box/cvr-cleaning-data"

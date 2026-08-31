@@ -23,10 +23,18 @@ find_project_root <- function(start = getwd(), marker = "cvr-cleaning.Rproj") {
 }
 PROJECT_DIR <- find_project_root()
 
-# 1b. Data root. Defaults to <project>/data, but can be redirected to a shared folder (e.g. a Box/Dropbox
-#     folder synced across machines) by setting CVR_DATA_DIR in ~/.Renviron or the environment. Only the
-#     data moves; code/ always stays in the repo. See .Renviron.example.
-DATA_ROOT <- Sys.getenv("CVR_DATA_DIR", unset = file.path(PROJECT_DIR, "data"))
+# 1b. Data root. MUST be set via CVR_DATA_DIR (in ~/.Renviron or the environment) -- there is no
+#     <project>/data fallback, so a run can never silently read/write a stray local data folder. Point it
+#     at the shared data folder (e.g. a Box/Dropbox folder synced across machines); only the data moves,
+#     code/ always stays in the repo. See .Renviron.example. Note run_replication.sh runs steps with
+#     `Rscript --vanilla` (which skips ~/.Renviron), so it resolves CVR_DATA_DIR from ~/.Renviron and
+#     exports it for the steps to inherit.
+DATA_ROOT <- Sys.getenv("CVR_DATA_DIR", unset = NA_character_)
+if (is.na(DATA_ROOT) || !nzchar(trimws(DATA_ROOT))) {
+  stop("CVR_DATA_DIR is not set. Point it at the shared data folder (e.g. your Box path) in ~/.Renviron ",
+       "or the environment before running -- there is no <project>/data fallback. See .Renviron.example.",
+       call. = FALSE)
+}
 DATA_ROOT <- normalizePath(DATA_ROOT, mustWork = FALSE)
 
 # 2. Derived paths (do not edit)
