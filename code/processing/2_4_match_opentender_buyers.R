@@ -61,7 +61,7 @@ cvr_key[, source_order := fifelse(name_source == "name", 1L, 2L)]
 
 # 2 Filter OT data
 ## Only attempt to fuzzy match Danish firms AND 
-## row is missing cvr number and row has buyer name (flag_check_fuzzy_match)
+## row is missing cvr number and row has buyer name (flag_matching_candidate)
 
 ## 2.1 Row id for later joining
 buyer_data[, match_row_id := .I]
@@ -69,7 +69,7 @@ buyer_data[, buyer_name_in_data := buyer_name]
 
 # The CVR key contains Danish firms, so only rows marked DK are automatically
 remaining <- buyer_data[
-  flag_check_fuzzy_match & grepl("DK", toupper(trimws(buyer_country)))
+  flag_matching_candidate & grepl("DK", toupper(trimws(buyer_country)))
 ]
 
 cat("Number observations to fuzzy match:", nrow(remaining), "\n")
@@ -989,7 +989,7 @@ buyer_data[, cvr_number_source := fcase(
   name_match_method == "fuzzy" & name_match_step == 6L &
     name_match_source == "biname",
   "fuzzy: broad biname",
-  flag_fill_missing_cvr,
+  flag_borrowed_cvr,
   "CVR backfilled from another lot: this buyer had no valid CVR, so the CVR of a buyer with the same exact name elsewhere in the dataset was borrowed",
   !is.na(buyer_cvr_clean) & buyer_cvr_clean != "" &
     source == "single buyer",
@@ -999,10 +999,10 @@ buyer_data[, cvr_number_source := fcase(
   "source: multiple CVR separation",
   !is.na(buyer_cvr_clean) & buyer_cvr_clean != "",
   "source: existing CVR, unclassified",
-  flag_check_fuzzy_match &
+  flag_matching_candidate &
     grepl("DK", toupper(trimws(buyer_country))),
   "matching candidate: no match found",
-  flag_check_fuzzy_match,
+  flag_matching_candidate,
   "not a matching candidate: not marked as Danish",
   default = "not a matching candidate: no CVR name"
 )]
@@ -1011,8 +1011,8 @@ buyer_data[, cvr_number_source := fcase(
 # is exactly DK (most reliable); "contains DK" = a mixed value like "DK,IE" merely containing DK; NA
 # for non-candidates.
 buyer_data[, matching_candidate_type := fcase(
-  flag_check_fuzzy_match & toupper(trimws(buyer_country)) == "DK",        "exact DK",
-  flag_check_fuzzy_match & grepl("DK", toupper(trimws(buyer_country))),   "contains DK",
+  flag_matching_candidate & toupper(trimws(buyer_country)) == "DK",        "exact DK",
+  flag_matching_candidate & grepl("DK", toupper(trimws(buyer_country))),   "contains DK",
   default = NA_character_
 )]
 
@@ -1030,7 +1030,7 @@ buyer_data[, flag_review_name_match := (
 #   - matches where several CVRs were possible
 #   - partition candidates that did not have a unique complete partition
 buyer_data[, flag_manual_name_review := (
-  flag_check_fuzzy_match & # Fuzzy matches
+  flag_matching_candidate & # Fuzzy matches
     (!flag_name_match_found | flag_review_name_match)
 )]
 
@@ -1039,7 +1039,7 @@ buyer_data[, flag_manual_name_review := (
 buyer_data[, buyer_cvr_final := as.character(buyer_cvr_clean)]
 
 # Fill missing CVRs from name matching
-buyer_data[flag_check_fuzzy_match & # Candidates for matching
+buyer_data[flag_matching_candidate & # Candidates for matching
               grepl("DK", toupper(trimws(buyer_country))) & # Danish firm 
               !flag_potential_multiple_names & # Not a potential multiple-name row
               !is.na(buyer_cvr_name_match), # Has a matched CVR number
@@ -1092,11 +1092,30 @@ buyer_data[, flag_cvr_recovered_from_invalid :=
 buyer_data[, flag_cvr_final_in_registry :=
   !is.na(buyer_cvr_final) & as.character(buyer_cvr_final) %chin% reg_cvrs_prov]
 
+# Post-match ("_final") mirror of the cleaning-stage CVR review flags. The un-suffixed flags from 1_2
+# (flag_missing_buyer_cvr, flag_missing_cvr_with_name, flag_review_cvr, flag_no_buyer_info,
+# flag_verify_cvr_external) describe PRE-match state (based on buyer_cvr_clean). These recompute the same
+# concepts on buyer_cvr_final. flag_cvr_final_in_registry is the post-match validity signal.
+# Name/country do not change through matching, so they are read directly.
+buyer_data[, flag_missing_buyer_cvr_final :=
+  is.na(buyer_cvr_final) | buyer_cvr_final == ""]
+buyer_data[, flag_missing_cvr_with_name_final :=
+  flag_missing_buyer_cvr_final & !(is.na(buyer_name) | buyer_name == "")]
+buyer_data[, flag_review_cvr_final :=
+  !flag_missing_buyer_cvr_final & !flag_cvr_final_in_registry]
+buyer_data[, flag_no_buyer_info_final :=
+  flag_missing_buyer_cvr_final & (is.na(buyer_name) | buyer_name == "") & is.na(buyer_country)]
+buyer_data[, flag_verify_cvr_external_final := fcase(
+  flag_missing_cvr_with_name_final, TRUE,
+  flag_review_cvr_final,            TRUE,
+  default = FALSE
+)]
+
 # Readable name-match status
 buyer_data[, name_match_status := fcase(
   flag_name_partition_expanded,
   "matched - separated buyer name",
-  !flag_check_fuzzy_match,
+  !flag_matching_candidate,
   "not requested",
   flag_potential_multiple_names,
   "manual review - potential multiple buyers",

@@ -65,7 +65,7 @@ cvr_key[, source_order := fifelse(name_source == "name", 1L, 2L)]
 
 # 2 Filter KFST data
 ## Only attempt to fuzzy match Danish firms AND 
-## row is missing cvr number and row has winning firm name (flag_check_fuzzy_match)
+## row is missing cvr number and row has winning firm name (flag_matching_candidate)
 
 ## 2.1 Row id for later joining
 winner_data[, match_row_id := .I]
@@ -78,12 +78,12 @@ registered_cvrs <- unique(cvr_key$cvr)
 winner_data[!is.na(winner_name) & winner_name != "" &
               !is.na(winner_cvr_clean) & winner_cvr_clean != "" &
               !(winner_cvr_clean %chin% registered_cvrs),
-            `:=`(winner_cvr_clean = NA_character_, valid_cvr = FALSE, flag_check_fuzzy_match = TRUE)]
+            `:=`(winner_cvr_clean = NA_character_, valid_cvr = FALSE, flag_matching_candidate = TRUE)]
 
 # Force every tier-3b name through the open matcher (even if borrow-filled) so each 3b row stores
 # BOTH a field score (graft 2.3) and an open-match score -> the field-vs-open cut is re-tunable later.
 winner_data[semi_tier == "3b_pending" & !is.na(winner_name) & winner_name != "",
-            flag_check_fuzzy_match := TRUE]
+            flag_matching_candidate := TRUE]
 
 # --- 2.3 Tier-3b field pairing (resolve semi_tier == "3b_pending") ---------------------------
 # For lots with more names than field CVRs, prefer the lot's OWN listed field CVRs. Each 3b name
@@ -159,7 +159,7 @@ winner_data[!is.na(field_paired_cvr), registry_score := field_paired_score]
 
 # The CVR key contains Danish firms, so only rows marked DK are automatically
 remaining <- winner_data[
-  flag_check_fuzzy_match &
+  flag_matching_candidate &
     grepl("DK", toupper(trimws(winner_country)))
 ]
 
@@ -483,7 +483,7 @@ winner_data[
 winner_data[, cvr_number_source := fcase(
   !is.na(field_paired_cvr),
   "CVR from tier-3b field pairing: winner name matched a CVR listed on this lot (lots with more names than field CVRs)",
-  coalesce(flag_fill_missing_cvr, FALSE) &
+  coalesce(flag_borrowed_cvr, FALSE) &
     !is.na(winner_cvr_clean) & winner_cvr_clean != "",
   "CVR backfilled from another lot: this winner had no valid CVR, so the CVR of a winner with the same exact name elsewhere in the dataset was borrowed",
   name_match_method == "exact" & name_match_step == 1L,
@@ -514,10 +514,10 @@ winner_data[, cvr_number_source := fcase(
   "CVR from the original winner field: extracted after separating consortium members by comma",
   !is.na(winner_cvr_clean) & winner_cvr_clean != "",
   "CVR from the original winner field: existing CVR, other misc split",
-  flag_check_fuzzy_match &
+  flag_matching_candidate &
     grepl("DK", toupper(trimws(winner_country))),
   "matching candidate: no match found",
-  flag_check_fuzzy_match,
+  flag_matching_candidate,
   "not a matching candidate: not marked as Danish",
   default = "not a matching candidate: no CVR name"
 )]
@@ -528,8 +528,8 @@ winner_data[, cvr_number_source := fcase(
 # foreign firms admitted to matching only because the string contains DK, so their matches are less
 # reliable. NA for rows that are not matching candidates.
 winner_data[, matching_candidate_type := fcase(
-  flag_check_fuzzy_match & toupper(trimws(winner_country)) == "DK",         "exact DK",
-  flag_check_fuzzy_match & grepl("DK", toupper(trimws(winner_country))),    "contains DK",
+  flag_matching_candidate & toupper(trimws(winner_country)) == "DK",         "exact DK",
+  flag_matching_candidate & grepl("DK", toupper(trimws(winner_country))),    "contains DK",
   default = NA_character_
 )]
 
@@ -548,7 +548,7 @@ winner_data[, flag_review_name_match := (
 #   - fuzzy matches;
 #   - matches where several CVRs were possible.
 winner_data[, flag_manual_name_review := (
-  flag_check_fuzzy_match &
+  flag_matching_candidate &
     is.na(field_paired_cvr) &   # a field-paired row is already resolved -- don't route it to manual review
     (
       !flag_name_match_found |
@@ -582,8 +582,28 @@ winner_data[, flag_cvr_recovered_from_invalid :=
 winner_data[, flag_cvr_final_in_registry :=
   !is.na(winner_cvr_final) & as.character(winner_cvr_final) %chin% reg_cvrs_prov]
 
+# Post-match ("_final") mirror of the cleaning-stage CVR review flags. The un-suffixed flags from 1_1
+# (flag_missing_winner_cvr, flag_missing_cvr_with_name, flag_review_cvr, flag_no_winner_info,
+# flag_verify_cvr_external) describe PRE-match state (based on winner_cvr_clean). These recompute the same
+# concepts on winner_cvr_final, so a row whose CVR was resolved by name matching / borrowing / field
+# pairing is no longer flagged "missing". flag_cvr_final_in_registry is the post-match validity signal
+# (replaces valid_cvr). Name/country do not change through matching, so they are read directly.
+winner_data[, flag_missing_winner_cvr_final :=
+  is.na(winner_cvr_final) | winner_cvr_final == ""]
+winner_data[, flag_missing_cvr_with_name_final :=
+  flag_missing_winner_cvr_final & !(is.na(winner_name) | winner_name == "")]
+winner_data[, flag_review_cvr_final :=
+  !flag_missing_winner_cvr_final & !flag_cvr_final_in_registry]
+winner_data[, flag_no_winner_info_final :=
+  flag_missing_winner_cvr_final & (is.na(winner_name) | winner_name == "") & is.na(winner_country)]
+winner_data[, flag_verify_cvr_external_final := fcase(
+  flag_missing_cvr_with_name_final, TRUE,
+  flag_review_cvr_final,            TRUE,
+  default = FALSE
+)]
+
 winner_data[, name_match_status := fcase(
-  !flag_check_fuzzy_match,
+  !flag_matching_candidate,
   "not requested",
   flag_review_name_match,
   "manual review - fuzzy or ambiguous match",

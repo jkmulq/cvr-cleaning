@@ -65,6 +65,13 @@ data <- data %>%
       joint_tender == "Enkelt" ~ "single",
       joint_tender == "Fælles" ~ "joint",
       TRUE ~ NA_character_
+    ),
+    # Standardise the divided-tender indicator to English (source is Danish Ja/Nej),
+    # matching OpenTender's yes/no.
+    divided_tender = case_when(
+      divided_tender == "Ja"  ~ "yes",
+      divided_tender == "Nej" ~ "no",
+      TRUE ~ NA_character_
     )
   )
 
@@ -140,8 +147,17 @@ data <- data %>%
 # completed tenders that the tender-level status (variable 44, `tender_status`)
 # would keep. Mirrors the OpenTender flag_awarded; default FALSE if status is
 # missing.
+# Standardise tender_cancelled to a logical (TRUE = annulled), matching OpenTender,
+# then derive flag_awarded as its negation.
 data <- data %>%
-  mutate(flag_awarded = coalesce(tender_cancelled == "Nej", FALSE))
+  mutate(
+    tender_cancelled = case_when(
+      tender_cancelled == "Ja"  ~ TRUE,
+      tender_cancelled == "Nej" ~ FALSE,
+      TRUE ~ NA
+    ),
+    flag_awarded = coalesce(!tender_cancelled, FALSE)
+  )
 
 ## Award end date
 # KFST has no contract end date, only the award (start) date and the contract
@@ -240,8 +256,8 @@ if (nrow(dup_lots) == 0) {
     filter(n_lot_id > 1) %>%
     summarise(
       n_rows = n(),
-      n_cancelled = sum(tender_cancelled == "Ja", na.rm = TRUE),
-      n_not_cancelled = sum(tender_cancelled == "Nej", na.rm = TRUE),
+      n_cancelled = sum(tender_cancelled, na.rm = TRUE),
+      n_not_cancelled = sum(!tender_cancelled, na.rm = TRUE),
       .by = lot_id
     )
 
@@ -256,11 +272,11 @@ if (nrow(dup_lots) == 0) {
   
   # Save object of what rows are cancelled
   cancelled_duplicate_lots <- data %>%
-    filter(n_lot_id > 1, tender_cancelled == "Ja")
+    filter(n_lot_id > 1, tender_cancelled)
 
   # Filter out cancelled duplicate rows, keeping the non-cancelled row for each duplicated lot_id
   data <- data %>%
-    filter(!(n_lot_id > 1 & tender_cancelled == "Ja"))
+    filter(!(n_lot_id > 1 & coalesce(tender_cancelled, FALSE)))
 }
 
 # Check whether duplicates remain after dropping duplicate cancelled/non-cancelled pairs
@@ -794,7 +810,7 @@ clean_winner_data <- clean_winner_data %>%
 
 # Cancelled procurement
 clean_winner_data <- clean_winner_data %>%
-  mutate(flag_cancelled = coalesce(tender_cancelled != "Nej", FALSE))
+  mutate(flag_cancelled = coalesce(tender_cancelled, FALSE))
 
 # Observation review
 clean_winner_data <- clean_winner_data %>%
@@ -803,7 +819,7 @@ clean_winner_data <- clean_winner_data %>%
       flag_missing_winner_cvr & !flag_missing_winner_name,
       FALSE
     ),
-    flag_check_fuzzy_match = coalesce(
+    flag_matching_candidate = coalesce(
       flag_missing_winner_cvr & !flag_missing_winner_name,
       FALSE
     ),
@@ -932,7 +948,7 @@ clean_buyer_data <- clean_buyer_data %>%
 
 # Flag fuzzy match check (only requires non-missing buyer name; no CVR numbers available)
 clean_buyer_data <- clean_buyer_data %>% 
-  mutate(flag_check_fuzzy_match = coalesce(!flag_missing_buyer_name, FALSE))
+  mutate(flag_matching_candidate = coalesce(!flag_missing_buyer_name, FALSE))
 
 # Collapse consortium members that resolved to the SAME valid CVR within a lot. This happens when the
 # source lists a firm's CVR more than once in the consortium field, or when a positional consortium

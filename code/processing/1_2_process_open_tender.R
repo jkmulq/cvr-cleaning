@@ -778,7 +778,7 @@ clean_winner_data <- clean_winner_data %>%
 
 # Flag if observation will need CVR fuzzy match 
 clean_winner_data <- clean_winner_data %>% 
-  mutate(flag_check_fuzzy_match = coalesce(winner_name != "" & is.na(winner_cvr_clean), FALSE))
+  mutate(flag_matching_candidate = coalesce(winner_name != "" & is.na(winner_cvr_clean), FALSE))
 
 ## 2.11 Reorder columns
 ## Keep the cleaned CVR, original source CVR, winner name, winner country, and
@@ -796,7 +796,7 @@ clean_winner_data <- clean_winner_data %>%
       "winner_firm_type", "winner_name_first_letter",
       "winner_country", "winner_country_original",
       "valid_cvr", "n_valid_cvr_raw", "n_valid_cvr", "flag_row_multiple_valid_cvr",
-      "flag_check_fuzzy_match",
+      "flag_matching_candidate",
       "flag_cvr_recovered_from_formatting", "flag_cvr_placeholder",
       "flag_cvr_standardised", "flag_cvr_ws",
       "flag_cvr_alphabet", "flag_cvr_punct",
@@ -1253,7 +1253,7 @@ clean_buyer_data <- clean_buyer_data %>%
 
 # Flag if observation will need CVR fuzzy match 
 clean_buyer_data <- clean_buyer_data %>%
-  mutate(flag_check_fuzzy_match = coalesce(buyer_name != "" & is.na(buyer_cvr_clean), FALSE))
+  mutate(flag_matching_candidate = coalesce(buyer_name != "" & is.na(buyer_cvr_clean), FALSE))
 
 # Ensure natural row grains for each of winner/buyer side
 # OpenTender expands every row across the buyer dimension, where
