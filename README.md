@@ -76,10 +76,10 @@ cvr-cleaning/
 └── renv.lock
 ```
 
-Input data and generated outputs are **not** committed to the repository. By
-default they live in git-ignored local `data/` and `output/` folders; the data
-folder can be redirected to a shared location with `CVR_DATA_DIR` (see
-[Configuration](#configuration)). The datasets are not publicly distributed — see
+Input data and generated outputs are **not** committed to the repository. The
+data root is set by the **required** `CVR_DATA_DIR` (there is no local default —
+see [Configuration](#configuration)); `output/` stays a git-ignored local folder.
+The datasets are not publicly distributed — see
 [Required local inputs](#required-local-inputs) to request access.
 
 ## What each script does
@@ -187,28 +187,28 @@ If you run an individual R script or knit a report manually, keep the
 or clone the repo intact). `config.R` falls back to the working directory, with a
 warning, only if the marker cannot be found.
 
-The derived paths in `config.R` (under the data root — `<project>/data` by
-default, or `$CVR_DATA_DIR`) are:
+The derived paths in `config.R` (all under the `$CVR_DATA_DIR` data root) are:
 
 ```text
-dirs$raw_data      -> data/raw/
-dirs$cvr_key       -> data/cvr_matching_data/
-dirs$clean_data    -> data/clean/
-dirs$intermediates -> data/intermediates/
-dirs$code          -> code/
+dirs$raw_data      -> $CVR_DATA_DIR/raw/
+dirs$cvr_key       -> $CVR_DATA_DIR/cvr_matching_data/
+dirs$clean_data    -> $CVR_DATA_DIR/clean/
+dirs$intermediates -> $CVR_DATA_DIR/intermediates/
+dirs$code          -> code/            (always in the repo)
 ```
 
-`config.R` creates the expected local data output directories (`data/raw/`,
-`data/clean/`) if they are missing, but it does not download or create the raw
-input files.
+`config.R` creates the expected data output directories under the root if they are
+missing, but it does not download or create the raw input files.
 
-**Optional: a shared data folder.** By default the data root is `<project>/data`.
-To keep data off the repo — e.g. in a Box or Dropbox folder synced across machines —
-set `CVR_DATA_DIR` to that folder in `~/.Renviron` (or the environment). Every
-`dirs$*` data path then derives from it, while `dirs$code` always stays in the repo.
-See [.Renviron.example](.Renviron.example); on macOS a Box path looks like
-`/Users/<you>/Library/CloudStorage/Box-Box/cvr-cleaning-data`. Copy your existing
-`data/` there once (`rsync -a data/ "$CVR_DATA_DIR/"`).
+**Required: the data root.** `CVR_DATA_DIR` **must** be set — there is no
+`<project>/data` fallback, so a run can never silently read or write a stray local
+folder; `config.R` errors and `run_replication.sh` fails fast if it is unset. Set
+it to the shared data folder — e.g. a Box or Dropbox folder synced across machines —
+in `~/.Renviron` (or the environment). Every `dirs$*` data path then derives from
+it, while `dirs$code` always stays in the repo. See
+[.Renviron.example](.Renviron.example); on macOS a Box path looks like
+`/Users/<you>/Library/CloudStorage/Box-Box/cvr-cleaning-data`. First-time setup can
+seed it from a local folder once (`rsync -a data/ "$CVR_DATA_DIR/"`).
 [run_replication.sh](run_replication.sh) runs each step with `Rscript --vanilla`
 (which skips `~/.Renviron`), so it resolves `CVR_DATA_DIR` from `~/.Renviron` and
 exports it; the data root it will use is echoed at the top of each run.
@@ -413,7 +413,7 @@ their EUR/DKK counterparts (`tender_amount_eur`, `tender_amount_dkk`,
 `annualised_lot_amount`. They also record when a missing OpenTender CVR was
 recovered from formatting alone (`*_cvr_recovered_from_formatting` and
 `flag_cvr_recovered_from_formatting`) or filled from another row with the same
-firm name (`row_id_borrowed_from` and `flag_fill_missing_cvr`); on the buyer
+firm name (`row_id_borrowed_from` and `flag_borrowed_cvr`); on the buyer
 side, the cleaning output also flags invalid multi-CVR tokens that were dropped
 before name matching (`flag_non_cvr_identifier`).
 
