@@ -76,3 +76,60 @@ saveRDS(build_date_panel(date_data[source == "ot"]),
         file.path(dirs$intermediates, "ted", "opentender_notice_dates.rds"))
 saveRDS(build_date_panel(date_data[source == "kfst"]),
         file.path(dirs$intermediates, "ted", "kfst_notice_dates.rds"))
+
+# 3 TED notice-keyed panel. The TED winner/buyer datasets (ted_4/ted_5) key on the AWARD notice id
+#   (= the TED notice_id), NOT (tender_id, lot_id). Build the same 10 lineage-date columns per award
+#   notice by walking award -> competition -> planning through notice_links, and carry the framework
+#   duration (from the competition notice) so ted_4 can annualise framework amounts like OT/KFST.
+build_ted_notice_panel <- function(dd) {
+  dd <- copy(dd)
+  dd[notice_level == "award" &
+       date_field %chin% c("DATE_CONCLUSION_CONTRACT", "CONTRACT_AWARD_DATE", "DATE_OF_CONTRACT_AWARD"),
+     date_field := "CONTRACT_AWARD_DATE"]
+  date_types <- c("DS_DATE_DISPATCH", "DATE_PUB", "DATE_RECEIPT_TENDERS", "CONTRACT_AWARD_DATE")
+
+  # earliest date per (level, notice_id, field)
+  lvl <- unique(dd[date_field %chin% date_types & !is.na(date_iso),
+                   .(notice_level, notice_id, date_field, date_iso = lubridate::ymd(date_iso))])
+  lvl <- lvl[, .(date_iso = sort(date_iso)[1]), by = .(notice_level, notice_id, date_field)]
+
+  name_of <- function(level, field) fcase(
+    level == "planning"    & field == "DS_DATE_DISPATCH",     "planning_dispatch_date",
+    level == "planning"    & field == "DATE_PUB",             "planning_publication_date",
+    level == "planning"    & field == "DATE_RECEIPT_TENDERS", "planning_tender_deadline_date",
+    level == "competition" & field == "DS_DATE_DISPATCH",     "competition_dispatch_date",
+    level == "competition" & field == "DATE_PUB",             "competition_publication_date",
+    level == "competition" & field == "DATE_RECEIPT_TENDERS", "competition_tender_deadline_date",
+    level == "award"       & field == "DS_DATE_DISPATCH",     "award_dispatch_date",
+    level == "award"       & field == "DATE_PUB",             "award_publication_date",
+    level == "award"       & field == "DATE_RECEIPT_TENDERS", "award_tender_deadline_date",
+    level == "award"       & field == "CONTRACT_AWARD_DATE",  "award_contract_date",
+    default = NA_character_)
+
+  level_wide <- function(level) {
+    x <- lvl[notice_level == level]
+    if (!nrow(x)) return(data.table(notice_id = character()))
+    x[, col := name_of(level, date_field)]
+    x <- x[!is.na(col)]
+    if (!nrow(x)) return(data.table(notice_id = character()))
+    dcast(x, notice_id ~ col, value.var = "date_iso", fun.aggregate = function(v) sort(v)[1])
+  }
+  aw <- level_wide("award"); cm <- level_wide("competition"); pl <- level_wide("planning")
+
+  links <- as.data.table(readRDS(file.path(dirs$intermediates, "ted", "notice_links.rds")))
+  panel <- unique(links[!is.na(award_notice_id),
+    .(notice_id = award_notice_id, competition_notice_id, planning_notice_id,
+      is_framework, framework_duration_days)])
+  panel <- merge(panel, aw, by = "notice_id", all.x = TRUE)
+  panel <- merge(panel, cm, by.x = "competition_notice_id", by.y = "notice_id", all.x = TRUE)
+  panel <- merge(panel, pl, by.x = "planning_notice_id",    by.y = "notice_id", all.x = TRUE)
+
+  date_cols <- c(
+    "planning_dispatch_date", "planning_publication_date", "planning_tender_deadline_date",
+    "competition_dispatch_date", "competition_publication_date", "competition_tender_deadline_date",
+    "award_dispatch_date", "award_publication_date", "award_tender_deadline_date", "award_contract_date")
+  for (col in setdiff(date_cols, names(panel))) panel[, (col) := as.Date(NA)]
+  panel[, c("notice_id", date_cols, "framework_duration_days", "is_framework"), with = FALSE]
+}
+saveRDS(build_ted_notice_panel(date_data),
+        file.path(dirs$intermediates, "ted", "ted_notice_dates.rds"))

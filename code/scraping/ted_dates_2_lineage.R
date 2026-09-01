@@ -47,7 +47,8 @@ links[cmeta, on = "competition_notice_id",
            procedure_type     = i.procedure_type,
            procedure_group    = i.procedure_group,
            is_dps             = i.is_dps,
-           is_framework       = i.is_framework)]
+           is_framework       = i.is_framework,
+           framework_duration_days = i.framework_duration_days)]
 links[, planning_url        := detail_url(planning_notice_id)]
 links[, planning_xml_url    := xml_url(planning_notice_id)]
 links[, planning_xml_status := xml_status(planning_notice_id, planning_cache_dir)]
@@ -68,7 +69,7 @@ links[, earliest_notice_id := fcoalesce(planning_notice_id, competition_notice_i
 setcolorder(links, c(
   "award_notice_id", "award_url",
   "competition_notice_id", "competition_url", "competition_xml_url", "competition_xml_status",
-  "procedure_type", "procedure_group", "is_dps", "is_framework",
+  "procedure_type", "procedure_group", "is_dps", "is_framework", "framework_duration_days",
   "planning_notice_id", "planning_url", "planning_xml_url", "planning_xml_status",
   "earliest_notice_id", "direct_award"))
 setorder(links, award_notice_id)

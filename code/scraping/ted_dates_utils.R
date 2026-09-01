@@ -143,17 +143,32 @@ is_dps_notice       <- function(txt) grepl("<DPS[ >/]|<SETTING_UP_DPS[ >/]", txt
 # form) - deliberately excludes INFORMATION_REGULATORY_FRAMEWORK.
 is_framework_notice <- function(txt) grepl("<FRAMEWORK[ >/]|ESTABLISHMENT_FRAMEWORK_AGREEMENT|<FRAMEWORK_AGREEMENT[ >/]", txt, perl = TRUE)
 
-# One read of a competition notice -> its prior (planning) ref + procedure + flags.
+# Longest contract/framework DURATION in a notice, in days. TED encodes it as
+# <DURATION TYPE="MONTH|DAY|YEAR">N</DURATION> (one per lot/OBJECT_DESCR); take the
+# max as a notice-level proxy for annualising framework amounts. NA if none/untyped.
+duration_days_of <- function(txt) {
+  hits <- regmatches(txt, gregexpr("<DURATION[^>]*TYPE=\"[A-Z]+\"[^>]*>\\s*[0-9]+", txt, perl = TRUE))[[1]]
+  if (!length(hits)) return(NA_real_)
+  types <- sub(".*TYPE=\"([A-Z]+)\".*", "\\1", hits)
+  nums  <- as.numeric(sub(".*>\\s*([0-9]+)$", "\\1", hits))
+  mult  <- fcase(types == "DAY", 1, types == "MONTH", 30, types == "YEAR", 365, default = NA_real_)
+  days  <- nums * mult
+  if (all(is.na(days))) NA_real_ else max(days, na.rm = TRUE)
+}
+
+# One read of a competition notice -> its prior (planning) ref + procedure + flags + duration.
 competition_meta <- function(nid, cache) {
   txt <- read_txt(nid, cache)
   if (!nzchar(txt)) {
     return(list(planning_notice_id = NA_character_, procedure_type = NA_character_,
-                procedure_group = NA_character_, is_dps = NA, is_framework = NA))
+                procedure_group = NA_character_, is_dps = NA, is_framework = NA,
+                framework_duration_days = NA_real_))
   }
   pid <- extract_prior(txt); if (!is.na(pid) && identical(pid, nid)) pid <- NA_character_
   pt  <- procedure_type_of(txt)
   list(planning_notice_id = pid, procedure_type = pt, procedure_group = procedure_group_of(pt),
-       is_dps = is_dps_notice(txt), is_framework = is_framework_notice(txt))
+       is_dps = is_dps_notice(txt), is_framework = is_framework_notice(txt),
+       framework_duration_days = duration_days_of(txt))
 }
 map_competition_meta <- function(ids, cache) {
   if (!length(ids)) return(data.table())

@@ -50,14 +50,14 @@ buyer_data[, `:=`(
   buyer_firm_type      = bp$firm_type,
   first_letter         = substr(bp$name_clean, 1, 1),
   broad_first_letter   = substr(bp$name_broad, 1, 1))]
-buyer_data[, flag_check_fuzzy_match :=
+buyer_data[, flag_matching_candidate :=
   !is.na(buyer_name) & buyer_name != "" & (is.na(buyer_cvr_clean) | buyer_cvr_clean == "")]
 
 # 2 Filter (DK / DNK; match date = the TED contract-award date)
 buyer_data[, match_row_id := .I]
 buyer_data[, buyer_name_in_data := buyer_name]
 remaining <- buyer_data[
-  flag_check_fuzzy_match & toupper(trimws(buyer_country)) %in% c("DK", "DNK")]
+  flag_matching_candidate & toupper(trimws(buyer_country)) %in% c("DK", "DNK")]
 cat("Number observations to fuzzy match:", nrow(remaining), "\n")
 remaining[, match_date := as.IDate(date_contract_award)]
 remaining_original <- remaining
@@ -201,16 +201,16 @@ buyer_data[, cvr_number_source := fcase(
   name_match_method == "fuzzy" & name_match_step == 6L & name_match_source == "name",   "fuzzy: broad main name",
   name_match_method == "fuzzy" & name_match_step == 6L & name_match_source == "biname", "fuzzy: broad biname",
   !is.na(buyer_cvr_clean) & buyer_cvr_clean != "", "source: CVR extracted from TED XML",
-  flag_check_fuzzy_match & toupper(trimws(buyer_country)) %in% c("DK", "DNK"), "matching candidate: no match found",
-  flag_check_fuzzy_match, "not a matching candidate: not marked as Danish",
+  flag_matching_candidate & toupper(trimws(buyer_country)) %in% c("DK", "DNK"), "matching candidate: no match found",
+  flag_matching_candidate, "not a matching candidate: not marked as Danish",
   default = "not a matching candidate: no CVR name")]
 
 # Reliability of a matching candidate's Danish gate (as in the winner matchers). "exact DK" = country
 # is exactly DK/DNK; "contains DK" = a mixed value merely containing DK; NA for non-candidates. TED
 # country is a single ISO code, so in practice only "exact DK" occurs here.
 buyer_data[, matching_candidate_type := fcase(
-  flag_check_fuzzy_match & toupper(trimws(buyer_country)) %chin% c("DK", "DNK"), "exact DK",
-  flag_check_fuzzy_match & grepl("DK", toupper(trimws(buyer_country))),          "contains DK",
+  flag_matching_candidate & toupper(trimws(buyer_country)) %chin% c("DK", "DNK"), "exact DK",
+  flag_matching_candidate & grepl("DK", toupper(trimws(buyer_country))),          "contains DK",
   default = NA_character_
 )]
 
@@ -219,15 +219,15 @@ buyer_data[, flag_name_match_ambiguous := (flag_name_match_found & name_match_n_
 buyer_data[, flag_review_name_match :=
   (flag_name_match_found & (name_match_method == "fuzzy" | flag_name_match_ambiguous))]
 buyer_data[, flag_manual_name_review :=
-  (flag_check_fuzzy_match & (!flag_name_match_found | flag_review_name_match))]
+  (flag_matching_candidate & (!flag_name_match_found | flag_review_name_match))]
 
 buyer_data[, buyer_cvr_final := as.character(buyer_cvr_clean)]
-buyer_data[flag_check_fuzzy_match & toupper(trimws(buyer_country)) %in% c("DK", "DNK") &
+buyer_data[flag_matching_candidate & toupper(trimws(buyer_country)) %in% c("DK", "DNK") &
              !is.na(buyer_cvr_name_match),
            buyer_cvr_final := buyer_cvr_name_match]
 
 buyer_data[, name_match_status := fcase(
-  !flag_check_fuzzy_match, "not requested",
+  !flag_matching_candidate, "not requested",
   flag_review_name_match,  "manual review - fuzzy or ambiguous match",
   flag_name_match_found,   "matched",
   is.na(buyer_country) | !toupper(trimws(buyer_country)) %in% c("DK", "DNK"),
@@ -276,6 +276,156 @@ buyer_data[, flag_cvr_recovered_from_invalid :=
 buyer_data[, flag_cvr_final_in_registry :=
   !is.na(buyer_cvr_final) & as.character(buyer_cvr_final) %chin% reg_cvrs_prov]
 
+# ============================================================================
+# 7b Shared-schema parity with the KFST/OpenTender matched BUYER datasets (mirror
+# of the winner enrichment in ted_4_match_winners.R, buyer_ prefix). TED buyers DO
+# have a country field, so the country-dependent flags behave as in OpenTender.
+# ============================================================================
+
+# --- Core field aliases (same data, shared names) ---
+buyer_data[, `:=`(
+  lot_number             = as.character(lot),
+  award_date             = as.Date(date_contract_award),
+  submit_date            = as.Date(date_receipt_tenders),
+  n_bids_received        = as.character(n_tenders_received),
+  n_bidders              = suppressWarnings(as.numeric(n_tenders_received)),
+  tender_amount          = as.numeric(amount_awarded),
+  lot_amount             = as.numeric(lot_awarded_value),
+  divided_tender         = fifelse(fcoalesce(n_lots > 1L, FALSE), "yes", "no"),
+  joint_tender           = NA_character_,
+  consortium_winner      = NA_character_,   # winner-side attribute carried in the shared buyer schema; no TED source
+  source                 = "ted extraction", # provenance label (OT/KFST buyers use "single buyer"/"multiple CVRs")
+  tender_cancelled       = FALSE,
+  flag_awarded           = TRUE,
+  ted_notice_id          = as.character(notice_id),
+  buyer_cvr_original     = as.character(buyer_cvr_raw),
+  buyer_name_original    = buyer_name_in_data,
+  buyer_country_original = buyer_country,
+  buyer_name_first_letter = first_letter
+)]
+
+# --- CPV groupings ---
+cpv_prepared <- clean_cpv_code(buyer_data$cpv_main)
+buyer_data[, `:=`(
+  cpv_code          = cpv_main,
+  cpv_code_first    = cpv_prepared$code_first,
+  cpv_division      = cpv_prepared$division,
+  cpv_division_name = cpv_prepared$division_name,
+  cpv_sector        = cpv_prepared$sector,
+  cpv_category      = cpv_prepared$category
+)]
+
+# Shared-schema `contract_type` = framework-vs-public (as in KFST/OT). TED's extracted contract_type is
+# the CPV contract NATURE (services/supplies/works) -- keep that under `contract_nature` and rederive
+# `contract_type` from is_framework so it agrees with KFST/OT and variable_descriptions.md.
+setnames(buyer_data, "contract_type", "contract_nature")
+buyer_data[, contract_type := fcase(
+  is_framework %in% TRUE,  "Framework agreement",
+  is_framework %in% FALSE, "Public contract",
+  default = NA_character_)]
+
+# --- Amount fill + equal-split across a notice's lots ---
+buyer_data[, tender_amount := {
+  if (all(is.na(tender_amount)) && all(!is.na(lot_amount)))
+    sum(lot_amount[!duplicated(lot_id)]) else tender_amount
+}, by = notice_id]
+buyer_data[, lot_amount_orig := lot_amount]
+buyer_data[, flag_all_orig_lot_amt_missing := all(is.na(lot_amount_orig)), by = notice_id]
+buyer_data[, lot_amount := fifelse(flag_all_orig_lot_amt_missing,
+                                   tender_amount / uniqueN(lot_id), lot_amount_orig),
+           by = notice_id]
+
+# --- Currency counterparts (EUR<->DKK peg only; other currencies NA) ---
+dkk_per_eur <- 7.46038
+buyer_data[, .ccy := toupper(trimws(currency))]
+buyer_data[, `:=`(
+  tender_amount_eur = fcase(.ccy == "EUR", tender_amount,
+                            .ccy == "DKK", tender_amount / dkk_per_eur, default = NA_real_),
+  tender_amount_dkk = fcase(.ccy == "DKK", tender_amount,
+                            .ccy == "EUR", tender_amount * dkk_per_eur, default = NA_real_),
+  lot_amount_eur    = fcase(.ccy == "EUR", lot_amount,
+                            .ccy == "DKK", lot_amount / dkk_per_eur, default = NA_real_),
+  lot_amount_dkk    = fcase(.ccy == "DKK", lot_amount,
+                            .ccy == "EUR", lot_amount * dkk_per_eur, default = NA_real_)
+)]
+buyer_data[, .ccy := NULL]
+
+# --- valid_cvr ---
+buyer_data[, valid_cvr :=
+  !is.na(buyer_cvr_clean) & grepl("^[0-9]{8}$", as.character(buyer_cvr_clean)) &
+  !(as.character(buyer_cvr_clean) %chin% known_invalid_cvr_numbers())]
+
+# --- CVR formatting-cleanup flags (raw -> clean) ---
+buyer_data[, flag_cvr_ws       := !is.na(buyer_cvr_candidate) & str_detect(buyer_cvr_candidate, "\\s")]
+buyer_data[, flag_cvr_alphabet := !is.na(buyer_cvr_candidate) & str_detect(buyer_cvr_candidate, "[[:alpha:]]")]
+buyer_data[, flag_cvr_punct    := !is.na(buyer_cvr_candidate) & str_detect(buyer_cvr_candidate, "[[:punct:]]")]
+buyer_data[, flag_cvr_standardised := flag_cvr_ws | flag_cvr_alphabet | flag_cvr_punct]
+
+# --- Same-name borrow columns: not applicable to TED -> constant ---
+buyer_data[, flag_borrowed_cvr := FALSE]
+buyer_data[, buyer_cvr_valid_from_same_name := NA_character_]
+
+# --- Context flags ---
+buyer_data[, flag_single_bidder := fcoalesce(suppressWarnings(as.numeric(n_tenders_received)) == 1, FALSE)]
+buyer_data[, flag_multilot       := fcoalesce(n_lots > 1L, FALSE)]
+buyer_data[, flag_cancelled      := FALSE]
+
+# --- Pre-match CVR review flags (on the cleaned CVR) ---
+buyer_data[, flag_missing_buyer_cvr     := is.na(buyer_cvr_clean) | buyer_cvr_clean == ""]
+buyer_data[, flag_missing_buyer_name    := is.na(buyer_name) | buyer_name == ""]
+buyer_data[, flag_missing_buyer_country := is.na(buyer_country) | buyer_country == ""]
+buyer_data[, flag_foreign_buyer :=
+  !is.na(buyer_country) & !(toupper(trimws(buyer_country)) %in% c("DK", "DNK"))]
+buyer_data[, flag_missing_cvr_with_name := flag_missing_buyer_cvr & !flag_missing_buyer_name]
+buyer_data[, flag_review_cvr            := !flag_missing_buyer_cvr & !valid_cvr]
+buyer_data[, flag_no_buyer_info :=
+  flag_missing_buyer_cvr & flag_missing_buyer_name & flag_missing_buyer_country]
+buyer_data[, flag_verify_cvr_external := fcase(
+  flag_missing_cvr_with_name, TRUE,
+  flag_review_cvr,            TRUE,
+  default = FALSE
+)]
+
+# --- Post-match ("_final") CVR review flags, on buyer_cvr_final ---
+buyer_data[, flag_missing_buyer_cvr_final := is.na(buyer_cvr_final) | buyer_cvr_final == ""]
+buyer_data[, flag_missing_cvr_with_name_final :=
+  flag_missing_buyer_cvr_final & !(is.na(buyer_name) | buyer_name == "")]
+buyer_data[, flag_review_cvr_final :=
+  !flag_missing_buyer_cvr_final & !flag_cvr_final_in_registry]
+buyer_data[, flag_no_buyer_info_final :=
+  flag_missing_buyer_cvr_final & flag_missing_buyer_name & flag_missing_buyer_country]
+buyer_data[, flag_verify_cvr_external_final := fcase(
+  flag_missing_cvr_with_name_final, TRUE,
+  flag_review_cvr_final,            TRUE,
+  default = FALSE
+)]
+
+# 7c Lineage dates + annualised amounts from the TED notice-date panel (same panel
+#    ted_4 uses, keyed by the award notice = TED notice_id). Mirrors the winner join.
+ted_panel_file <- file.path(ted_dir, "ted_notice_dates.rds")
+if (!file.exists(ted_panel_file)) {
+  source(file.path(PROJECT_DIR, "code", "scraping", "ted_dates_1_fetch.R"))
+  source(file.path(PROJECT_DIR, "code", "scraping", "ted_dates_2_lineage.R"))
+  source(file.path(PROJECT_DIR, "code", "scraping", "ted_dates_3_extract.R"))
+  source(file.path(PROJECT_DIR, "code", "scraping", "ted_dates_5_panel.R"))
+}
+ted_dates_panel <- as.data.table(readRDS(ted_panel_file))
+lineage_date_cols <- c(
+  "planning_dispatch_date", "planning_publication_date", "planning_tender_deadline_date",
+  "competition_dispatch_date", "competition_publication_date", "competition_tender_deadline_date",
+  "award_dispatch_date", "award_publication_date", "award_tender_deadline_date", "award_contract_date")
+buyer_data <- merge(
+  buyer_data,
+  ted_dates_panel[, c("notice_id", lineage_date_cols, "framework_duration_days"), with = FALSE],
+  by = "notice_id", all.x = TRUE, sort = FALSE)
+buyer_data[, annualised_tender_amount := fifelse(
+  is_framework %in% TRUE & !is.na(framework_duration_days) & framework_duration_days > 0,
+  tender_amount / framework_duration_days * 365, NA_real_)]
+buyer_data[, annualised_lot_amount := fifelse(
+  is_framework %in% TRUE & !is.na(framework_duration_days) & framework_duration_days > 0,
+  lot_amount / framework_duration_days * 365, NA_real_)]
+buyer_data[, framework_duration_days := NULL]
+
 manual_name_review <- buyer_data[flag_manual_name_review == TRUE,
   .(notice_id, lot_id, lot, buyer_name_in_data, buyer_name, buyer_name_match, buyer_firm_type,
     buyer_country, date_contract_award, buyer_cvr_name_match, registered_name_match,
@@ -284,6 +434,10 @@ manual_name_review <- buyer_data[flag_manual_name_review == TRUE,
     flag_review_name_match, flag_manual_name_review, name_match_status)]
 
 buyer_data[, match_row_id := NULL]
+
+# Harmonise shared output column types with KFST / OpenTender (lot_id as character, not the raw integer).
+buyer_data[, lot_id := as.character(lot_id)]
+buyer_data[, buyer_number := suppressWarnings(as.integer(buyer_number))]
 
 # 8 Save
 saveRDS(buyer_data, file.path(ted_dir, "ted_buyer_data_name_matched.rds"))
