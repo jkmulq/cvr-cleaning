@@ -57,7 +57,7 @@ buyer_data[, flag_matching_candidate :=
 buyer_data[, match_row_id := .I]
 buyer_data[, buyer_name_in_data := buyer_name]
 remaining <- buyer_data[
-  flag_matching_candidate & toupper(trimws(buyer_country)) %in% c("DK", "DNK")]
+  flag_matching_candidate & grepl("DK|DNK", toupper(trimws(buyer_country)))]
 cat("Number observations to fuzzy match:", nrow(remaining), "\n")
 remaining[, match_date := as.IDate(date_contract_award)]
 remaining_original <- remaining
@@ -201,7 +201,7 @@ buyer_data[, cvr_number_source := fcase(
   name_match_method == "fuzzy" & name_match_step == 6L & name_match_source == "name",   "fuzzy: broad main name",
   name_match_method == "fuzzy" & name_match_step == 6L & name_match_source == "biname", "fuzzy: broad biname",
   !is.na(buyer_cvr_clean) & buyer_cvr_clean != "", "source: CVR extracted from TED XML",
-  flag_matching_candidate & toupper(trimws(buyer_country)) %in% c("DK", "DNK"), "matching candidate: no match found",
+  flag_matching_candidate & grepl("DK|DNK", toupper(trimws(buyer_country))), "matching candidate: no match found",
   flag_matching_candidate, "not a matching candidate: not marked as Danish",
   default = "not a matching candidate: no CVR name")]
 
@@ -210,7 +210,7 @@ buyer_data[, cvr_number_source := fcase(
 # country is a single ISO code, so in practice only "exact DK" occurs here.
 buyer_data[, matching_candidate_type := fcase(
   flag_matching_candidate & toupper(trimws(buyer_country)) %chin% c("DK", "DNK"), "exact DK",
-  flag_matching_candidate & grepl("DK", toupper(trimws(buyer_country))),          "contains DK",
+  flag_matching_candidate & grepl("DK|DNK", toupper(trimws(buyer_country))),          "contains DK",
   default = NA_character_
 )]
 
@@ -222,7 +222,7 @@ buyer_data[, flag_manual_name_review :=
   (flag_matching_candidate & (!flag_name_match_found | flag_review_name_match))]
 
 buyer_data[, buyer_cvr_final := as.character(buyer_cvr_clean)]
-buyer_data[flag_matching_candidate & toupper(trimws(buyer_country)) %in% c("DK", "DNK") &
+buyer_data[flag_matching_candidate & grepl("DK|DNK", toupper(trimws(buyer_country))) &
              !is.na(buyer_cvr_name_match),
            buyer_cvr_final := buyer_cvr_name_match]
 
@@ -230,7 +230,7 @@ buyer_data[, name_match_status := fcase(
   !flag_matching_candidate, "not requested",
   flag_review_name_match,  "manual review - fuzzy or ambiguous match",
   flag_name_match_found,   "matched",
-  is.na(buyer_country) | !toupper(trimws(buyer_country)) %in% c("DK", "DNK"),
+  is.na(buyer_country) | !grepl("DK|DNK", toupper(trimws(buyer_country))),
   "manual review - not marked as Danish",
   default = "manual review - no automatic match")]
 
@@ -375,7 +375,7 @@ buyer_data[, flag_missing_buyer_cvr     := is.na(buyer_cvr_clean) | buyer_cvr_cl
 buyer_data[, flag_missing_buyer_name    := is.na(buyer_name) | buyer_name == ""]
 buyer_data[, flag_missing_buyer_country := is.na(buyer_country) | buyer_country == ""]
 buyer_data[, flag_foreign_buyer :=
-  !is.na(buyer_country) & !(toupper(trimws(buyer_country)) %in% c("DK", "DNK"))]
+  !is.na(buyer_country) & !(grepl("DK|DNK", toupper(trimws(buyer_country))))]
 buyer_data[, flag_missing_cvr_with_name := flag_missing_buyer_cvr & !flag_missing_buyer_name]
 buyer_data[, flag_review_cvr            := !flag_missing_buyer_cvr & !valid_cvr]
 buyer_data[, flag_no_buyer_info :=

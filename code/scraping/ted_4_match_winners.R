@@ -66,7 +66,7 @@ winner_data[, flag_matching_candidate :=
 winner_data[, match_row_id := .I]
 winner_data[, winner_name_in_data := winner_name]
 remaining <- winner_data[
-  flag_matching_candidate & toupper(trimws(winner_country)) %in% c("DK", "DNK")]
+  flag_matching_candidate & grepl("DK|DNK", toupper(trimws(winner_country)))]
 cat("Number observations to fuzzy match:", nrow(remaining), "\n")
 remaining[, match_date := as.IDate(date_contract_award)]
 remaining_original <- remaining
@@ -222,7 +222,7 @@ winner_data[, cvr_number_source := fcase(
   name_match_method == "fuzzy" & name_match_step == 6L & name_match_source == "name",   "fuzzy: broad main name",
   name_match_method == "fuzzy" & name_match_step == 6L & name_match_source == "biname", "fuzzy: broad biname",
   !is.na(winner_cvr_clean) & winner_cvr_clean != "", "source: CVR extracted from TED XML",
-  flag_matching_candidate & toupper(trimws(winner_country)) %in% c("DK", "DNK"), "matching candidate: no match found",
+  flag_matching_candidate & grepl("DK|DNK", toupper(trimws(winner_country))), "matching candidate: no match found",
   flag_matching_candidate, "not a matching candidate: not marked as Danish",
   default = "not a matching candidate: no CVR name")]
 
@@ -231,7 +231,7 @@ winner_data[, cvr_number_source := fcase(
 # TED country is a single ISO code, so in practice only "exact DK" occurs here.
 winner_data[, matching_candidate_type := fcase(
   flag_matching_candidate & toupper(trimws(winner_country)) %chin% c("DK", "DNK"), "exact DK",
-  flag_matching_candidate & grepl("DK", toupper(trimws(winner_country))),          "contains DK",
+  flag_matching_candidate & grepl("DK|DNK", toupper(trimws(winner_country))),          "contains DK",
   default = NA_character_
 )]
 
@@ -245,7 +245,7 @@ winner_data[, flag_manual_name_review :=
 
 # Final CVR: the XML-extracted CVR, else the name-matched CVR for Danish candidates.
 winner_data[, winner_cvr_final := as.character(winner_cvr_clean)]
-winner_data[flag_matching_candidate & toupper(trimws(winner_country)) %in% c("DK", "DNK") &
+winner_data[flag_matching_candidate & grepl("DK|DNK", toupper(trimws(winner_country))) &
               !is.na(winner_cvr_name_match),
             winner_cvr_final := winner_cvr_name_match]
 
@@ -253,7 +253,7 @@ winner_data[, name_match_status := fcase(
   !flag_matching_candidate, "not requested",
   flag_review_name_match,  "manual review - fuzzy or ambiguous match",
   flag_name_match_found,   "matched",
-  is.na(winner_country) | !toupper(trimws(winner_country)) %in% c("DK", "DNK"),
+  is.na(winner_country) | !grepl("DK|DNK", toupper(trimws(winner_country))),
   "manual review - not marked as Danish",
   default = "manual review - no automatic match")]
 
@@ -409,7 +409,7 @@ winner_data[, flag_missing_winner_cvr     := is.na(winner_cvr_clean) | winner_cv
 winner_data[, flag_missing_winner_name    := is.na(winner_name) | winner_name == ""]
 winner_data[, flag_missing_winner_country := is.na(winner_country) | winner_country == ""]
 winner_data[, flag_foreign_winner :=
-  !is.na(winner_country) & !(toupper(trimws(winner_country)) %in% c("DK", "DNK"))]
+  !is.na(winner_country) & !(grepl("DK|DNK", toupper(trimws(winner_country))))]
 winner_data[, flag_missing_cvr_with_name := flag_missing_winner_cvr & !flag_missing_winner_name]
 winner_data[, flag_review_cvr            := !flag_missing_winner_cvr & !valid_cvr]
 winner_data[, flag_no_winner_info :=
