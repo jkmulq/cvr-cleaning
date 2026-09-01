@@ -1287,6 +1287,31 @@ required_amount_cols <- c("tender_amount", "lot_amount", "bid_amount",
 stopifnot(all(required_amount_cols %in% names(clean_winner_data)))
 stopifnot(all(required_amount_cols %in% names(clean_buyer_data)))
 
+# 3b Harmonise shared column types + derive the clean consortium flag, here in cleaning so the matched
+# outputs inherit them (matching-created columns mirror across the matcher scripts and need no
+# harmonisation). n_lots -> integer, submit_date -> Date, joint_tender recoded to single/joint,
+# flag_consortium from OpenTender's own yes/no consortium field.
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    n_lots          = as.integer(n_lots),
+    submit_date     = as.Date(submit_date, format = "%Y/%m/%d"),
+    joint_tender    = case_when(joint_tender == "yes" ~ "joint",
+                                joint_tender == "no"  ~ "single", TRUE ~ NA_character_),
+    winner_number   = as.integer(winner_number),
+    flag_consortium = case_when(consortium_winner == "yes" ~ TRUE,
+                                consortium_winner == "no"  ~ FALSE, TRUE ~ NA)
+  )
+clean_buyer_data <- clean_buyer_data %>%
+  mutate(
+    n_lots          = as.integer(n_lots),
+    submit_date     = as.Date(submit_date, format = "%Y/%m/%d"),
+    joint_tender    = case_when(joint_tender == "yes" ~ "joint",
+                                joint_tender == "no"  ~ "single", TRUE ~ NA_character_),
+    buyer_number    = as.integer(buyer_number),
+    flag_consortium = case_when(consortium_winner == "yes" ~ TRUE,
+                                consortium_winner == "no"  ~ FALSE, TRUE ~ NA)
+  )
+
 # 4 Save
 saveRDS(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_ot.rds"))
 saveRDS(clean_buyer_data, file.path(dirs$clean_data, "clean_buyer_data_ot.rds"))

@@ -693,16 +693,6 @@ manual_name_review <- winner_data[
 # Delete match_row_id
 winner_data[, match_row_id := NULL]
 
-# Harmonise shared output column types with OpenTender / TED (cross-dataset consistency).
-winner_data[, `:=`(
-  tender_id       = as.character(tender_id),
-  lot_number      = as.character(lot_number),
-  n_bids_received = as.character(n_bids_received),
-  n_lots          = suppressWarnings(as.integer(n_lots)),
-  submit_date     = as.Date(substr(as.character(submit_date), 1, 10)),
-  winner_number   = suppressWarnings(as.integer(winner_number))
-)]
-
 # 7 Save
 saveRDS(winner_data,
         file.path(clean_data_dir, "clean_winner_data_kfst_name_matched.rds"))

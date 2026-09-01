@@ -1189,15 +1189,6 @@ if (length(fuzzy_review_columns) > 0) {
 # Delete the temporary joining identifier.
 buyer_data[, match_row_id := NULL]
 
-# Harmonise shared output column types with KFST / TED (cross-dataset consistency); recode joint_tender
-# from the raw yes/no to the single/joint form used by KFST + variable_descriptions.md.
-buyer_data[, `:=`(
-  n_lots       = suppressWarnings(as.integer(n_lots)),
-  submit_date  = as.Date(submit_date, format = "%Y/%m/%d"),
-  joint_tender = fcase(joint_tender == "yes", "joint", joint_tender == "no", "single", default = NA_character_),
-  buyer_number = suppressWarnings(as.integer(buyer_number))
-)]
-
 # 8 Save
 saveRDS(buyer_data, file.path(clean_data_dir, "clean_buyer_data_ot_name_matched.rds"))
 saveRDS(manual_buyer_name_review, file.path(clean_data_dir, "manual_buyer_name_review_ot.rds"))

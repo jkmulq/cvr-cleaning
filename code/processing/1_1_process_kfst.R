@@ -987,6 +987,33 @@ required_amount_cols <- c("tender_amount", "lot_amount",
 stopifnot(all(required_amount_cols %in% names(clean_winner_data)))
 stopifnot(all(required_amount_cols %in% names(clean_buyer_data)))
 
+# 5b Harmonise shared column types + derive the clean consortium flag, here in cleaning so the matched
+# outputs inherit them (matching-created columns mirror across the matcher scripts and need no
+# harmonisation). IDs -> character, counts -> integer, submit_date -> Date. flag_consortium: winners use
+# the vetted split-machinery flag (is_consortium, which drives the multiple-CVR consortium extraction) OR a
+# raw source "Ja"; KFST buyers have no is_consortium, so raw "Ja" only.
+clean_winner_data <- clean_winner_data %>%
+  mutate(
+    tender_id       = as.character(tender_id),
+    lot_number      = as.character(lot_number),
+    n_bids_received = as.character(n_bids_received),
+    n_lots          = as.integer(n_lots),
+    submit_date     = as.Date(substr(as.character(submit_date), 1, 10)),
+    winner_number   = as.integer(winner_number),
+    flag_consortium = (!is.na(is_consortium) & is_consortium) |
+                      (!is.na(consortium_winner) & grepl("Ja", consortium_winner))
+  )
+clean_buyer_data <- clean_buyer_data %>%
+  mutate(
+    tender_id       = as.character(tender_id),
+    lot_number      = as.character(lot_number),
+    n_bids_received = as.character(n_bids_received),
+    n_lots          = as.integer(n_lots),
+    submit_date     = as.Date(substr(as.character(submit_date), 1, 10)),
+    buyer_number    = as.integer(buyer_number),
+    flag_consortium = !is.na(consortium_winner) & grepl("Ja", consortium_winner)
+  )
+
 # 6 Save
 saveRDS(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_kfst.rds"))
 saveRDS(clean_buyer_data, file.path(dirs$clean_data, "clean_buyer_data_kfst.rds"))
