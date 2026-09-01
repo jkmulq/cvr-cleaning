@@ -62,7 +62,24 @@ knitr::opts_knit$set(root.dir = report_project_dir)
 
 source(file.path(report_project_dir, "config.R"))
 clean_data_dir <- dirs$clean_data
+emp_dir <- dirs$employment
 key_dir <- dirs$cvr_key
+
+# Read an employment-history table from the event-study dir, preferring the compact gzip .rds,
+# then the working .csv, then (pre-migration) the legacy copy in clean/. cvr is forced to
+# character so leading structure is preserved consistently across formats.
+read_emp <- function(base) {
+  rds <- file.path(emp_dir, paste0(base, ".rds"))
+  if (file.exists(rds)) {
+    d <- data.table::as.data.table(readRDS(rds))
+  } else {
+    csv <- file.path(emp_dir, paste0(base, ".csv"))
+    if (!file.exists(csv)) csv <- file.path(clean_data_dir, paste0(base, ".csv"))
+    d <- data.table::fread(csv, na.strings = "")
+  }
+  if ("cvr" %in% names(d)) d[, cvr := as.character(cvr)]
+  d[]
+}
 
 valid_cvrs <- function(x) {
   x <- trimws(as.character(x))
@@ -73,7 +90,7 @@ valid_cvrs <- function(x) {
 
 # 1 Load data
 ## 1.1 Firm data
-firm_data_raw <- fread(file.path(clean_data_dir, "cvr_employment_history_virk.csv"))
+firm_data_raw <- read_emp("cvr_employment_history_virk")
 setDT(firm_data_raw)
 
 firm_data <- copy(firm_data_raw)
@@ -316,10 +333,10 @@ valid_winner_events[, event_quarter := quarter(award_date)]
 # If toggle on, construct controls
 if (construct_control_data == 1) {
   source("R/code/analysis/find_control_firms.R")
-  control_event_data <- readRDS(file.path(clean_data_dir, "control_event_list.rds"))
+  control_event_data <- readRDS(file.path(emp_dir, "control_event_list.rds"))
 } else {
-  control_event_data <- readRDS(file.path(clean_data_dir, "control_event_list_new_qscore.rds"))
-  control_event_data_just_fte <- readRDS(file.path(clean_data_dir, "control_event_list_h8_typefteonly.rds"))
+  control_event_data <- readRDS(file.path(emp_dir, "control_event_list_new_qscore.rds"))
+  control_event_data_just_fte <- readRDS(file.path(emp_dir, "control_event_list_h8_typefteonly.rds"))
 }
 
 ```

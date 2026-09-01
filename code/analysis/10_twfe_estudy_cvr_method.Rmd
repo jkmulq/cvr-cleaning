@@ -35,6 +35,27 @@ suppressPackageStartupMessages({
 })
 source("config.R")
 clean_data_dir <- dirs$clean_data
+emp_dir <- dirs$employment
+
+# Read an employment-history table from the event-study dir, preferring the compact gzip .rds,
+# then the working .csv, then (pre-migration) the legacy copy in clean/.
+read_emp <- function(base) {
+  rds <- file.path(emp_dir, paste0(base, ".rds"))
+  if (file.exists(rds)) {
+    d <- data.table::as.data.table(readRDS(rds))
+  } else {
+    csv <- file.path(emp_dir, paste0(base, ".csv"))
+    if (!file.exists(csv)) csv <- file.path(clean_data_dir, paste0(base, ".csv"))
+    d <- data.table::fread(csv, na.strings = "")
+  }
+  if ("cvr" %in% names(d)) d[, cvr := as.character(cvr)]
+  d[]
+}
+emp_status_path <- function() {
+  p <- file.path(emp_dir, "cvr_employment_history_virk_status.csv")
+  if (!file.exists(p)) p <- file.path(clean_data_dir, "cvr_employment_history_virk_status.csv")
+  p
+}
 ```
 
 # Purpose
@@ -68,11 +89,9 @@ EMP_FREQUENCY  <- "quarterly_spliced"  # continuous quarterly FTE series (matche
 
 ```{r load-employment}
 # Winner/buyer employment panel pulled from virk.dk (one continuous quarterly FTE series per firm).
-emp <- fread(
-  file.path(clean_data_dir, "cvr_employment_history_virk.csv"),
-  select = c("cvr", "frequency", "year", "quarter", "fte"),
-  colClasses = list(character = "cvr")
-)
+emp <- read_emp("cvr_employment_history_virk")[
+  , .(cvr, frequency, year, quarter, fte)
+]
 emp <- emp[frequency == EMP_FREQUENCY & !is.na(year) & !is.na(quarter)]
 emp[, cvr := as.character(cvr)]
 # One quarterly index (…, 2015Q1 = 8060, …) so event time = qidx - event_qidx.
@@ -119,7 +138,7 @@ the same event study.
 
 ```{r coverage}
 # Attempted = CVR queried in the pull (status file); has-data = returned employment rows (in the csv).
-status_path <- file.path(clean_data_dir, "cvr_employment_history_virk_status.csv")
+status_path <- emp_status_path()
 status_cvrs <- if (file.exists(status_path))
   unique(as.character(fread(status_path, colClasses = list(character = "cvr"))$cvr)) else character()
 coverage <- rbindlist(lapply(names(winner_sets), function(nm) {
