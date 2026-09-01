@@ -525,6 +525,16 @@ manual_buyer_name_review <- buyer_data[flag_manual_name_review == TRUE, ] %>%
 # Delete match_row_id
 buyer_data[, match_row_id := NULL]
 
+# Harmonise shared output column types with OpenTender / TED (cross-dataset consistency).
+buyer_data[, `:=`(
+  tender_id       = as.character(tender_id),
+  lot_number      = as.character(lot_number),
+  n_bids_received = as.character(n_bids_received),
+  n_lots          = suppressWarnings(as.integer(n_lots)),
+  submit_date     = as.Date(substr(as.character(submit_date), 1, 10)),
+  buyer_number    = suppressWarnings(as.integer(buyer_number))
+)]
+
 # 7 Save
 saveRDS(buyer_data, file.path(clean_data_dir, "clean_buyer_data_kfst_name_matched.rds"))
 saveRDS(manual_buyer_name_review,  file.path(clean_data_dir, "manual_buyer_name_review_kfst.rds"))
