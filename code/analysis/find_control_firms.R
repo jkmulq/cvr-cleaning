@@ -28,6 +28,22 @@ report_project_dir <- local({
 setwd(report_project_dir)
 source(file.path(report_project_dir, "config.R"))
 clean_data_dir <- dirs$clean_data
+emp_dir <- dirs$employment
+
+# Read an employment-history table from the event-study dir, preferring the compact gzip .rds,
+# then the working .csv, then (pre-migration) the legacy copy in clean/.
+read_emp <- function(base) {
+  rds <- file.path(emp_dir, paste0(base, ".rds"))
+  if (file.exists(rds)) {
+    d <- data.table::as.data.table(readRDS(rds))
+  } else {
+    csv <- file.path(emp_dir, paste0(base, ".csv"))
+    if (!file.exists(csv)) csv <- file.path(clean_data_dir, paste0(base, ".csv"))
+    d <- data.table::fread(csv, na.strings = "")
+  }
+  if ("cvr" %in% names(d)) d[, cvr := as.character(cvr)]
+  d[]
+}
 
 valid_cvrs <- function(x) {
   x <- trimws(as.character(x))
@@ -43,7 +59,7 @@ construct_control_data <- 1
 
 # ---- Load data ----
 ## Firm employment panel
-firm_data <- fread(file.path(clean_data_dir, "cvr_employment_history_virk.csv"))
+firm_data <- read_emp("cvr_employment_history_virk")
 setDT(firm_data)
 firm_data[, firm_age := as.integer(floor(as.numeric(period_end - lifecycle_start) / 365.25))]
 
@@ -306,7 +322,7 @@ if (nrow(control_event_data) > 0) {
   control_event_data <- control_event_data[frequency == "quarterly_spliced", ]
 }
 
-saveRDS(control_event_data, file.path(clean_data_dir, save_name))
+saveRDS(control_event_data, file.path(emp_dir, save_name))
 message(sprintf("Saved control_event_data: %d rows, %d stacks -> %s",
                 nrow(control_event_data), uniqueN(control_event_data$stack_id),
-                file.path(clean_data_dir, save_name)))
+                file.path(emp_dir, save_name)))
