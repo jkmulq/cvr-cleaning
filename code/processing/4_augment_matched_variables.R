@@ -33,6 +33,7 @@ suppressWarnings(suppressPackageStartupMessages({
 # Tender/lot-level variables to (re)attach to the matched data. Add future
 # tender-level variables here — each source only takes the ones it actually has.
 vars <- c(
+  "ted_notice_id",                  # shared TED notice join key (both sources)
   "flag_awarded",
   "award_end_date",                 # KFST
   "framework_end_date",             # OpenTender
