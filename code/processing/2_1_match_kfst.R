@@ -487,25 +487,25 @@ winner_data[, cvr_number_source := fcase(
     !is.na(winner_cvr_clean) & winner_cvr_clean != "",
   "CVR backfilled from another lot: this winner had no valid CVR, so the CVR of a winner with the same exact name elsewhere in the dataset was borrowed",
   name_match_method == "exact" & name_match_step == 1L,
-  "exact matching: basic name and firm type",
+  "exact: basic name and firm type",
   name_match_method == "exact" & name_match_step == 2L,
-  "exact matching: no spaces and firm type",
+  "exact: no spaces and firm type",
   name_match_method == "exact" & name_match_step == 3L,
-  "exact matching: no spaces",
+  "exact: no spaces",
   name_match_method == "exact" & name_match_step == 4L,
-  "exact matching: broad name",
+  "exact: broad name",
   name_match_method == "fuzzy" & name_match_step == 5L &
     name_match_source == "name",
-  "fuzzy matching: prepared main name",
+  "fuzzy: prepared main name",
   name_match_method == "fuzzy" & name_match_step == 5L &
     name_match_source == "biname",
-  "fuzzy matching: prepared biname",
+  "fuzzy: prepared biname",
   name_match_method == "fuzzy" & name_match_step == 6L &
     name_match_source == "name",
-  "fuzzy matching: broad main name",
+  "fuzzy: broad main name",
   name_match_method == "fuzzy" & name_match_step == 6L &
     name_match_source == "biname",
-  "fuzzy matching: broad biname",
+  "fuzzy: broad biname",
   !is.na(winner_cvr_clean) & winner_cvr_clean != "" &
     type == "simple split on ;",
   "CVR from the original winner field: extracted after separting by semi-colon",
