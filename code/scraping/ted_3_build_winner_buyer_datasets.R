@@ -92,6 +92,38 @@ build <- function(roles, prefix, keep_is_winner = FALSE) {
 ted_winner_data <- build(c("winner", "bidder"), "winner", keep_is_winner = TRUE)
 ted_buyer_data  <- build("buyer", "buyer")
 
+# Consortium flag. Winners carry their OWN per-(tender-lot-winner) status: is_group_award is TRUE when
+# this winner's tendering party is a group (legacy AWARDED_TO_GROUP on its AWARD_CONTRACT; eForms a
+# GroupLeadIndicator=true on its party's org). Two winners of the same lot can differ. Buyers are not
+# winners, so they inherit the lot's award-group status (did ANY winner of the lot win as a consortium) --
+# mirroring KFST/OT, where the buyer rows carry the tender's winner-consortium value.
+ted_winner_data[, flag_consortium := is_group_award %in% TRUE]
+ted_winner_data[, is_group_award := NULL]
+# Winner SME (per tender-lot-winner): TRUE/FALSE from the source SME flag / CompanySizeCode, NA if absent.
+ted_winner_data[, winner_is_sme := is_sme]
+ted_winner_data[, is_sme := NULL]
+ted_buyer_data[, is_sme := NULL]   # SME is a winner attribute; buyers carry NA
+# Winner NUTS region (per winner org); buyers use the notice-level buyer_nuts, so drop the party nuts.
+ted_winner_data[, winner_nuts := nuts]
+ted_winner_data[, nuts := NULL]
+ted_buyer_data[, nuts := NULL]
+lot_grp <- parties[role == "winner" & !is.na(lot) & lot != "",
+                   .(flag_consortium = any(is_group_award %in% TRUE)), by = .(notice_id, lot)]
+ted_buyer_data[, is_group_award := NULL]
+ted_buyer_data <- merge(ted_buyer_data, lot_grp, by = c("notice_id", "lot"), all.x = TRUE)
+ted_buyer_data[is.na(flag_consortium), flag_consortium := FALSE]
+
+# joint_tender (notice-level, buyers grouped): recode the extracted joint_procurement to KFST's
+# single/joint. Present in both winner and buyer tables via the notice context.
+for (dtn in c("ted_winner_data", "ted_buyer_data")) {
+  d <- get(dtn)
+  if ("joint_procurement" %in% names(d)) {
+    d[, joint_tender := fifelse(joint_procurement %in% TRUE, "joint", "single")]
+    d[, joint_procurement := NULL]
+  }
+  assign(dtn, d)
+}
+
 saveRDS(ted_winner_data, file.path(ted, "ted_winner_data.rds"))
 fwrite(ted_winner_data,  file.path(ted, "ted_winner_data.csv"))
 saveRDS(ted_buyer_data,  file.path(ted, "ted_buyer_data.rds"))
