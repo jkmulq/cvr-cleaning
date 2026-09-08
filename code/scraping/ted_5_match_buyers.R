@@ -5,8 +5,8 @@
 # consortium-removal / name-partition splitting (TED buyers are one org per row).
 #
 # INPUT  data/intermediates/ted/ted_buyer_data.rds  (from ted_3), + the CVR-name keys.
-# OUTPUT data/intermediates/ted/ted_buyer_data_name_matched.rds
-#        data/intermediates/ted/manual_name_review_ted_buyer.rds
+# OUTPUT data/clean/clean_buyer_data_ted_name_matched.{rds,csv}  (final matched buyer dataset)
+#        data/intermediates/ted/manual_name_review_ted_buyer.rds  (QC: rows flagged for manual review)
 
 rm(list = ls())
 source("config.R")
@@ -292,7 +292,6 @@ buyer_data[, `:=`(
   tender_amount          = as.numeric(amount_awarded),
   lot_amount             = as.numeric(lot_awarded_value),
   divided_tender         = fifelse(fcoalesce(n_lots > 1L, FALSE), "yes", "no"),
-  joint_tender           = NA_character_,
   consortium_winner      = NA_character_,   # winner-side attribute carried in the shared buyer schema; no TED source
   source                 = "ted extraction", # provenance label (OT/KFST buyers use "single buyer"/"multiple CVRs")
   tender_cancelled       = FALSE,
@@ -439,9 +438,10 @@ buyer_data[, match_row_id := NULL]
 buyer_data[, lot_id := as.character(lot_id)]
 buyer_data[, buyer_number := suppressWarnings(as.integer(buyer_number))]
 
-# 8 Save
-saveRDS(buyer_data, file.path(ted_dir, "ted_buyer_data_name_matched.rds"))
-fwrite(buyer_data,  file.path(ted_dir, "ted_buyer_data_name_matched.csv"))
+# 8 Save. The final matched buyer dataset goes to clean/ alongside the KFST/OpenTender clean buyer data
+# (same clean_*_name_matched naming); the manual-review list stays in intermediates/ted as a QC artifact.
+saveRDS(buyer_data, file.path(clean_data_dir, "clean_buyer_data_ted_name_matched.rds"))
+fwrite(buyer_data,  file.path(clean_data_dir, "clean_buyer_data_ted_name_matched.csv"))
 saveRDS(manual_name_review, file.path(ted_dir, "manual_name_review_ted_buyer.rds"))
 
 cat(sprintf("\nTED buyers: %d rows | buyer_cvr_final on %.0f%% | name-matched %d | quality graded %d\n",

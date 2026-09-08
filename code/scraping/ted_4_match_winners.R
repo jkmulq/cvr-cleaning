@@ -9,8 +9,8 @@
 # row (the XML splits consortia), so there are no combined names to separate.
 #
 # INPUT  data/intermediates/ted/ted_winner_data.rds  (from ted_3), + the CVR-name keys.
-# OUTPUT data/intermediates/ted/ted_winner_data_name_matched.rds
-#        data/intermediates/ted/manual_name_review_ted_winner.rds
+# OUTPUT data/clean/clean_winner_data_ted_name_matched.{rds,csv}  (final matched winner dataset)
+#        data/intermediates/ted/manual_name_review_ted_winner.rds  (QC: rows flagged for manual review)
 
 rm(list = ls())
 source("config.R")
@@ -321,8 +321,7 @@ winner_data[, `:=`(
   tender_amount          = as.numeric(amount_awarded),
   lot_amount             = as.numeric(lot_awarded_value),
   divided_tender         = fifelse(fcoalesce(n_lots > 1L, FALSE), "yes", "no"),
-  joint_tender           = NA_character_,   # TED has no joint-procurement field
-  consortium_winner      = NA_character_,   # TED splits consortia into rows; no source flag
+  consortium_winner      = NA_character_,   # TED splits consortia into rows; no source flag (see flag_consortium)
   tender_cancelled       = FALSE,           # winner rows come from AWARDED_CONTRACT lots only
   flag_awarded           = TRUE,            # ditto -- every winner row is an awarded lot
   ted_notice_id          = as.character(notice_id),
@@ -479,9 +478,11 @@ winner_data[, match_row_id := NULL]
 winner_data[, lot_id := as.character(lot_id)]
 winner_data[, winner_number := suppressWarnings(as.integer(winner_number))]
 
-# 8 Save
-saveRDS(winner_data, file.path(ted_dir, "ted_winner_data_name_matched.rds"))
-fwrite(winner_data,  file.path(ted_dir, "ted_winner_data_name_matched.csv"))
+# 8 Save. The final matched winner dataset goes to clean/ alongside the KFST/OpenTender clean winner data
+# (same clean_*_name_matched naming); the manual-review list stays in intermediates/ted as a QC artifact.
+winner_data[, is_awarded_winner := awarded_winner(winner_data)]   # awarded (flag_awarded) & is_winner (TED keeps bidders)
+saveRDS(winner_data, file.path(clean_data_dir, "clean_winner_data_ted_name_matched.rds"))
+fwrite(winner_data,  file.path(clean_data_dir, "clean_winner_data_ted_name_matched.csv"))
 saveRDS(manual_name_review, file.path(ted_dir, "manual_name_review_ted_winner.rds"))
 
 # Diagnostics
