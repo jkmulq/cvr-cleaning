@@ -132,11 +132,25 @@ a row was admitted to name matching, since the matcher only searches the Danish
 registry and gates on the country. `"exact DK"` = the country was exactly `DK`
 (most reliable). `"contains DK"` = a mixed value like `DK,IE`, which may be a
 foreign firm admitted only because the string contains `DK`, so its match is less
-reliable. `NA` for rows that were not matching candidates. Two source-specific
-notes: TED country is a single ISO code, so only `"exact DK"` occurs there; and
-KFST **buyer** data has no country field (buyers are Danish public authorities,
-gated on name only), so its candidates are tagged `"DK assumed (no country field)"`
-instead.
+reliable. `NA` for rows that were **not** matching candidates (i.e. never sent to the
+matcher at all).
+
+Two source-specific notes:
+
+- **TED** — only `"exact DK"` and `NA` occur in practice. `matching_candidate_type` is
+  filled *only* for rows sent to matching (a name but no published CVR), and the
+  `"exact DK"` label covers **both** clean single-country Danish codes: the legacy ISO-2
+  `DK` **and** the eForms ISO-3 `DNK`. Both are treated as a reliable exact match, and —
+  importantly — both are admitted by the country gate, so eForms winners are **not**
+  excluded for using `DNK`: legacy *and* eForms notices contribute candidates (any winner
+  with a name but no CVR in the XML), and ≈180 eForms/`DNK` winners were name-matched this
+  way. `"contains DK"` is reserved for a messy multi-country value like `DK,SE` that merely
+  *contains* `DK`; no such value occurs in the current TED data, so that branch — though
+  present in the code — stays empty. `NA` = any non-candidate: a winner that already had a
+  CVR (common in eForms, which usually publish it), a foreign winner, or a no-name row.
+- **KFST buyer** data has no country field (buyers are Danish public authorities,
+  gated on name only), so its candidates are tagged `"DK assumed (no country field)"`
+  instead.
 
 `flag_cvr_recovered_from_invalid` (all six matched datasets) is `TRUE` when the
 row's original field CVR candidate held **no valid, registered CVR** (it was

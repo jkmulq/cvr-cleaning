@@ -10,11 +10,14 @@ Only the **122 columns common to both** are listed here — the analytical schem
 OpenTender be pooled. Each source additionally carries its own native columns (OpenTender: the many
 `tender_publications_*` source fields; KFST: `semi_tier`, `consortium_*`, tier-3b `field_*` pairing
 columns); those source-specific columns are out of scope for this file. The matched **buyer** datasets
-carry an analogous schema (`buyer_*` in place of `winner_*`). Flag semantics are also documented, from a
-review angle, in [cleaning_flags.md](cleaning_flags.md).
+carry an analogous schema (`buyer_*` in place of `winner_*`); exactly where the two entities' schemas
+diverge is catalogued in [Winner vs buyer schema differences](#winner-vs-buyer-schema-differences) below.
+Flag semantics are also documented, from a review angle, in [cleaning_flags.md](cleaning_flags.md).
 
-**Grain:** one row per tender–lot–winner member (`tender_id` × `lot_id` × `winner_number`; consortium
-members share a `winner_number` but are separate rows).
+**Grain:** one row per tender–lot–winner member. Note `(tender_id, lot_id, winner_number)` is **not** a
+unique key — KFST consortium members share a `winner_number`, and OpenTender numbers almost every winner
+`1` (see `winner_number` below); the stable per-row identifier is the source `row_id` (OpenTender) or the
+consortium-expanded member row (KFST).
 
 **"Origin" legend**
 - **raw** — taken directly from the source data (KFST `udbudsdata_kfst.xlsx` / OpenTender CSVs), only
@@ -37,7 +40,7 @@ onto the tender-lot data in `1_1`/`1_2`.
 | `tender_id` | raw | 1_1 / 1_2 | — | Source tender identifier. KFST `Løbenummer` (e.g. `2`); OpenTender tender UUID (e.g. `00003a63-32cd-…`). |
 | `lot_id` | raw | 1_1 / 1_2 | — | Source lot identifier within a tender. KFST `Nummerplade` (e.g. `2-1`); OpenTender `lot_lotId`. |
 | `lot_number` | raw | 1_1 / 1_2 | — | Ordinal lot number (KFST `Delkontraktnr.`), e.g. `1`; often blank in OpenTender. |
-| `winner_number` | derived | 1_1 / 1_2 | winner-field split | Winner index within the lot after splitting the winner field (`;` winners, `,` consortium members). Consortium members of one winner share the number. e.g. `1`. |
+| `winner_number` | derived | 1_1 / 1_2 | winner-field split | Winner index within the lot from splitting the winner field (`;` winners, `,` consortium members); consortium members of one winner share it. **Not a within-lot key in OpenTender:** OT delivers one winner per source row, so the split almost always yields `winner_number = 1` (~99.8% of OT rows) — multiple winners on an OT lot arrive as *separate rows all numbered `1`*, distinguished by `row_id`, not by `winner_number`. KFST packs multiple winners/consortium members into one field and so does increment `1..N` (down to ~1% of rows at 8+). e.g. `1`. |
 | `n_lots` | raw | 1_1 / 1_2 | — | Number of lots mapped for the tender. e.g. `1`. |
 | `n_bids_received` | raw | 1_1 / 1_2 | — | Bids received on the lot, source value. e.g. `5`. |
 | `n_bidders` | raw→clean | 1_1 / 1_2 | `n_bids_received` | Numeric bidder count (coerced). e.g. `5`. |
@@ -52,6 +55,7 @@ onto the tender-lot data in `1_1`/`1_2`.
 | `consortium_winner` | raw | 1_1 / 1_2 | — | **Raw source flag**, not a cleaned indicator — it is the source's own "winner is a consortium" field (KFST `Konsortium/Sammenslutning`, `Ja`/`Nej`; OT its own value), carried through verbatim and *not* reconciled against the actual extracted consortium splits. Treat it as noisy provenance, not ground truth; the reliable consortium signal is the KFST split machinery (`is_consortium`, `consortium_number`). |
 | `tender_cancelled` | raw→clean | 1_1 / 1_2 | source annulment field | Whether the lot/tender was annulled. Standardised to **logical** `TRUE`/`FALSE` in both sources (KFST `Ja`→`TRUE`, `Nej`→`FALSE`; OT already logical). |
 | `flag_awarded` | derived | 1_1 / 1_2 | `tender_cancelled` (KFST) / `tender_isAwarded` (OT) | `TRUE` if the lot was actually awarded. **Difference from `tender_cancelled`:** `tender_cancelled` is the raw annulment field (was the procedure formally cancelled?), while `flag_awarded` is the derived usable-for-analysis signal — for KFST it is simply `!tender_cancelled`, but for OT it comes from the separate `tender_isAwarded` field, so a lot can be non-cancelled yet still not awarded. Many OT lots are not awarded because OT publishes contract-notice / in-progress rows that never reach an award (no winner recorded), not because they were cancelled. Drives the "keep awarded lots" filters. |
+| `is_awarded_winner` | derived | 2_1 / 2_3 / ted_4 / 3_1 / 3_2 / 5_combine | `flag_awarded`, `is_winner` | Convenience flag for the canonical "one row = one awarded winner" filter: `flag_awarded == TRUE & is_winner != FALSE`. KFST/OpenTender carry no `is_winner` (winners-only → treated as `TRUE`), so for them it equals `flag_awarded`; TED's non-winning bidders (`is_winner == FALSE`) and OpenTender's non-awarded notices (`flag_awarded == FALSE`) are `FALSE`. **Winner side only** (no buyer analog). Present on the combined winner dataset and the robustness stacks; on the per-source matched files after their next build. |
 
 ## 3. Amounts
 
@@ -99,7 +103,7 @@ onto the tender-lot data in `1_1`/`1_2`.
 | Variable | Origin | Created in | Depends on | Description & example |
 |---|---|---|---|---|
 | `winner_name` | raw→clean | 1_1 / 1_2 | source winner-name field | Winner firm name for this member row (post winner-field split), e.g. `Personalegruppen A/S`. |
-| `winner_country` | raw→clean | 1_1 / 1_2 | source country field | Winner country; all-Danish tokens normalised to `DK`; may be `DK,IE`-style for mixed consortia. |
+| `winner_country` | raw→clean | 1_1 / 1_2 (+ `5_combine`) | source country field | Winner country. In the combined dataset the code is harmonised to ISO 3166 **alpha-2** by `5_combine_datasets.R` (`standardise_country()`), mapping the TED XML's alpha-3 codes (`DNK`→`DK`, `SWE`→`SE`, …) onto the alpha-2 used by KFST/OpenTender. Some KFST rows could not be — and were not worth — fully cleaning and remain **messy multi-country strings** (e.g. `DK,SE`, or mixed-consortium `DK,IE`); those are left as-is. Prefer `flag_foreign_winner` to string equality on this column. |
 | `winner_name_original` | raw | 1_1 / 1_2 | — | The whole, unsplit winner-name field as delivered (audit snapshot). |
 | `winner_country_original` | raw | 1_1 / 1_2 | — | The whole, unsplit winner-country field as delivered. |
 | `winner_name_in_data` | derived | 2_1 / 2_3 | `winner_name` | The winner name carried into matching (as seen in the data). |
@@ -212,6 +216,55 @@ source provided", read the un-suffixed ones. The **buyer** datasets carry the sa
 (`flag_missing_buyer_cvr_final`, etc.) for parity — and for KFST buyers, which have no source CVR at all,
 the `*_final` flags are the only meaningful CVR missingness signal (buyer CVRs are assigned entirely by
 matching). KFST buyers have no country field, so `flag_no_buyer_info_final` omits the country term.
+
+### Winner vs buyer schema differences
+
+The matched **buyer** datasets are the winner schema with `buyer_*` swapped in for `winner_*`, so the two
+align column-for-column almost everywhere. The gap is easiest to read off the **combined** outputs built
+by `5_combine_datasets.R` — `clean_winner_data_all_name_matched.*` (405 columns) and
+`clean_buyer_data_all_name_matched.*` (377 columns), each stacking the KFST + OpenTender + TED matched
+rows under a `dataset` flag. Their column sets: **345 identical**, **60 winner-only**, **32 buyer-only** —
+so winner is **28 columns wider**.
+
+Most of the one-sided columns are just the entity analytical families (Sections 6–11) wearing the other
+prefix — `winner_name_basic` ↔ `buyer_name_basic`, `winner_cvr_final` ↔ `buyer_cvr_final`,
+`winner_cvr_name_match` ↔ `buyer_cvr_name_match`, `flag_missing_winner_cvr[_final]` ↔
+`flag_missing_buyer_cvr[_final]`, `n_winners_extracted` ↔ `n_buyers_extracted`, `winner_amount` ↔
+`buyer_amount`, and so on. These pair up and are **not** why the counts differ. (One asymmetry inside this
+block: the winner table also carries the **buyer-context** identity columns — `buyer_name`, `buyer_nuts`,
+etc. ride along on winner rows — whereas the buyer table does **not** carry winner identity. So
+`buyer_name`/`buyer_nuts` are *shared* columns, while `winner_name`/`winner_nuts` are winner-only.
+`ot_source_file` — OpenTender's annual-CSV provenance, preserved by `5_combine` — is likewise a shared
+column on both sides, populated for OpenTender rows and `NA` elsewhere.)
+
+The width difference is the structural columns with **no counterpart on the other side**. They are
+source-specific (outside this file's shared scope; the flags are defined in
+[cleaning_flags.md](cleaning_flags.md)) and populated only for the source that produces them:
+
+**Winner-only, no buyer analog (32).** Two subsystems buyers never go through, plus a few extras:
+- *Consortium expansion (KFST)* — `is_consortium`, `consortium_number`, `consortium_flag`,
+  `consortium_name`, `consortium_cvr`, `semi_tier`, `type`, `to_split`, `to_split_s2`, `n_cvr_implied`,
+  `n_name_implied`, `n_country_implied`, `registry_score`. A winner row is one consortium *member*
+  (suppliers bid as consortia); buyers are not consortium-expanded — joint contracting authorities are
+  handled by the buyer-only columns below instead — so none of this apparatus exists on the buyer side.
+- *Tier-3b field-CVR pairing (KFST)* — `field_paired_cvr`, `field_paired_score`, `field_cvr_1..3`,
+  `field_cvr_score_1..3`, `field_cvr_regname_1..3` (pairing a member name to the lot's own listed CVRs).
+- *Winner-count reconciliation & misc* — `flag_mismatch_winner_count`, `flag_review_n_winners`,
+  `flag_winner_cvr_changed`, `lot_id_borrowed_from`, `winner_cvr_candidate_original`, the TED-only
+  `is_winner` (TED keeps non-winning bidders, flagged) and `winner_is_sme`, plus the derived
+  `is_awarded_winner` (added on the combined winner dataset / stacks; no buyer analog).
+
+**Buyer-only, no winner analog (6).** A smaller joint-buyer / count apparatus:
+- `joint_tender_original` — unsplit snapshot of the joint contracting-authority field.
+- `flag_joint_unlisted_buyers` — a joint tender where not every buyer is individually listed.
+- `flag_single_buyer_name_changed` — a single-buyer row whose name was standardised.
+- `n_buyers_listed_original` / `flag_buyer_count_agree` — the originally-listed buyer count and whether it
+  matches the extracted count.
+- `flag_non_cvr_identifier` — invalid multi-CVR tokens dropped from a buyer row before matching.
+
+In short: the winner tables carry the multi-column consortium and field-pairing subsystems (~24 columns
+together) that buyers have no use for, while buyers add only the six joint-buyer/count columns (plus the derived
+`is_awarded_winner`) — so the winner schema comes out 28 columns wider.
 
 ### `cvr_number_source` — value dictionary
 
