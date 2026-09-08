@@ -1189,6 +1189,7 @@ if (length(fuzzy_review_columns) > 0) {
 winner_data[, match_row_id := NULL]
 
 # 10 Save
+winner_data[, is_awarded_winner := awarded_winner(winner_data)]   # awarded lot (flag_awarded) & winner
 saveRDS(winner_data, file.path(clean_data_dir, "clean_winner_data_ot_name_matched.rds"))
 saveRDS(manual_name_review, file.path(clean_data_dir, "manual_name_review_ot.rds"))
 saveRDS(name_partition_segments, file.path(clean_data_dir, "winner_name_partition_diagnostics_ot.rds"))

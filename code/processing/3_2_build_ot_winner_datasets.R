@@ -183,6 +183,7 @@ name_only <- name_only[, ..slim_cols]
 # ---- (4) stack ------------------------------------------------------------------------------
 stacked <- rbindlist(list(base, extraction, name_only), use.names = TRUE, fill = TRUE)
 stacked[, dataset := factor(dataset, levels = c("base","extraction","name_only"))]
+stacked[, is_awarded_winner := awarded_winner(stacked)]   # flag_awarded (stacks carry no is_winner)
 out_path <- Sys.getenv("OT_STACK_OUT", unset = file.path(clean_data_dir, "ot_winner_datasets_stacked.rds"))
 saveRDS(stacked, out_path)
 cat("ot_winner_datasets_stacked.rds:", nrow(stacked), "rows\n")

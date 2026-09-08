@@ -508,7 +508,7 @@ winner_data[, cvr_number_source := fcase(
   "fuzzy: broad biname",
   !is.na(winner_cvr_clean) & winner_cvr_clean != "" &
     type == "simple split on ;",
-  "CVR from the original winner field: extracted after separting by semi-colon",
+  "CVR from the original winner field: extracted after separating by semi-colon",
   !is.na(winner_cvr_clean) & winner_cvr_clean != "" &
     type %chin% c("simple consort split on ,", "only split on name, cvr, ignore country"),
   "CVR from the original winner field: extracted after separating consortium members by comma",
@@ -692,6 +692,9 @@ manual_name_review <- winner_data[
 
 # Delete match_row_id
 winner_data[, match_row_id := NULL]
+
+# Awarded-winner convenience flag (KFST has no is_winner column -> all winners; flag_awarded all TRUE).
+winner_data[, is_awarded_winner := awarded_winner(winner_data)]
 
 # 7 Save
 saveRDS(winner_data,
