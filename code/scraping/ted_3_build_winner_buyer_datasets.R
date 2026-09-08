@@ -41,7 +41,10 @@ if ("currency" %in% names(lot_ctx)) setnames(lot_ctx, "currency", "lot_currency"
 notice_cols <- intersect(c("notice_id", "amount_awarded", "amount_estimated", "n_lots",
                           "procedure_type", "procedure_group", "is_framework", "is_dps",
                           "direct_award", "date_receipt_tenders", "date_contract_award",
-                          "date_award_dispatch", "date_award_publication", "currency"), names(nsum))
+                          "date_award_dispatch", "date_award_publication", "currency",
+                          "buyer_type", "buyer_activity", "buyer_nuts", "eu_funded", "joint_procurement",
+                          "award_criteria", "price_weight", "n_tenders_sme", "subcontracted",
+                          "contract_duration_days"), names(nsum))
 notice_ctx <- nsum[, ..notice_cols]
 if ("currency" %in% names(notice_ctx)) setnames(notice_ctx, "currency", "notice_currency")
 
@@ -56,7 +59,7 @@ lot_key[, `:=`(lot_id = rowid(notice_id), ord = NULL)]
 
 build <- function(roles, prefix, keep_is_winner = FALSE) {
   cols <- c("notice_id", "year", "schema", "lot", "name", "cvr_raw", "cvr",
-            "country", "amount", "currency", if (keep_is_winner) "is_winner")
+            "country", "amount", "currency", "is_group_award", "is_sme", "nuts", if (keep_is_winner) "is_winner")
   p <- parties[role %chin% roles, ..cols]
   setnames(p, c("name", "cvr", "cvr_raw", "country", "amount"),
            paste0(prefix, c("_name", "_cvr", "_cvr_raw", "_country", "_amount")))

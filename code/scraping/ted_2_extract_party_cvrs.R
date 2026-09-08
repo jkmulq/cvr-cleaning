@@ -139,7 +139,15 @@ eforms_org_lookup <- function(xml) {
   nm   <- xml_text(xml_find_first(o, "cac:PartyName/cbc:Name", ns))
   cvr  <- xml_text(xml_find_first(o, "cac:PartyLegalEntity/cbc:CompanyID", ns))
   ctry <- xml_text(xml_find_first(o, ".//cbc:IdentificationCode[@listName='country']", ns))
-  list(name = setNames(nm, id), cvr = setNames(cvr, id), country = setNames(ctry, id))
+  # efbc:GroupLeadIndicator (sibling of efac:Company under efac:Organization): "true" marks the lead of a
+  # tendering group (consortium). Used to flag consortium awards; see ted_3. The efbc namespace is not in
+  # `ns`, so match by local-name to avoid an unknown-prefix XPath failure.
+  glead <- tolower(xml_text(xml_find_first(o, "../*[local-name()='GroupLeadIndicator']")))
+  # efbc:CompanySizeCode (child of efac:Company): sme / micro / small / medium / large. For winner-SME.
+  size  <- tolower(xml_text(xml_find_first(o, "*[local-name()='CompanySizeCode']")))
+  nuts  <- xml_text(xml_find_first(o, ".//*[local-name()='CountrySubentityCode']"))   # org NUTS region
+  list(name = setNames(nm, id), cvr = setNames(cvr, id), country = setNames(ctry, id),
+       grouplead = setNames(glead, id), company_size = setNames(size, id), nuts = setNames(nuts, id))
 }
 
 # Empty long-parties skeleton (kept identical everywhere so rbindlist never fights
@@ -147,7 +155,8 @@ eforms_org_lookup <- function(xml) {
 empty_parties <- function()
   data.table(notice_id = character(), role = character(), lot = character(),
              tender_id = character(), name = character(), cvr_raw = character(),
-             country = character(), amount = numeric(), currency = character())
+             country = character(), amount = numeric(), currency = character(),
+             is_group_award = logical(), is_sme = logical(), nuts = character())
 
 # COUNTRY attribute (VALUE="DK") on a legacy node's descendant, "" if absent.
 legacy_country <- function(node) {
@@ -177,6 +186,11 @@ parse_eforms_parties <- function(xml, notice_id) {
     tp <- xml_find_all(xml, "//efac:NoticeResult/efac:TenderingParty", ns)
     tp_orgs <- lapply(tp, function(p) xml_text(xml_find_all(p, "efac:Tenderer/cbc:ID", ns)))
     names(tp_orgs) <- xml_text(xml_find_first(tp, "cbc:ID", ns))
+    # A tendering party is a consortium if it bids as a group of firms: either it lists >=2 tenderer orgs,
+    # or one of its tenderer orgs is flagged as a group lead. Both are TENDERER-side, so this excludes
+    # eForms buyer-side GroupLeadIndicator (joint procurement), which is not a winner consortium.
+    party_group <- setNames(vapply(tp_orgs, function(ids)
+      length(ids) >= 2L || any(org$grouplead[ids] == "true", na.rm = TRUE), logical(1)), names(tp_orgs))
 
     # WINNERS = tenders with a concluded (settled) contract. Do NOT use the LotResult's
     # LotTender list: a LotResult references EVERY received tender for the lot (winners
@@ -206,7 +220,13 @@ parse_eforms_parties <- function(xml, notice_id) {
                  name    = ifelse(is.na(org$name[orgids]),    "", org$name[orgids]),
                  cvr_raw = ifelse(is.na(org$cvr[orgids]),     "", org$cvr[orgids]),
                  country = ifelse(is.na(org$country[orgids]), "", org$country[orgids]),
-                 amount = unname(lt_amt[t]), currency = unname(lt_cur[t]))
+                 amount = unname(lt_amt[t]), currency = unname(lt_cur[t]),
+                 # per-winner (tender-lot-winner) consortium status: is THIS tender's party a group?
+                 is_group_award = isTRUE(unname(party_group[party])),
+                 # per-winner-org SME status from CompanySizeCode (large -> FALSE; missing -> NA)
+                 is_sme = { sz <- org$company_size[orgids]
+                            ifelse(is.na(sz) | sz == "", NA, sz %in% c("sme","micro","small","medium")) },
+                 nuts = unname(org$nuts[orgids]))
     }), fill = TRUE)
   } else tenders <- empty_parties()
 
@@ -217,7 +237,8 @@ parse_eforms_parties <- function(xml, notice_id) {
     name    = ifelse(is.na(org$name[buyer_ids]),    "", org$name[buyer_ids]),
     cvr_raw = ifelse(is.na(org$cvr[buyer_ids]),     "", org$cvr[buyer_ids]),
     country = ifelse(is.na(org$country[buyer_ids]), "", org$country[buyer_ids]),
-    amount = NA_real_, currency = NA_character_) else empty_parties()
+    amount = NA_real_, currency = NA_character_, is_group_award = NA, is_sme = NA,
+    nuts = unname(org$nuts[buyer_ids])) else empty_parties()
 
   rbindlist(list(buyers, tenders), use.names = TRUE, fill = TRUE)
 }
@@ -243,6 +264,8 @@ parse_legacy_parties <- function(xml, notice_id) {
     amt_node <- xml_find_first(a, './/*[local-name()="VAL_TOTAL" or local-name()="VALUE"]')
     amt <- suppressWarnings(as.numeric(gsub("[^0-9.]", "", xml_text(amt_node))))
     cur <- if (inherits(amt_node, "xml_node")) xml_attr(amt_node, "CURRENCY") else NA_character_
+    # per-winner consortium status: this AWARD_CONTRACT (one award/winner) marked AWARDED_TO_GROUP.
+    grp <- length(xml_find_all(a, './/*[local-name()="AWARDED_TO_GROUP"]')) > 0
     data.table(
       notice_id = notice_id, role = "winner", lot = ifelse(is.na(lot), "", lot),
       tender_id = paste0(notice_id, "-ac", k),
@@ -250,7 +273,14 @@ parse_legacy_parties <- function(xml, notice_id) {
       cvr_raw = vapply(ctr, function(c) { v <- ln1(c, "NATIONALID"); if (is.na(v)) "" else v },
                        character(1)),
       country = vapply(ctr, legacy_country, character(1)),
-      amount = amt, currency = cur)
+      amount = amt, currency = cur, is_group_award = grp,
+      # per-winner SME status: <SME/> vs <NO_SME/> inside the CONTRACTOR block (neither -> NA)
+      is_sme = vapply(ctr, function(cc)
+        if (length(xml_find_all(cc, ".//*[local-name()='SME']"))) TRUE
+        else if (length(xml_find_all(cc, ".//*[local-name()='NO_SME']"))) FALSE else NA, logical(1)),
+      nuts = vapply(ctr, function(cc) {
+        v <- xml_attr(xml_find_first(cc, ".//*[local-name()='NUTS']"), "CODE"); if (is.na(v)) "" else v
+      }, character(1)))
   }), fill = TRUE)
   if (nrow(winners)) winners[is.na(name), name := ""]
 
@@ -261,7 +291,8 @@ parse_legacy_parties <- function(xml, notice_id) {
     name    = { v <- ln1_any(b, c("OFFICIALNAME", "ORGANISATION")); ifelse(is.na(v), "", v) },
     cvr_raw = { v <- ln1(b, "NATIONALID"); ifelse(is.na(v), "", v) },
     country = legacy_country(b),
-    amount = NA_real_, currency = NA_character_)), fill = TRUE) else empty_parties()
+    amount = NA_real_, currency = NA_character_, is_group_award = NA, is_sme = NA,
+    nuts = { v <- xml_attr(xml_find_first(b, ".//*[local-name()='NUTS']"), "CODE"); if (is.na(v)) "" else v })), fill = TRUE) else empty_parties()
 
   rbindlist(list(buyers, winners), use.names = TRUE, fill = TRUE)
 }
@@ -321,6 +352,32 @@ parse_eforms_meta <- function(xml, notice_id) {
                    if (nrow(lot_dt)) nz1(lot_dt$contract_type) else NA_character_,
                    if (nrow(lot_dt)) sum_or_na(lot_dt$n_tenders_received) else NA_real_,
                    if (nrow(lot_dt)) nrow(lot_dt) else NA_integer_)
+  # Notice-level extras. joint procurement: >=2 distinct contracting parties (buyers).
+  n_cp <- length(unique(na.omit(xml_text(xml_find_all(xml,
+    "//*[local-name()='ContractingParty']/*[local-name()='Party']/*[local-name()='PartyIdentification']/*[local-name()='ID']")))))
+  fund <- xml_text(xml_find_first(xml, "//*[local-name()='FundingProgramCode']"))
+  crit <- unique(xml_text(xml_find_all(xml, "//*[local-name()='AwardingCriterionTypeCode']")))
+  crit <- crit[!is.na(crit) & crit != ""]
+  # SME tenders: ReceivedSubmissionsStatistics rows whose StatisticsCode marks SME submissions.
+  sme_n <- NA_integer_
+  for (s in xml_find_all(xml, "//*[local-name()='ReceivedSubmissionsStatistics']")) {
+    sc <- xml_text(xml_find_first(s, ".//*[local-name()='StatisticsCode']"))
+    if (!is.na(sc) && grepl("sme", sc)) {
+      sme_n <- sum(sme_n, suppressWarnings(as.integer(xml_text(
+        xml_find_first(s, ".//*[local-name()='StatisticsNumeric']")))), na.rm = TRUE)
+    }
+  }
+  meta[, `:=`(
+    buyer_type        = xml_text(xml_find_first(xml, "//*[local-name()='PartyTypeCode'][@listName='buyer-legal-type']")),
+    buyer_activity    = xml_text(xml_find_first(xml, "//*[local-name()='ActivityTypeCode'][@listName='authority-activity']")),
+    buyer_nuts        = xml_text(xml_find_first(xml, "//*[local-name()='CountrySubentityCode']")),  # best-effort (first NUTS)
+    eu_funded         = !is.na(fund) & fund != "" & fund != "no-eu-funds",
+    joint_procurement = n_cp >= 2L,
+    award_criteria    = if (length(crit)) paste(crit, collapse = ";") else NA_character_,  # price / quality / cost
+    price_weight      = NA_real_,   # eForms weights need per-criterion parameter linkage; deferred
+    n_tenders_sme     = sme_n,
+    subcontracted     = length(xml_find_all(xml, "//*[local-name()='SubcontractingTerm']")) > 0
+  )]
   list(meta = meta, lots = lot_dt)
 }
 
@@ -359,6 +416,22 @@ parse_legacy_meta <- function(xml, notice_id) {
 
   meta <- meta_row(notice_id, amount_awarded, amount_estimated, currency, cpv_main,
                    contract_type, n_tenders, if (length(ac)) length(ac) else NA_integer_)
+  # Notice-level extras (best-effort; NA where a form era omits them).
+  ca_act <- xml_attr(xml_find_first(xml, "//*[local-name()='CA_ACTIVITY']"), "VALUE")
+  if (is.na(ca_act)) ca_act <- xml_text(xml_find_first(xml, "//*[local-name()='CA_ACTIVITY_OTHER']"))
+  sme_t <- suppressWarnings(as.integer(xml_text(xml_find_all(xml, "//*[local-name()='NB_TENDERS_RECEIVED_SME']"))))
+  meta[, `:=`(
+    buyer_type        = xml_attr(xml_find_first(xml, "//*[local-name()='CA_TYPE']"), "VALUE"),
+    buyer_activity    = ca_act,
+    buyer_nuts        = xml_attr(xml_find_first(xml, "//*[local-name()='CA_CE_NUTS']"), "CODE"),
+    eu_funded         = length(xml_find_all(xml, "//*[local-name()='EU_PROGR_RELATED']")) > 0,
+    joint_procurement = length(xml_find_all(xml, "//*[local-name()='JOINT_PROCUREMENT_INVOLVED']")) > 0,
+    award_criteria    = xml_attr(xml_find_first(xml, "//*[local-name()='AC_AWARD_CRIT']"), "CODE"),  # 1=lowest price, else MEAT
+    price_weight      = suppressWarnings(as.numeric(xml_text(
+                          xml_find_first(xml, "//*[local-name()='AC_PRICE']/*[local-name()='AC_WEIGHTING']")))),
+    n_tenders_sme     = if (length(sme_t) && any(!is.na(sme_t))) sum(sme_t, na.rm = TRUE) else NA_integer_,
+    subcontracted     = length(xml_find_all(xml, "//*[local-name()='LIKELY_SUBCONTRACTED']")) > 0
+  )]
   list(meta = meta, lots = lot_dt)
 }
 
@@ -514,11 +587,16 @@ if (nrow(lots)) {
 if (nrow(meta_all))
   notice_summary <- merge(notice_summary, meta_all[, .(
     notice_id, amount_estimated, amount_awarded, cpv_main, contract_type,
-    n_tenders_received, n_lots)], by = "notice_id", all.x = TRUE)
-if (file.exists(links_rds))
-  notice_summary <- merge(notice_summary, unique(as.data.table(readRDS(links_rds))[, .(
-    notice_id = award_notice_id, procedure_type, procedure_group, is_dps,
-    is_framework, direct_award)]), by = "notice_id", all.x = TRUE)
+    n_tenders_received, n_lots, buyer_type, buyer_activity, buyer_nuts, eu_funded, joint_procurement,
+    award_criteria, price_weight, n_tenders_sme, subcontracted)],
+    by = "notice_id", all.x = TRUE)
+if (file.exists(links_rds)) {
+  .lk <- as.data.table(readRDS(links_rds))
+  if (!"framework_duration_days" %in% names(.lk)) .lk[, framework_duration_days := NA_real_]
+  .lk <- unique(.lk[, .(notice_id = award_notice_id, procedure_type, procedure_group, is_dps,
+                        is_framework, direct_award, contract_duration_days = framework_duration_days)])
+  notice_summary <- merge(notice_summary, .lk, by = "notice_id", all.x = TRUE)
+}
 if (nrow(lots))
   notice_summary <- merge(notice_summary, lots[order(notice_id, lot), .(
     lot_ids = paste(lot, collapse = ";"),
