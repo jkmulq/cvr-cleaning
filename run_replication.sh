@@ -8,10 +8,10 @@ PROJECT_DIR="$SCRIPT_DIR"
 RSCRIPT="${RSCRIPT:-Rscript}"
 RUN_MATCHING="${RUN_MATCHING:-true}"
 BUILD_CVR_LOOKUP="${BUILD_CVR_LOOKUP:-false}"
-# Optional post-matching web/API pulls. They consume the matched datasets and
-# need network access, so they run after matching and are off by default.
+# Optional post-matching web/API pull. Consumes the matched datasets and needs Virk
+# credentials, so it runs after matching and is off by default. (The TED/XML dataset
+# chain is now a standard step -- see below -- not an optional flag.)
 BUILD_EMPLOYMENT_HISTORY="${BUILD_EMPLOYMENT_HISTORY:-false}"
-EXTRACT_TED_NOTICES="${EXTRACT_TED_NOTICES:-false}"
 
 export PROJECT_DIR
 
@@ -81,7 +81,6 @@ echo "Rscript: $RSCRIPT"
 echo "Run matching: $RUN_MATCHING"
 echo "Build CVR lookup from Virk API: $BUILD_CVR_LOOKUP"
 echo "Build employment history from Virk API: $BUILD_EMPLOYMENT_HISTORY"
-echo "Extract TED notices: $EXTRACT_TED_NOTICES"
 echo "Log file: $LOG_FILE"
 
 if ! command -v "$RSCRIPT" > /dev/null 2>&1; then
@@ -91,18 +90,21 @@ if ! command -v "$RSCRIPT" > /dev/null 2>&1; then
 fi
 
 # The pipeline runs each step with `Rscript --vanilla` (below), which skips
-# ~/.Renviron. If CVR_DATA_DIR (the shared-data redirect honored by config.R) is
-# set there rather than exported, resolve it once via a plain Rscript and export
-# it so every --vanilla step inherits it. Harmless when unset (stays on <project>/data).
+# ~/.Renviron. CVR_DATA_DIR (the required data root, honored by config.R) is often
+# set in ~/.Renviron rather than exported, so resolve it once via a plain Rscript
+# and export it here so every --vanilla step inherits it.
 if [ -z "${CVR_DATA_DIR:-}" ]; then
   CVR_DATA_DIR="$("$RSCRIPT" -e 'cat(Sys.getenv("CVR_DATA_DIR"))' 2>/dev/null || true)"
   [ -n "$CVR_DATA_DIR" ] && export CVR_DATA_DIR
 fi
-if [ -n "${CVR_DATA_DIR:-}" ]; then
-  echo "Data root (CVR_DATA_DIR): $CVR_DATA_DIR"
-else
-  echo "Data root:        <project>/data (CVR_DATA_DIR unset)"
+# CVR_DATA_DIR is required -- there is no <project>/data fallback. Fail fast with a
+# clear message rather than letting the first R step error out.
+if [ -z "${CVR_DATA_DIR:-}" ]; then
+  echo "CVR_DATA_DIR is not set. Set it to the shared data folder (e.g. your Box path) in" >&2
+  echo "~/.Renviron or the environment before running. See .Renviron.example." >&2
+  exit 1
 fi
+echo "Data root (CVR_DATA_DIR): $CVR_DATA_DIR"
 
 require_file() {
   local file_path="$1"
@@ -171,10 +173,11 @@ run_r_script "code/processing/1_1_process_kfst.R"
 run_r_script "code/processing/1_2_process_open_tender.R"
 
 if [[ "$RUN_MATCHING" != "true" ]]; then
-  if [[ "$BUILD_EMPLOYMENT_HISTORY" == "true" || "$EXTRACT_TED_NOTICES" == "true" ]]; then
+  if [[ "$BUILD_EMPLOYMENT_HISTORY" == "true" ]]; then
     echo
-    echo "Note: BUILD_EMPLOYMENT_HISTORY / EXTRACT_TED_NOTICES need the matched" >&2
-    echo "datasets, so they are skipped when RUN_MATCHING=false." >&2
+    echo "Note: BUILD_EMPLOYMENT_HISTORY needs the matched datasets, so it is" >&2
+    echo "skipped when RUN_MATCHING=false. The TED chain and dataset combine are" >&2
+    echo "also skipped (they need the matched datasets too)." >&2
   fi
   echo
   echo "Cleaning-only replication complete. Outputs are in data/clean."
@@ -195,23 +198,25 @@ run_r_script "code/processing/2_4_match_opentender_buyers.R"
 run_r_script "code/processing/3_1_build_kfst_winner_datasets.R"
 run_r_script "code/processing/3_2_build_ot_winner_datasets.R"
 
-# Optional post-matching pulls (consume the *_name_matched.rds outputs above).
-# BUILD_EMPLOYMENT_HISTORY needs Virk credentials; EXTRACT_TED_NOTICES needs
-# internet access. Both are resumable.
+# Optional post-matching pull (consumes the *_name_matched.rds outputs above).
+# BUILD_EMPLOYMENT_HISTORY needs Virk credentials and is resumable.
 if [[ "$BUILD_EMPLOYMENT_HISTORY" == "true" ]]; then
   run_r_script "code/scraping/employment_1_winners.R"
 fi
 
-if [[ "$EXTRACT_TED_NOTICES" == "true" ]]; then
-  # Full TED/XML dataset chain: fetch notice XML -> extract parties/lots/CVRs/dates ->
-  # build tender-lot winner/buyer tables -> name-match winners + buyers. Each step is
-  # cache-first/resumable and consumes the previous step's outputs.
-  run_r_script "code/scraping/ted_1_extract_notices.R"
-  run_r_script "code/scraping/ted_2_extract_party_cvrs.R"
-  run_r_script "code/scraping/ted_3_build_winner_buyer_datasets.R"
-  run_r_script "code/scraping/ted_4_match_winners.R"
-  run_r_script "code/scraping/ted_5_match_buyers.R"
-fi
+# Full TED/XML dataset chain (standard step). Fetch notice XML -> extract parties/lots/CVRs/dates ->
+# build tender-lot winner/buyer tables -> name-match winners + buyers (saved to data/clean). Each step is
+# cache-first/resumable; the raw notice XML is already fetched by the date chain inside 1_1/1_2, so these
+# reuse the cache offline.
+run_r_script "code/scraping/ted_1_extract_notices.R"
+run_r_script "code/scraping/ted_2_extract_party_cvrs.R"
+run_r_script "code/scraping/ted_3_build_winner_buyer_datasets.R"
+run_r_script "code/scraping/ted_4_match_winners.R"
+run_r_script "code/scraping/ted_5_match_buyers.R"
+
+# Concatenate KFST + OpenTender + TED into one winner dataset and one buyer dataset (shared schema aligned,
+# source-specific columns NA-filled, a `dataset` column flags the source). Requires all three sources.
+run_r_script "code/processing/5_combine_datasets.R"
 
 echo
 echo "Replication complete. Outputs are in data/clean."
