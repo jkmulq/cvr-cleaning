@@ -215,9 +215,10 @@ run_r_script "code/scraping/ted_3_build_winner_buyer_datasets.R"
 run_r_script "code/scraping/ted_4_match_winners.R"
 run_r_script "code/scraping/ted_5_match_buyers.R"
 
-# Concatenate KFST + OpenTender + TED into one winner dataset and one buyer dataset (shared schema aligned,
-# source-specific columns NA-filled, a `dataset` column flags the source). Requires all three sources.
-run_r_script "code/processing/5_combine_datasets.R"
+# Combine all six matched samples (KFST/OT/TED x winner/buyer; the stacks where they exist) into one long
+# dataset with sample-selection columns (data_source, entity, dataset, build_prod, build_extr), CVR columns
+# standardised to cvr_*, and country harmonised. This is the all-in-one server-delivery table.
+run_r_script "code/processing/4_combine_all_datasets.R"
 
 echo
 echo "Replication complete. Outputs are in data/clean."
