@@ -58,8 +58,10 @@ stacked[, is_awarded_winner := awarded_winner(stacked)]   # flag_awarded (stacks
 # 4 Lot-level dedup: where production and extraction agree on the lot's whole CVR set, keep one copy
 #   (production); where they disagree, keep both methods' rows. build_prod / build_extr then rebuild each
 #   sample exactly by a simple filter (build_prod for production, build_extr for extraction).
-stacked[, cvr_list_prod := paste(sort(unique(winner_cvr_final[dataset == "production"])), collapse = ";"), by = .(tender_id, lot_id)]
-stacked[, cvr_list_extr := paste(sort(unique(winner_cvr_final[dataset == "extraction"])),  collapse = ";"), by = .(tender_id, lot_id)]
+stacked[, cvr_list_prod := paste(sort(unique(winner_cvr_final[dataset == "production"])), collapse = ";"), 
+        by = .(tender_id, lot_id)]
+stacked[, cvr_list_extr := paste(sort(unique(winner_cvr_final[dataset == "extraction"])),  collapse = ";"), 
+        by = .(tender_id, lot_id)]
 stacked[, cvr_list_equal := cvr_list_prod == cvr_list_extr]
 stacked_deduped <- stacked[(dataset == "production" & cvr_list_equal) | cvr_list_equal == FALSE]
 stacked_deduped[, build_prod := (dataset == "production" & cvr_list_equal == FALSE) | cvr_list_equal == TRUE]
