@@ -197,6 +197,7 @@ run_r_script "code/processing/2_3_match_opentender.R"
 run_r_script "code/processing/2_4_match_opentender_buyers.R"
 run_r_script "code/processing/3_1_build_kfst_winner_datasets.R"
 run_r_script "code/processing/3_2_build_ot_winner_datasets.R"
+run_r_script "code/processing/3_3_build_ot_buyer_datasets.R"
 
 # Optional post-matching pull (consumes the *_name_matched.rds outputs above).
 # BUILD_EMPLOYMENT_HISTORY needs Virk credentials and is resumable.
