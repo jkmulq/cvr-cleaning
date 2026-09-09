@@ -90,32 +90,27 @@ clean_cvr_candidate <- function(x) {
 # not counted as CVRs. Whitespace is removed before matching so a spaced CVR can
 # be read as one number; consequently, whitespace alone cannot separate two CVRs.
 extract_valid_cvr_candidates <- function(x,
-                                         collapse_whitespace = TRUE,
-                                         drop_invalid = FALSE) {
+                                         collapse_whitespace = TRUE) {
   x <- if (collapse_whitespace) clean_cvr_candidate(x) else tidyr::replace_na(as.character(x), "")
   out <- unlist(stringr::str_extract_all(
     x,
     "(?<!\\d)\\d{8}(?!\\d)"
   ))
 
-  if (drop_invalid) {
-    out <- out[!out %in% known_invalid_cvr_numbers()]
-  }
-  
   if (length(out) == 0) {
     return(NA_character_)
   }
-  
+
   # Return
   return(out)
 }
 
 # Find number of unique candidates
-compute_distinct_valid_cvr <- function(x, collapse_whitespace = TRUE, drop_invalid = FALSE) {
+compute_distinct_valid_cvr <- function(x, collapse_whitespace = TRUE) {
   vapply(
     x,
     function(value) {
-      cands <- extract_valid_cvr_candidates(value, collapse_whitespace, drop_invalid)
+      cands <- extract_valid_cvr_candidates(value, collapse_whitespace)
       cands <- cands[!is.na(cands)]
       cands <- unique(cands)
       length(cands)
@@ -125,23 +120,12 @@ compute_distinct_valid_cvr <- function(x, collapse_whitespace = TRUE, drop_inval
   )
 }
 
-# CVR-like placeholders that should not be treated as real Danish CVRs.
-known_invalid_cvr_numbers <- function() {
-  c(
-    "00000000",
-    "11111111",
-    "12345678",
-    "99999999"
-  )
-}
-
 # Recover one clearly formatted Danish CVR only after the conservative extractor
 # has found no valid CVR. This protects rows such as "12345678-87654321": the
 # normal extractor sees two CVRs there, so this helper leaves the row alone.
 recover_formatted_danish_cvr <- function(cvr_candidate,
                                          country,
-                                         n_valid_cvr_raw,
-                                         known_invalid_cvrs = known_invalid_cvr_numbers()) {
+                                         n_valid_cvr_raw) {
   cvr_candidate <- as.character(cvr_candidate)
   country <- as.character(country)
   n_valid_cvr_raw <- as.integer(n_valid_cvr_raw)
@@ -154,15 +138,12 @@ recover_formatted_danish_cvr <- function(cvr_candidate,
   no_raw_cvr_found <- !is.na(n_valid_cvr_raw) & n_valid_cvr_raw == 0
   one_eight_digit_number <- !is.na(digits_only) &
     stringr::str_detect(digits_only, "^[0-9]{8}$")
-  invalid_placeholder <- !is.na(digits_only) &
-    digits_only %in% known_invalid_cvrs
-  
+
   recovered_cvr <- ifelse(
     !blank_candidate &
       danish_candidate &
       no_raw_cvr_found &
-      one_eight_digit_number &
-      !invalid_placeholder,
+      one_eight_digit_number,
     digits_only,
     NA_character_
   )
@@ -199,13 +180,13 @@ recycle_single <- function(x, n) {
 }
 
 # Per-lot long table of DISTINCT valid field CVRs. Reuses extract_valid_cvr_candidates() with
-# collapse_whitespace = FALSE (count the listed multi-CVR structure as-written) and
-# drop_invalid = TRUE (exclude placeholder CVRs). Input needs tender_id, lot_id, winner_cvr.
+# collapse_whitespace = FALSE (count the listed multi-CVR structure as-written). Input needs
+# tender_id, lot_id, winner_cvr.
 lot_field_cvrs <- function(df) {
   df %>%
     dplyr::transmute(tender_id, lot_id,
       cvr = lapply(winner_cvr, extract_valid_cvr_candidates,
-                   collapse_whitespace = FALSE, drop_invalid = TRUE)) %>%
+                   collapse_whitespace = FALSE)) %>%
     tidyr::unnest_longer(cvr) %>%
     dplyr::filter(!is.na(cvr)) %>%
     dplyr::distinct(tender_id, lot_id, cvr)

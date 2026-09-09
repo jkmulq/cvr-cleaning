@@ -499,16 +499,6 @@ multi_winner_data_long$winner_cvr_clean <- map_chr(multi_winner_data_long$winner
 # Flag the cleaning steps
 multi_winner_data_long <- multi_winner_data_long %>% 
   mutate(
-    flag_cvr_placeholder = coalesce(
-      winner_cvr_clean %in% known_invalid_cvr_numbers(),
-      FALSE
-    ),
-    winner_cvr_clean = ifelse(
-      flag_cvr_placeholder,
-      NA_character_,
-      winner_cvr_clean
-    ),
-    
     # Candidate had whitespace
     flag_cvr_ws = coalesce(str_detect(winner_cvr_candidate, "\\s"), FALSE),
 
@@ -559,17 +549,7 @@ single_winner_data <- single_winner_data %>%
            winner_cvr_recovered_from_formatting,
            winner_cvr_clean
          ),
-         
-         flag_cvr_placeholder = coalesce(
-           winner_cvr_clean %in% known_invalid_cvr_numbers(),
-           FALSE
-         ),
-         winner_cvr_clean = ifelse(
-           flag_cvr_placeholder,
-           NA_character_,
-           winner_cvr_clean
-         ),
-         
+
          # Candidate had whitespace
          flag_cvr_ws = coalesce(str_detect(winner_cvr_candidate, "\\s"), FALSE),
 
@@ -630,8 +610,8 @@ valid_cvr_sources <- clean_winner_data %>%
   )
 
 ### 2.8.3 Keep only strict one-to-one pairs: the name maps to exactly one valid CVR AND that CVR maps to
-# exactly one name. A CVR shared across several names (often an imperfect consortium expansion, or a
-# near-placeholder CVR) is unreliable to borrow; those rows keep a missing CVR and go to the name matcher.
+# exactly one name. A CVR shared across several names (often an imperfect consortium expansion) is
+# unreliable to borrow; those rows keep a missing CVR and go to the name matcher.
 single_valid_cvr_key <- valid_invalid_cvr_winner_key %>%
   filter(n_valid_cvr == 1, n_name_per_cvr == 1) %>%
   rename(winner_cvr_valid_from_same_name = winner_cvr_clean) %>%
@@ -804,7 +784,7 @@ clean_winner_data <- clean_winner_data %>%
       "winner_country", "winner_country_original",
       "valid_cvr", "n_valid_cvr_raw", "n_valid_cvr", "flag_row_multiple_valid_cvr",
       "flag_matching_candidate",
-      "flag_cvr_recovered_from_formatting", "flag_cvr_placeholder",
+      "flag_cvr_recovered_from_formatting",
       "flag_cvr_standardised", "flag_cvr_ws",
       "flag_cvr_alphabet", "flag_cvr_punct",
       "flag_missing_winner_cvr", "flag_missing_winner_name",
@@ -933,16 +913,6 @@ multi_buyer_data_long$buyer_cvr_clean <- map_chr(multi_buyer_data_long$buyer_cvr
 # Flag the cleaning steps
 multi_buyer_data_long <- multi_buyer_data_long %>% 
   mutate(
-    flag_cvr_placeholder = coalesce(
-      buyer_cvr_clean %in% known_invalid_cvr_numbers(),
-      FALSE
-    ),
-    buyer_cvr_clean = ifelse(
-      flag_cvr_placeholder,
-      NA_character_,
-      buyer_cvr_clean
-    ),
-    
     # Candidate had whitespace
     flag_cvr_ws = coalesce(str_detect(buyer_cvr_candidate, "\\s"), FALSE),
     
@@ -993,17 +963,7 @@ single_buyer_data <- single_buyer_data %>%
       buyer_cvr_recovered_from_formatting,
       buyer_cvr_clean
     ),
-    
-    flag_cvr_placeholder = coalesce(
-      buyer_cvr_clean %in% known_invalid_cvr_numbers(),
-      FALSE
-    ),
-    buyer_cvr_clean = ifelse(
-      flag_cvr_placeholder,
-      NA_character_,
-      buyer_cvr_clean
-    ),
-    
+
     # Candidate had whitespace
     flag_cvr_ws = coalesce(str_detect(buyer_cvr_candidate, "\\s"), FALSE),
     
@@ -1113,8 +1073,8 @@ valid_cvr_sources <- clean_buyer_data %>%
   )
 
 ### 3.9.3 Keep only strict one-to-one pairs: the name maps to exactly one valid CVR AND that CVR maps to
-# exactly one name. A CVR shared across several names (often an imperfect consortium expansion, or a
-# near-placeholder CVR) is unreliable to borrow; those rows keep a missing CVR and go to the name matcher.
+# exactly one name. A CVR shared across several names (often an imperfect consortium expansion) is
+# unreliable to borrow; those rows keep a missing CVR and go to the name matcher.
 single_valid_cvr_key <- valid_invalid_cvr_buyer_key %>%
   filter(n_valid_cvr == 1, n_name_per_cvr == 1) %>%
   rename(buyer_cvr_valid_from_same_name = buyer_cvr_clean) %>%

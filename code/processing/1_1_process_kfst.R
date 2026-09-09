@@ -557,7 +557,7 @@ clean_winner_data <- clean_winner_data %>%
   group_by(tender_id, lot_id, winner_number) %>%
   mutate(.n_members   = n(),
          .n_valid_cvr = compute_distinct_valid_cvr(paste(winner_cvr_candidate_original, collapse = ";"),
-                                                   collapse_whitespace = FALSE, drop_invalid = TRUE),
+                                                   collapse_whitespace = FALSE),
          .recycled    = replace_na(is_consortium, FALSE) & .n_valid_cvr >= 1L &
                         .n_members > .n_valid_cvr & any(.member_dk)) %>%   # any DK member => re-pair via registry
   ungroup()
@@ -681,8 +681,8 @@ valid_cvr_sources <- clean_winner_data %>%
   )
 
 ### 4.3.3 Keep only strict one-to-one pairs: the name maps to exactly one valid CVR AND that CVR maps to
-# exactly one name. A CVR shared across several names (often an imperfect consortium expansion, or a
-# near-placeholder CVR) is unreliable to borrow; those rows keep a missing CVR and go to the name matcher.
+# exactly one name. A CVR shared across several names (often an imperfect consortium expansion) is
+# unreliable to borrow; those rows keep a missing CVR and go to the name matcher.
 single_valid_cvr_key <- valid_invalid_cvr_winner_key %>%
   filter(n_valid_cvr == 1, n_name_per_cvr == 1) %>%
   rename(winner_cvr_valid_from_same_name = winner_cvr_clean) %>%

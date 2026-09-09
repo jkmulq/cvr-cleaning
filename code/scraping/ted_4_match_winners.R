@@ -384,8 +384,7 @@ winner_data[, .ccy := NULL]
 
 # --- valid_cvr: syntactic 8-digit validity of the cleaned CVR (as in cleaning) ---
 winner_data[, valid_cvr :=
-  !is.na(winner_cvr_clean) & grepl("^[0-9]{8}$", as.character(winner_cvr_clean)) &
-  !(as.character(winner_cvr_clean) %chin% known_invalid_cvr_numbers())]
+  !is.na(winner_cvr_clean) & grepl("^[0-9]{8}$", as.character(winner_cvr_clean))]
 
 # --- CVR formatting-cleanup flags: what changed from the raw id (winner_cvr_raw,
 # carried as winner_cvr_candidate) to the cleaned CVR (mirrors 1_2). ---
@@ -480,6 +479,7 @@ winner_data[, winner_number := suppressWarnings(as.integer(winner_number))]
 
 # 8 Save. The final matched winner dataset goes to clean/ alongside the KFST/OpenTender clean winner data
 # (same clean_*_name_matched naming); the manual-review list stays in intermediates/ted as a QC artifact.
+winner_data <- as.data.table(null_negative_amounts(winner_data))   # TED -1 "unpublished" sentinels -> NA, raw kept in `<col>_raw`
 winner_data[, is_awarded_winner := awarded_winner(winner_data)]   # awarded (flag_awarded) & is_winner (TED keeps bidders)
 saveRDS(winner_data, file.path(clean_data_dir, "clean_winner_data_ted_name_matched.rds"))
 fwrite(winner_data,  file.path(clean_data_dir, "clean_winner_data_ted_name_matched.csv"))
