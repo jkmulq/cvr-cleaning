@@ -1,7 +1,9 @@
 # OpenTender BUYER concatenate-and-dedup, the buyer analogue of the winner builders (3_1/3_2): the
 # production (name-matched buyers from 2_4) and extraction (raw 8-digit CVRs from the buyer field, no
-# matching) methods reduced to one row per distinct (tender_id, lot_id, CVR). Author: Jack Mulqueeney. Date: 8 Sep 2026.
-#
+# matching) methods reduced to one row per distinct (tender_id, lot_id, CVR). 
+# Author: Jack Mulqueeney. 
+# Date: 8 Sep 2026.
+
 # OpenTender ONLY: KFST buyer data carries no source CVR field (buyer CVRs there come purely from name
 # matching), so there is nothing to extract and no KFST buyer stack.
 #
