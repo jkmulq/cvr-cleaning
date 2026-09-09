@@ -1619,3 +1619,104 @@ clean_cpv_code <- function(cpv_code) {
     category = category
   )
 }
+
+# ── Country-code harmonisation ────────────────────────────────────────────────
+# KFST and OpenTender record winner/buyer country as ISO 3166-1 alpha-2 (DK, SE, ...); the TED XML
+# sometimes uses alpha-3 (DNK, SWE, ...). standardise_country() maps a clean single alpha-3 token to its
+# alpha-2 form so the concatenated dataset uses one system. Values that are NOT a bare alpha-3 code in the
+# table -- already-alpha-2 codes, blanks, and messy multi-country strings (e.g. KFST "DK,SE") -- are
+# returned only trimmed, so genuinely messy rows stay as-is.
+iso3_to_iso2 <- c(
+  DNK = "DK", SWE = "SE", DEU = "DE", NOR = "NO", IRL = "IE", GBR = "GB", NLD = "NL", ITA = "IT",
+  USA = "US", BEL = "BE", AUT = "AT", CHE = "CH", FRA = "FR", ESP = "ES", POL = "PL", FIN = "FI",
+  PRT = "PT", GRC = "GR", CZE = "CZ", HUN = "HU", ROU = "RO", BGR = "BG", HRV = "HR", SVK = "SK",
+  SVN = "SI", LTU = "LT", LVA = "LV", EST = "EE", LUX = "LU", ISL = "IS", MLT = "MT", CYP = "CY",
+  LIE = "LI", TUR = "TR", CHN = "CN", IND = "IN", JPN = "JP", CAN = "CA", AUS = "AU", RUS = "RU",
+  UKR = "UA", BRA = "BR", KOR = "KR", SGP = "SG", HKG = "HK", ARE = "AE", ISR = "IL", ZAF = "ZA",
+  MEX = "MX", NZL = "NZ", SRB = "RS", BIH = "BA", MKD = "MK", ALB = "AL", MNE = "ME", MDA = "MD",
+  GEO = "GE", ARM = "AM", AZE = "AZ")
+
+standardise_country <- function(x) {
+  x   <- trimws(as.character(x))
+  up  <- toupper(x)
+  hit <- up %in% names(iso3_to_iso2)
+  x[hit] <- unname(iso3_to_iso2[up[hit]])
+  x
+}
+
+# ── Awarded-winner flag ───────────────────────────────────────────────────────
+# TRUE for a row that is an awarded winner: the lot was awarded (flag_awarded) AND the row is not a
+# flagged non-winning bidder (is_winner == FALSE, TED only). A missing flag_awarded / is_winner column is
+# treated as awarded / winner -- KFST and OpenTender carry no is_winner (they are winners-only) and all
+# winner tables carry flag_awarded. Returns a logical vector of length nrow(df).
+awarded_winner <- function(df) {
+  fa <- if ("flag_awarded" %in% names(df)) df[["flag_awarded"]] %in% TRUE else rep(TRUE, nrow(df))
+  iw <- if ("is_winner"    %in% names(df)) !(df[["is_winner"]] %in% FALSE) else rep(TRUE, nrow(df))
+  fa & iw
+}
+
+# ── Invalid negative amounts -> NA ────────────────────────────────────────────
+# Contract amounts can never be negative; the TED XML uses -1 (and small negatives) as an
+# "unknown/unpublished" sentinel. Set every negative in a numeric amount column to NA, preserving the raw
+# value in a `<col>_raw` twin (`_raw`, not `_orig`, which already denotes the pre-equal-split value). A
+# `<col>_raw` is created only for columns that had a negative, so this is a no-op for sources with none
+# (KFST/OpenTender). Works on a data.frame/tibble or data.table; returns the modified object (assign it).
+null_negative_amounts <- function(df) {
+  amt <- grep("amount", names(df), value = TRUE, ignore.case = TRUE)
+  amt <- amt[vapply(amt, function(a) is.numeric(df[[a]]), logical(1))]
+  for (a in amt) {
+    v <- df[[a]]
+    if (any(v < 0, na.rm = TRUE)) {
+      df[[paste0(a, "_raw")]] <- v
+      v[!is.na(v) & v < 0] <- NA_real_
+      df[[a]] <- v
+    }
+  }
+  df
+}
+
+# ── Stack column contract ─────────────────────────────────────────────────────
+# The 3_x concat-and-dedup stacks carry the UNION of the analytical/provenance columns across the
+# entity's matched sources (winner: KFST + OpenTender; buyer: OpenTender only), minus the raw
+# source-dump columns (kept only in the full *_name_matched.rds files). Computed from the actual files
+# (not hard-coded) so it tracks the data; both sides fill NA where a column is source-unique.
+
+# The raw DIGIWHIST/source-dump columns to drop: publication/indicator metadata, bid/bidder detail,
+# geography, estimated/final price variants, and raw free-text/date/duration fields. Analytical amounts
+# (tender_amount*/lot_amount*), dates (award_date, the ted lineage dates), and CPV are NOT matched here.
+.stack_raw_drop <- function(cols) {
+  pat <- paste(c("^tender_publications_", "^tender_indicator_", "^tender_addressOfImplementation_",
+    "^lot_addressOfImplementation_", "^bid_", "^bidder_", "^lot_indicator_", "^framework_",
+    "_row_nr$", "^tender_estimatedPrice", "^tender_finalPrice", "^lot_estimatedPrice"), collapse = "|")
+  extra <- c("tender_description", "tender_description_length", "tender_title", "tender_size",
+    "tender_year", "tender_country", "tender_supplyType", "tender_procedureType",
+    "tender_nationalProcedureType", "tender_mainCpv", "tender_isAwarded", "tender_isCentralProcurement",
+    "tender_isCoveredByGpa", "tender_isDps", "tender_isElectronicAuction", "tender_isEUFunded",
+    "tender_isOnBehalfOf", "tender_buyerAssignedId", "tender_documents_count", "tender_corrections_count",
+    "tender_awardCriteria_count", "tender_economicRequirements_length", "tender_technicalRequirements_length",
+    "tender_personalRequirements_length", "tender_estimatedDurationInDays", "tender_estimatedDurationInMonths",
+    "tender_estimatedDurationInYears", "tender_fundingProgrammes", "tender_eligibleBidLanguages",
+    "tender_npwp_reasons", "tender_onBehalfOf_count", "tender_cancellationDate", "tender_contractSignatureDate",
+    "tender_awardDeadline", "tender_estimatedStartDate", "tender_estimatedCompletionDate", "tender_publications_count",
+    "lot_description", "lot_description_length", "lot_title", "lot_status", "lot_isAwarded", "lot_cancellationDate",
+    "lot_contractSignatureDate", "lot_selectionMethod", "lot_estimatedStartDate", "lot_estimatedCompletionDate",
+    "lot_fundingProgrammes", "lot_smeBidsCount", "lot_validBidsCount", "lot_electronicBidsCount",
+    "lot_foreignCompaniesBidsCount", "lot_nonEuMemberStatesCompaniesBidsCount", "lot_otherEuMemberStatesCompaniesBidsCount",
+    "buyer_city", "buyer_postcode", "buyer_nuts", "buyer_id", "buyer_buyerType", "buyer_mainActivities")
+  cols[!(grepl(pat, cols) | cols %in% extra)]
+}
+
+# The union column set for an entity's stack. `dataset` is excluded here -- OpenTender's native `dataset`
+# (annual source CSV) is renamed to `ot_source_file` by the builder, which then adds its own `dataset`
+# provenance flag. Buyers drop any winner_* columns (an OpenTender source artifact: buyer rows should not
+# carry winner identity). Matched files must exist (guaranteed by run_replication.sh ordering).
+stack_schema <- function(entity, clean_dir = dirs$clean_data) {
+  stopifnot(entity %in% c("winner", "buyer"))
+  srcs <- if (entity == "winner") c("kfst", "ot") else "ot"
+  path <- function(s) file.path(clean_dir, sprintf("clean_%s_data_%s_name_matched.rds", entity, s))
+  for (s in srcs) if (!file.exists(path(s))) stop(sprintf("stack_schema(%s): missing %s", entity, path(s)), call. = FALSE)
+  cols <- unique(unlist(lapply(srcs, function(s) names(readRDS(path(s))))))
+  cols <- setdiff(.stack_raw_drop(cols), "dataset")
+  if (entity == "buyer") cols <- grep("^winner_", cols, value = TRUE, invert = TRUE)
+  cols
+}
