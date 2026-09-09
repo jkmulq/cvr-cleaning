@@ -1273,5 +1273,9 @@ clean_buyer_data <- clean_buyer_data %>%
   )
 
 # 4 Save
+# Guard: contract amounts can never be negative -- consistency with the TED build (no-op for OpenTender).
+clean_winner_data <- null_negative_amounts(clean_winner_data)
+clean_buyer_data  <- null_negative_amounts(clean_buyer_data)
+
 saveRDS(clean_winner_data, file.path(dirs$clean_data, "clean_winner_data_ot.rds"))
 saveRDS(clean_buyer_data, file.path(dirs$clean_data, "clean_buyer_data_ot.rds"))
