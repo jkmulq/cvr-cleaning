@@ -55,7 +55,7 @@ onto the tender-lot data in `1_1`/`1_2`.
 | `consortium_winner` | raw | 1_1 / 1_2 | — | **Raw source flag**, not a cleaned indicator — it is the source's own "winner is a consortium" field (KFST `Konsortium/Sammenslutning`, `Ja`/`Nej`; OT its own value), carried through verbatim and *not* reconciled against the actual extracted consortium splits. Treat it as noisy provenance, not ground truth; the reliable consortium signal is the KFST split machinery (`is_consortium`, `consortium_number`). |
 | `tender_cancelled` | raw→clean | 1_1 / 1_2 | source annulment field | Whether the lot/tender was annulled. Standardised to **logical** `TRUE`/`FALSE` in both sources (KFST `Ja`→`TRUE`, `Nej`→`FALSE`; OT already logical). |
 | `flag_awarded` | derived | 1_1 / 1_2 | `tender_cancelled` (KFST) / `tender_isAwarded` (OT) | `TRUE` if the lot was actually awarded. **Difference from `tender_cancelled`:** `tender_cancelled` is the raw annulment field (was the procedure formally cancelled?), while `flag_awarded` is the derived usable-for-analysis signal — for KFST it is simply `!tender_cancelled`, but for OT it comes from the separate `tender_isAwarded` field, so a lot can be non-cancelled yet still not awarded. Many OT lots are not awarded because OT publishes contract-notice / in-progress rows that never reach an award (no winner recorded), not because they were cancelled. Drives the "keep awarded lots" filters. |
-| `is_awarded_winner` | derived | 2_1 / 2_3 / ted_4 / 3_1 / 3_2 / 5_combine | `flag_awarded`, `is_winner` | Convenience flag for the canonical "one row = one awarded winner" filter: `flag_awarded == TRUE & is_winner != FALSE`. KFST/OpenTender carry no `is_winner` (winners-only → treated as `TRUE`), so for them it equals `flag_awarded`; TED's non-winning bidders (`is_winner == FALSE`) and OpenTender's non-awarded notices (`flag_awarded == FALSE`) are `FALSE`. **Winner side only** (no buyer analog). Present on the combined winner dataset and the robustness stacks; on the per-source matched files after their next build. |
+| `is_awarded_winner` | derived | 2_1 / 2_3 / ted_4 / 3_1 / 3_2 / 5_combine | `flag_awarded`, `is_winner` | Convenience flag for the canonical "one row = one awarded winner" filter: `flag_awarded == TRUE & is_winner != FALSE`. KFST/OpenTender carry no `is_winner` (winners-only → treated as `TRUE`), so for them it equals `flag_awarded`; TED's non-winning bidders (`is_winner == FALSE`) and OpenTender's non-awarded notices (`flag_awarded == FALSE`) are `FALSE`. **Winner side only** (no buyer analog). Present on the combined winner dataset and the winner concat-and-dedup stacks (`3_1`/`3_2`); on the per-source matched files after their next build. |
 
 ## 3. Amounts
 
@@ -305,6 +305,32 @@ expected and rare (≈1 KFST row, ≈14 OT rows). Example (KFST): a step-5 candi
 another candidate at 87.5 → rejected; step-6 offers 86.7 uniquely → accepted. `fuzzy_candidate_cvr_1`
 reports the 87.5 CVR, `winner_cvr_final` carries the 86.7 CVR. When you need the CVR actually used, read
 `winner_cvr_final` / `name_match_*`, not `fuzzy_candidate_*_1`.
+
+### Concat-and-dedup stacks (`3_1` / `3_2` / `3_3`)
+
+The `3_x` builders pool each source's two CVR-resolution methods — `production` (the name/consortium-matched
+table) and `extraction` (every standalone 8-digit CVR in the raw field, no matching) — row-stacked and
+**deduplicated to one row per distinct `(tender_id, lot_id, CVR)`**: a CVR found by both methods keeps its
+production row, consortium members sharing a CVR collapse to one, and rows with no resolved CVR are dropped
+(they remain in the `*_name_matched.rds` files). Both methods then reconstruct **exactly** from the
+`build_prod` / `build_extr` flags below. The column set is the
+**union** of the sources' analytical + provenance columns (source-unique columns kept and NA-filled on the
+other side), with the raw source-dump fields dropped (`tender_publications_*`, `tender_indicator_*`,
+`bid_*`, `bidder_*`, `*_addressOfImplementation_*`, `framework_*`, raw price/description/date fields). Three
+non-schema columns are added/renamed:
+
+- `dataset` — `production` | `extraction`: the method that produced the surviving row.
+- `build_prod` / `build_extr` — logical construction flags that rebuild each sample **exactly** by a
+  simple filter: `build_prod == TRUE` gives the production sample, `build_extr == TRUE` the extraction
+  sample. (A CVR found by both methods on a lot where they disagree appears as two rows — a production row
+  flagged `build_prod` and an extraction row flagged `build_extr`.)
+- `ot_source_file` — OpenTender's native `dataset` column (annual source CSV), renamed so it does not
+  collide with the method flag; `NA` for KFST rows.
+
+The two winner stacks (`kfst_winner_datasets_stacked.rds`, `ot_winner_datasets_stacked.rds`) share one
+204-column schema. The buyer stack (`ot_buyer_datasets_stacked.rds`) is **OpenTender only** — KFST buyers
+carry no source CVR field to extract — and additionally drops the OpenTender `winner_*` source artifact
+(buyer rows should not carry winner identity).
 
 ---
 
