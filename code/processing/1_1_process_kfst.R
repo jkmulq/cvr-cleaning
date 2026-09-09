@@ -358,7 +358,7 @@ raw <- data %>%
 w_semi <- raw %>%
   mutate(nc = n_pieces(winner_cvr), nn = n_pieces(winner_name),
          nk = n_pieces(winner_country), ncons = n_pieces(consortium_flag),
-         nvc = compute_distinct_valid_cvr(winner_cvr, collapse_whitespace = FALSE, drop_invalid = TRUE),  # distinct valid field CVRs
+         nvc = compute_distinct_valid_cvr(winner_cvr, collapse_whitespace = FALSE),  # distinct valid field CVRs
          semi_tier = case_when(
            nc == nn & nn == nk & nn == ncons ~ 1L,   # all agree
            nc == nn & (nk == nn | nk == 1L) & (ncons == nn | ncons == 1L) ~ 2L,  # cvr & name agree; country/consortium agree-or-single)
