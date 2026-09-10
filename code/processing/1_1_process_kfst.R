@@ -25,6 +25,14 @@ source(file.path(PROJECT_DIR, "code", "functions.R"))
 # 1 Load data
 data <- read_excel(file.path(raw_data_dir, "kfst", raw_data_name), sheet = "2.0 Udbudsdata")
 
+# The source sheet has two columns literally named "Udbudsprocedure" (procedure type =
+# variable 35, procedure group = variable 36); readxl de-duplicates them positionally.
+# Normalise their names up front so the harmonisation below does not depend on the suffix.
+proc_cols <- grep("^Udbudsprocedure", names(data), value = TRUE)
+stopifnot(length(proc_cols) == 2L)
+names(data)[match(proc_cols[1], names(data))] <- "procedure_type_raw"
+names(data)[match(proc_cols[2], names(data))] <- "procedure_group_raw"
+
 # Rename
 data <- data %>% 
   rename(winner_cvr = `Vinders CVR`,
@@ -54,7 +62,9 @@ data <- data %>%
          n_lot_winners = `Antal vindere på delkontrakten`,
          n_bids_received = `Antal modtagne bud`,
          contract_duration_months_min = `Varighed af kontrakten i måneder (min)`,
-         contract_duration_months_max = `Varighed af kontrakten i måneder (max)`)
+         contract_duration_months_max = `Varighed af kontrakten i måneder (max)`,
+         award_criteria_raw = `Tildelingskriterier`,
+         price_weight = `Vægtning af pris`)
 
 # Recode the joint/single-tender indicator to English on the source data up
 # front, so the value is consistent everywhere it propagates (tender/lot data,
