@@ -61,6 +61,7 @@ setwd(report_project_dir)
 knitr::opts_knit$set(root.dir = report_project_dir)
 
 source(file.path(report_project_dir, "config.R"))
+source(file.path(report_project_dir, "code", "functions.R"))
 clean_data_dir <- dirs$clean_data
 emp_dir <- dirs$employment
 key_dir <- dirs$cvr_key
@@ -102,13 +103,13 @@ firm_data_ls <- firm_data %>%
   split(.$frequency)
 
 ## 1.2 Tender data
-data_ot <- readRDS(file.path(clean_data_dir, "clean_winner_data_ot_name_matched.rds")) %>% 
+data_ot <- read_clean(file.path(clean_data_dir, "clean_winner_data_ot_name_matched.rds")) %>% 
   mutate(data_source = "OpenTender")
-data_kfst <- readRDS(file.path(clean_data_dir, "clean_winner_data_kfst_name_matched.rds")) %>% 
+data_kfst <- read_clean(file.path(clean_data_dir, "clean_winner_data_kfst_name_matched.rds")) %>% 
   mutate(data_source = "KFST")
-data_ot_buyers <- readRDS(file.path(clean_data_dir, "clean_buyer_data_ot_name_matched.rds")) %>% 
+data_ot_buyers <- read_clean(file.path(clean_data_dir, "clean_buyer_data_ot_name_matched.rds")) %>% 
   mutate(data_source = "OpenTender")
-data_kfst_buyers <- readRDS(file.path(clean_data_dir, "clean_buyer_data_kfst_name_matched.rds")) %>% 
+data_kfst_buyers <- read_clean(file.path(clean_data_dir, "clean_buyer_data_kfst_name_matched.rds")) %>% 
   mutate(data_source = "KFST")
 data_tender <- rbindlist(list(data_ot, data_kfst), fill = TRUE, ignore.attr = TRUE) %>% 
   select(data_source, tender_id, lot_id, award_date, winner_cvr_final, tender_amount, lot_amount, contract_type, cpv_category, cpv_sector, flag_awarded)
@@ -335,8 +336,7 @@ if (construct_control_data == 1) {
   source("R/code/analysis/find_control_firms.R")
   control_event_data <- readRDS(file.path(emp_dir, "control_event_list.rds"))
 } else {
-  control_event_data <- readRDS(file.path(emp_dir, "control_event_list_new_qscore.rds"))
-  control_event_data_just_fte <- readRDS(file.path(emp_dir, "control_event_list_h8_typefteonly.rds"))
+  control_event_data <- readRDS(file.path(emp_dir, "never_winner_h8_typestaggered.rds"))
 }
 
 ```
@@ -439,7 +439,8 @@ score_grid <- seq(0.01, 1, by = 0.01)
 qscore_results <- map(score_grid, function(s_cutoff) {
   
   # Find cutoff data
-  estudy_cutoff <- estudy_control_balanced_data[abs(control_qscore) <= s_cutoff & control_protocol == "sector, kommune, pre-award FTE", ]
+  # estudy_cutoff <- estudy_control_balanced_data[abs(control_qscore) <= s_cutoff & control_protocol == "sector, kommune, pre-award FTE", ]
+    estudy_cutoff <- estudy_control_balanced_data[abs(control_qscore) <= s_cutoff, ]
   
   # Check balance
   balance_check <- all(estudy_cutoff[, .N, by = event_time]$N == unique(estudy_cutoff[, .N, by = event_time]$N))
@@ -501,7 +502,8 @@ The below ensures the event study is balanced before running the regressions / c
 
 # Check balanced of fine tuned regression data
 reg_data <- estudy_control_balanced_data[abs(control_qscore) <= control_quality_bound & 
-                                           control_protocol == "sector, kommune, pre-award FTE", ]
+                                            control_protocol == "sector, kommune, pre-award FTE", ]
+# reg_data <- estudy_control_balanced_data[control_quality <= 15, ]
 check <- all(reg_data[, .N, by = event_time]$N == unique(reg_data[, .N, by = event_time]$N))
 
 if (!check) {
@@ -556,7 +558,7 @@ I think this is the right specification based on Deshpande and Li (2019). Standa
 # Run regression
 est <- feols(c(fte, log(fte)) ~ i(event_time, treated, ref = -1) |
                cvr + qidx^industry_code + treated + event_time,
-      data = reg_data[control_protocol == "sector, kommune, pre-award FTE", ],
+      data = reg_data,
       cluster = ~stack_id^cvr,
       weights = ~weight)
 
