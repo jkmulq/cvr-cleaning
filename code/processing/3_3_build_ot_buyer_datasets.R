@@ -42,7 +42,11 @@ ctx_cols <- intersect(c(
   "cpv_category","ted_notice_id","planning_dispatch_date","planning_publication_date",
   "planning_tender_deadline_date","competition_dispatch_date","competition_publication_date",
   "competition_tender_deadline_date","award_dispatch_date","award_publication_date",
-  "award_tender_deadline_date","award_contract_date"), names(base_raw))
+  "award_tender_deadline_date","award_contract_date",
+  "procedure_type","procedure_group","procedure_group_h","award_criteria","award_criteria_h",
+  "contract_duration_months","contract_duration_months_min","contract_duration_months_max",
+  "is_framework","is_dps","eu_funded","subcontracted","n_award_criteria","price_weight"),
+  names(base_raw))
 lot_ctx <- unique(base_raw[, ..ctx_cols], by = c("tender_id","lot_id"))
 
 # 2 Extraction: every standalone 8-digit CVR in the raw buyer field, no matching. lot_field_cvrs() keys
@@ -72,13 +76,14 @@ stacked_deduped <- stacked[(dataset == "production" & cvr_list_equal) | cvr_list
 stacked_deduped[, build_prod := (dataset == "production" & cvr_list_equal == FALSE) | cvr_list_equal == TRUE]
 stacked_deduped[, build_extr := (dataset == "extraction"  & cvr_list_equal == FALSE) | cvr_list_equal == TRUE]
 
-# 5 Column contract: keep the OpenTender buyer analytical/provenance columns (raw source dumps dropped,
-#    and the OpenTender winner_* source artifact removed -- buyers do not carry winner identity). The
-#    cvr_list_* agreement intermediates are dropped here (not in `target`).
-target  <- c("dataset", "build_prod", "build_extr", "ot_source_file", stack_schema("buyer"))
-missing <- setdiff(target, names(stacked_deduped))
-if (length(missing)) stacked_deduped[, (missing) := NA]
-stacked_deduped <- stacked_deduped[, ..target]
+# 5 Carry every analytical/provenance column through to 4_combine, which applies the single final
+#    column selection (keep_cols). Removed here: the internal dedup scratch, the raw source-dump
+#    columns (raw_dump_cols(): negative pattern drop of known junk), and OpenTender's winner_*
+#    source artifact (buyer rows must not carry winner identity).
+drop_now <- unique(c("cvr_list_prod", "cvr_list_extr", "cvr_list_equal",
+                     grep("^winner_", names(stacked_deduped), value = TRUE),
+                     raw_dump_cols(names(stacked_deduped))))
+stacked_deduped[, (drop_now) := NULL]
 lead <- intersect(c("dataset","build_prod","build_extr","tender_id","lot_id","buyer_number",
                     "buyer_name","buyer_cvr_final"), names(stacked_deduped))
 setcolorder(stacked_deduped, c(lead, setdiff(names(stacked_deduped), lead)))

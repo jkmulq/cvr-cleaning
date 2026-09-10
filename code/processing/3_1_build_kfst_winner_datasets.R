@@ -36,7 +36,11 @@ ctx_cols <- intersect(c(
   "cpv_category","ted_notice_id","planning_dispatch_date","planning_publication_date",
   "planning_tender_deadline_date","competition_dispatch_date","competition_publication_date",
   "competition_tender_deadline_date","award_dispatch_date","award_publication_date",
-  "award_tender_deadline_date","award_contract_date"), names(base_raw))
+  "award_tender_deadline_date","award_contract_date",
+  "procedure_type","procedure_group","procedure_group_h","award_criteria","award_criteria_h",
+  "contract_duration_months","contract_duration_months_min","contract_duration_months_max",
+  "is_framework","is_dps","eu_funded","subcontracted","n_award_criteria","price_weight"),
+  names(base_raw))
 lot_ctx <- unique(base_raw[, ..ctx_cols], by = c("tender_id","lot_id"))
 
 # 2 Extraction: every standalone 8-digit CVR in the raw winner field, no matching. lot_field_cvrs() is
@@ -67,13 +71,12 @@ stacked_deduped <- stacked[(dataset == "production" & cvr_list_equal) | cvr_list
 stacked_deduped[, build_prod := (dataset == "production" & cvr_list_equal == FALSE) | cvr_list_equal == TRUE]
 stacked_deduped[, build_extr := (dataset == "extraction"  & cvr_list_equal == FALSE) | cvr_list_equal == TRUE]
 
-# 5 Union column contract: keep the analytical/provenance union across KFST + OpenTender (raw source
-#    dumps dropped), NA-filling the OpenTender-only columns absent from KFST so the two winner stacks
-#    share one schema. `ot_source_file` is OpenTender-only, so it is NA on the KFST side.
-target  <- c("dataset", "build_prod", "build_extr", "ot_source_file", stack_schema("winner"))
-missing <- setdiff(target, names(stacked_deduped))
-if (length(missing)) stacked_deduped[, (missing) := NA]
-stacked_deduped <- stacked_deduped[, ..target]
+# 5 Carry every analytical/provenance column through to 4_combine, which applies the single final
+#    column selection (keep_cols). Only the internal dedup scratch + the raw source-dump columns
+#    (raw_dump_cols(): a negative pattern drop of known junk) are removed here.
+drop_now <- unique(c("cvr_list_prod", "cvr_list_extr", "cvr_list_equal",
+                     raw_dump_cols(names(stacked_deduped))))
+stacked_deduped[, (drop_now) := NULL]
 lead <- intersect(c("dataset","build_prod","build_extr","tender_id","lot_id","winner_number",
                     "winner_name","winner_cvr_final","is_awarded_winner"), names(stacked_deduped))
 setcolorder(stacked_deduped, c(lead, setdiff(names(stacked_deduped), lead)))
