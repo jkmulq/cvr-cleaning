@@ -56,6 +56,7 @@ setwd(report_project_dir)
 knitr::opts_knit$set(root.dir = report_project_dir)
 
 source(file.path(report_project_dir, "config.R"))
+source(file.path(report_project_dir, "code", "functions.R"))
 clean_data_dir <- dirs$clean_data
 emp_dir <- dirs$employment
 key_dir <- dirs$cvr_key
@@ -96,15 +97,15 @@ firm_data_ls <- firm_data %>%
   split(.$frequency)
 
 ## 1.2 Tender data
-data_ot <- readRDS(file.path(clean_data_dir, "clean_winner_data_ot_name_matched.rds")) %>% 
+data_ot <- read_clean(file.path(clean_data_dir, "clean_winner_data_ot_name_matched.rds")) %>% 
   mutate(data_source = "OpenTender") %>% 
   filter(toupper(winner_country) == "DK")
-data_kfst <- readRDS(file.path(clean_data_dir, "clean_winner_data_kfst_name_matched.rds")) %>% 
+data_kfst <- read_clean(file.path(clean_data_dir, "clean_winner_data_kfst_name_matched.rds")) %>% 
   mutate(data_source = "KFST") %>% 
   filter(toupper(winner_country) == "DK")
-data_ot_buyers <- readRDS(file.path(clean_data_dir, "clean_buyer_data_ot_name_matched.rds")) %>% 
+data_ot_buyers <- read_clean(file.path(clean_data_dir, "clean_buyer_data_ot_name_matched.rds")) %>% 
   mutate(data_source = "OpenTender")
-data_kfst_buyers <- readRDS(file.path(clean_data_dir, "clean_buyer_data_kfst_name_matched.rds")) %>% 
+data_kfst_buyers <- read_clean(file.path(clean_data_dir, "clean_buyer_data_kfst_name_matched.rds")) %>% 
   mutate(data_source = "KFST")
 data_tender <- rbindlist(list(data_ot, data_kfst), fill = TRUE, ignore.attr = TRUE) %>% 
   select(data_source, tender_id, lot_id, award_date, winner_country, winner_cvr_final, tender_amount, lot_amount, contract_type, cpv_category, cpv_sector, flag_awarded) %>% 
