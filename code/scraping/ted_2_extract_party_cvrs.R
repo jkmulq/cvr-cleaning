@@ -420,13 +420,20 @@ parse_legacy_meta <- function(xml, notice_id) {
   ca_act <- xml_attr(xml_find_first(xml, "//*[local-name()='CA_ACTIVITY']"), "VALUE")
   if (is.na(ca_act)) ca_act <- xml_text(xml_find_first(xml, "//*[local-name()='CA_ACTIVITY_OTHER']"))
   sme_t <- suppressWarnings(as.integer(xml_text(xml_find_all(xml, "//*[local-name()='NB_TENDERS_RECEIVED_SME']"))))
+  # Award criterion: the legacy AC_AWARD_CRIT element carries the human-readable label as its
+  # text and the code in @CODE (e.g. <AC_AWARD_CRIT CODE="2">The most economic tender</...>).
+  # Read the label straight from the XML so the meaning comes from the source, not an asserted
+  # code map; fall back to the raw code only if the element has no text.
+  ac_crit  <- xml_find_first(xml, "//*[local-name()='AC_AWARD_CRIT']")
+  ac_label <- xml_text(ac_crit)
+  if (is.na(ac_label) || !nzchar(ac_label)) ac_label <- xml_attr(ac_crit, "CODE")
   meta[, `:=`(
     buyer_type        = xml_attr(xml_find_first(xml, "//*[local-name()='CA_TYPE']"), "VALUE"),
     buyer_activity    = ca_act,
     buyer_nuts        = xml_attr(xml_find_first(xml, "//*[local-name()='CA_CE_NUTS']"), "CODE"),
     eu_funded         = length(xml_find_all(xml, "//*[local-name()='EU_PROGR_RELATED']")) > 0,
     joint_procurement = length(xml_find_all(xml, "//*[local-name()='JOINT_PROCUREMENT_INVOLVED']")) > 0,
-    award_criteria    = xml_attr(xml_find_first(xml, "//*[local-name()='AC_AWARD_CRIT']"), "CODE"),  # 1=lowest price, else MEAT
+    award_criteria    = ac_label,   # human-readable label taken from the XML element text
     price_weight      = suppressWarnings(as.numeric(xml_text(
                           xml_find_first(xml, "//*[local-name()='AC_PRICE']/*[local-name()='AC_WEIGHTING']")))),
     n_tenders_sme     = if (length(sme_t) && any(!is.na(sme_t))) sum(sme_t, na.rm = TRUE) else NA_integer_,
