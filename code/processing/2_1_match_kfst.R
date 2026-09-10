@@ -697,7 +697,7 @@ winner_data[, match_row_id := NULL]
 winner_data[, is_awarded_winner := awarded_winner(winner_data)]
 
 # 7 Save
-saveRDS(winner_data,
-        file.path(clean_data_dir, "clean_winner_data_kfst_name_matched.rds"))
+save_dataset(winner_data,
+             file.path(clean_data_dir, "clean_winner_data_kfst_name_matched"))  # .rds + .csv + .parquet
 saveRDS(manual_name_review, 
         file.path(clean_data_dir, "manual_name_review_kfst.rds"))

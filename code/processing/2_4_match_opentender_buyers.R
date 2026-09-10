@@ -1190,6 +1190,6 @@ if (length(fuzzy_review_columns) > 0) {
 buyer_data[, match_row_id := NULL]
 
 # 8 Save
-saveRDS(buyer_data, file.path(clean_data_dir, "clean_buyer_data_ot_name_matched.rds"))
+save_dataset(buyer_data, file.path(clean_data_dir, "clean_buyer_data_ot_name_matched"))  # .rds + .csv + .parquet
 saveRDS(manual_buyer_name_review, file.path(clean_data_dir, "manual_buyer_name_review_ot.rds"))
 saveRDS(name_partition_segments, file.path(clean_data_dir, "buyer_name_partition_diagnostics_ot.rds"))

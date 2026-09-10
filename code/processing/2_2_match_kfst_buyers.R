@@ -527,5 +527,5 @@ manual_buyer_name_review <- buyer_data[flag_manual_name_review == TRUE, ] %>%
 buyer_data[, match_row_id := NULL]
 
 # 7 Save
-saveRDS(buyer_data, file.path(clean_data_dir, "clean_buyer_data_kfst_name_matched.rds"))
+save_dataset(buyer_data, file.path(clean_data_dir, "clean_buyer_data_kfst_name_matched"))  # .rds + .csv + .parquet
 saveRDS(manual_buyer_name_review,  file.path(clean_data_dir, "manual_buyer_name_review_kfst.rds"))

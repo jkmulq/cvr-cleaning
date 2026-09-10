@@ -440,8 +440,7 @@ buyer_data[, buyer_number := suppressWarnings(as.integer(buyer_number))]
 # 8 Save. The final matched buyer dataset goes to clean/ alongside the KFST/OpenTender clean buyer data
 # (same clean_*_name_matched naming); the manual-review list stays in intermediates/ted as a QC artifact.
 buyer_data <- as.data.table(null_negative_amounts(buyer_data))   # TED -1 "unpublished" sentinels -> NA, raw kept in `<col>_raw`
-saveRDS(buyer_data, file.path(clean_data_dir, "clean_buyer_data_ted_name_matched.rds"))
-fwrite(buyer_data,  file.path(clean_data_dir, "clean_buyer_data_ted_name_matched.csv"))
+save_dataset(buyer_data, file.path(clean_data_dir, "clean_buyer_data_ted_name_matched"))  # .rds + .csv + .parquet
 saveRDS(manual_name_review, file.path(ted_dir, "manual_name_review_ted_buyer.rds"))
 
 cat(sprintf("\nTED buyers: %d rows | buyer_cvr_final on %.0f%% | name-matched %d | quality graded %d\n",

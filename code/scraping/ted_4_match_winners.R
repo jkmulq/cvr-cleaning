@@ -481,8 +481,7 @@ winner_data[, winner_number := suppressWarnings(as.integer(winner_number))]
 # (same clean_*_name_matched naming); the manual-review list stays in intermediates/ted as a QC artifact.
 winner_data <- as.data.table(null_negative_amounts(winner_data))   # TED -1 "unpublished" sentinels -> NA, raw kept in `<col>_raw`
 winner_data[, is_awarded_winner := awarded_winner(winner_data)]   # awarded (flag_awarded) & is_winner (TED keeps bidders)
-saveRDS(winner_data, file.path(clean_data_dir, "clean_winner_data_ted_name_matched.rds"))
-fwrite(winner_data,  file.path(clean_data_dir, "clean_winner_data_ted_name_matched.csv"))
+save_dataset(winner_data, file.path(clean_data_dir, "clean_winner_data_ted_name_matched"))  # .rds + .csv + .parquet
 saveRDS(manual_name_review, file.path(ted_dir, "manual_name_review_ted_winner.rds"))
 
 # Diagnostics

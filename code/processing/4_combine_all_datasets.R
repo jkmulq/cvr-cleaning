@@ -111,8 +111,9 @@ for (s in spec) {
 cat("selection-column self-check passed: every (data_source, entity[, build flag]) slice reproduces its source dataset.\n")
 
 out_dir <- Sys.getenv("COMBINE_OUT_DIR", unset = clean)
-saveRDS(combined, file.path(out_dir, "clean_all_samples_combined.rds"))
-fwrite(combined,  file.path(out_dir, "clean_all_samples_combined.csv"))
+# Emit .rds (canonical, read back by the pipeline), .csv, and .parquet so the
+# server-delivery format can be chosen at ship time. See save_dataset() in functions.R.
+save_dataset(combined, file.path(out_dir, "clean_all_samples_combined"))
 
 message(sprintf("clean_all_samples_combined: %d rows, %d cols", nrow(combined), ncol(combined)))
 print(combined[, .(rows = .N, production = sum(build_prod), extraction = sum(build_extr)),

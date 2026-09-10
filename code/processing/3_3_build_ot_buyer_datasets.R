@@ -98,7 +98,7 @@ if (anyNA(.em$l_orig) || anyNA(.em$l_built) || !all(.em$l_orig == .em$l_built))
 cat("  self-check passed: build_prod rebuilds production and build_extr rebuilds extraction exactly.\n")
 
 out_path <- Sys.getenv("OT_BUYER_STACK_OUT", unset = file.path(clean_data_dir, "ot_buyer_datasets_stacked.rds"))
-saveRDS(stacked_deduped, out_path)
+save_dataset(stacked_deduped, out_path)   # .rds (canonical) + .csv + .parquet
 cat(sprintf("ot_buyer_datasets_stacked.rds: %d rows, %d cols\n", nrow(stacked_deduped), ncol(stacked_deduped)))
 print(stacked_deduped[, .N, by = dataset][order(dataset)])
 cat(sprintf("  rebuild: production (build_prod)=%d | extraction (build_extr)=%d\n",
