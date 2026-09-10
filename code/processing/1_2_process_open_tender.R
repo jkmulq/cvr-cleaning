@@ -172,6 +172,50 @@ data <- data %>%
     contract_type == "no" ~ "Public contract"
   ))
 
+## Cross-source harmonisation of procedure, criteria, duration and the logical flags.
+## Keep OpenTender's own procedure code in procedure_type and add the harmonised
+## procedure_group_h onto the common EU vocabulary. OpenTender has no procedure group
+## of its own, no per-tender award-criteria *type* (only a count), and no price weight,
+## so those are NA. is_framework / divided_tender become logicals to match KFST + TED.
+data <- data %>%
+  mutate(
+    is_framework = case_when(
+      contract_type == "Framework agreement" ~ TRUE,
+      contract_type == "Public contract" ~ FALSE,
+      TRUE ~ NA
+    ),
+    divided_tender = case_when(
+      divided_tender == "yes" ~ TRUE,
+      divided_tender == "no" ~ FALSE,
+      TRUE ~ NA
+    ),
+    procedure_type = tender_procedureType,
+    procedure_group = NA_character_,
+    procedure_group_h = case_when(
+      tender_procedureType == "OPEN" ~ "open",
+      tender_procedureType == "RESTRICTED" ~ "restricted",
+      tender_procedureType %in% c("NEGOTIATED_WITH_PUBLICATION", "NEGOTIATED") ~ "negotiated",
+      tender_procedureType %in% c("NEGOTIATED_WITHOUT_PUBLICATION", "OUTRIGHT_AWARD") ~ "without_call",
+      tender_procedureType == "COMPETITIVE_DIALOG" ~ "competitive_dialogue",
+      tender_procedureType == "INOVATION_PARTNERSHIP" ~ "innovation_partnership",
+      tender_procedureType == "OTHER" ~ "other",
+      TRUE ~ NA_character_
+    ),
+    eu_funded = case_when(tender_isEUFunded == "yes" ~ TRUE, tender_isEUFunded == "no" ~ FALSE, TRUE ~ NA),
+    is_dps = case_when(tender_isDps == "yes" ~ TRUE, tender_isDps == "no" ~ FALSE, TRUE ~ NA),
+    subcontracted = case_when(bid_isSubcontracted == "yes" ~ TRUE, bid_isSubcontracted == "no" ~ FALSE, TRUE ~ NA),
+    n_award_criteria = suppressWarnings(as.integer(tender_awardCriteria_count)),
+    award_criteria = NA_character_,
+    award_criteria_h = NA_character_,
+    price_weight = NA_real_,
+    # Harmonised duration in months: prefer the reported months, else days/30.44, else years*12.
+    contract_duration_months = coalesce(
+      parse_number(tender_estimatedDurationInMonths),
+      parse_number(tender_estimatedDurationInDays) / 30.44,
+      parse_number(tender_estimatedDurationInYears) * 12
+    )
+  )
+
 ## Framework agreement end date
 # OpenTender has no dedicated framework-duration field, so derive an end date:
 # use the reported completion date when present, otherwise add the reported
