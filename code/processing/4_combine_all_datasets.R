@@ -110,6 +110,23 @@ for (s in spec) {
 }
 cat("selection-column self-check passed: every (data_source, entity[, build flag]) slice reproduces its source dataset.\n")
 
+# ---- Final standardisation: normalise every date/datetime column to a clean whole-day Date ----
+# Dates reach here in mixed forms -- midnight POSIXct (e.g. pub_date), fractional-day Dates from upstream
+# arithmetic (e.g. award_end_date), and the TED-notice-XML lineage dates. Collapse each to a plain Date
+# (whole days) so the value is unambiguous in every output format: CSV otherwise renders POSIXct as
+# "...T00:00:00Z" and reads it back as a string, and fractional days differ across formats. Detected by
+# class, so it also covers any date column added later.
+date_cols <- names(combined)[vapply(combined, function(x) inherits(x, c("Date", "POSIXct", "IDate")), logical(1))]
+for (col in date_cols) {
+  x <- combined[[col]]
+  if (inherits(x, "POSIXct")) {                       # POSIXct unclass is seconds -> convert to a date first
+    tz <- attr(x, "tzone"); if (is.null(tz) || !nzchar(tz)) tz <- "UTC"
+    x <- as.Date(x, tz = tz)
+  }
+  set(combined, j = col, value = as.Date(floor(as.numeric(x)), origin = "1970-01-01"))  # floor fractional days
+}
+cat(sprintf("normalised %d date column(s) to whole-day Date: %s\n", length(date_cols), paste(date_cols, collapse = ", ")))
+
 out_dir <- Sys.getenv("COMBINE_OUT_DIR", unset = clean)
 # Emit .rds (canonical, read back by the pipeline), .csv, and .parquet so the
 # server-delivery format can be chosen at ship time. See save_dataset() in functions.R.
