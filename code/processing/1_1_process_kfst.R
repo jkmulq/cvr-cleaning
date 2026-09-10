@@ -76,13 +76,81 @@ data <- data %>%
       joint_tender == "Fælles" ~ "joint",
       TRUE ~ NA_character_
     ),
-    # Standardise the divided-tender indicator to English (source is Danish Ja/Nej),
-    # matching OpenTender's yes/no.
+    # Divided-into-lots indicator as a logical (source is Danish Ja/Nej).
     divided_tender = case_when(
-      divided_tender == "Ja"  ~ "yes",
-      divided_tender == "Nej" ~ "no",
-      TRUE ~ NA_character_
+      divided_tender == "Ja"  ~ TRUE,
+      divided_tender == "Nej" ~ FALSE,
+      TRUE ~ NA
     )
+  )
+
+## Cross-source harmonisation of the procedure, award-criteria and price-weight fields.
+## Keeps the source's own value (KFST Danish translated to English) AND a harmonised
+## column: procedure_group_h onto the common EU vocabulary, award_criteria_h onto
+## {lowest_price, price_and_quality, cost}. Fields KFST does not record (DPS, EU
+## funding, subcontracting, per-tender award-criteria count) are set NA so the schema
+## lines up with OpenTender and TED. procedure_group_h / award_criteria_h are derived
+## from the raw Danish first, before the display columns are translated in place.
+data <- data %>%
+  mutate(
+    procedure_group_h = case_when(
+      procedure_type_raw %in% c("Offentligt udbud", "Offentligt udbud hasteprocedure") ~ "open",
+      procedure_type_raw %in% c("Begrænset udbud", "Begrænset udbud hasteprocedure") ~ "restricted",
+      procedure_type_raw %in% c("Udbud med forhandling", "Udbud med forhandling hasteprocedure",
+                                "Forhandlingsprocedure med forudgående indkaldelse af tilbud",
+                                "Forhandling med offentliggørelse af en udbudsbekendtgørelse",
+                                "Hastende udbud efter forhandling") ~ "negotiated",
+      procedure_type_raw == "Konkurrencepræget dialog" ~ "competitive_dialogue",
+      procedure_type_raw == "Innovationspartnerskab" ~ "innovation_partnership",
+      procedure_type_raw == "Tildelingsprocedure med forudgående offentliggørelse af en koncessionsbekendtgørelse" ~ "other",
+      TRUE ~ NA_character_   # "Uspecificeret" and anything unmapped
+    ),
+    procedure_type = case_when(
+      procedure_type_raw == "Offentligt udbud" ~ "Open procedure",
+      procedure_type_raw == "Offentligt udbud hasteprocedure" ~ "Open procedure (accelerated)",
+      procedure_type_raw == "Begrænset udbud" ~ "Restricted procedure",
+      procedure_type_raw == "Begrænset udbud hasteprocedure" ~ "Restricted procedure (accelerated)",
+      procedure_type_raw == "Udbud med forhandling" ~ "Negotiated procedure",
+      procedure_type_raw == "Udbud med forhandling hasteprocedure" ~ "Negotiated procedure (accelerated)",
+      procedure_type_raw == "Forhandlingsprocedure med forudgående indkaldelse af tilbud" ~ "Negotiated procedure with prior call for competition",
+      procedure_type_raw == "Forhandling med offentliggørelse af en udbudsbekendtgørelse" ~ "Negotiated procedure with publication of a contract notice",
+      procedure_type_raw == "Hastende udbud efter forhandling" ~ "Accelerated negotiated procedure",
+      procedure_type_raw == "Konkurrencepræget dialog" ~ "Competitive dialogue",
+      procedure_type_raw == "Innovationspartnerskab" ~ "Innovation partnership",
+      procedure_type_raw == "Tildelingsprocedure med forudgående offentliggørelse af en koncessionsbekendtgørelse" ~ "Concession award procedure with prior publication",
+      procedure_type_raw == "Uspecificeret" ~ "Unspecified",
+      TRUE ~ NA_character_
+    ),
+    procedure_group = case_when(
+      procedure_group_raw == "Offentligt udbud" ~ "Open procedure",
+      procedure_group_raw == "Begrænset udbud" ~ "Restricted procedure",
+      procedure_group_raw == "Fleksible udbudsprocedurer" ~ "Flexible procedures",
+      procedure_group_raw == "Andet" ~ "Other",
+      TRUE ~ NA_character_
+    ),
+    award_criteria_h = case_when(
+      award_criteria_raw == "Den laveste pris" ~ "lowest_price",
+      award_criteria_raw == "Bedste forhold mellem pris og kvalitet" ~ "price_and_quality",
+      award_criteria_raw == "Omkostninger" ~ "cost",
+      TRUE ~ NA_character_
+    ),
+    award_criteria = case_when(
+      award_criteria_raw == "Den laveste pris" ~ "Lowest price",
+      award_criteria_raw == "Bedste forhold mellem pris og kvalitet" ~ "Best price-quality ratio",
+      award_criteria_raw == "Omkostninger" ~ "Cost",
+      TRUE ~ NA_character_
+    ),
+    # KFST records the price weight as a 0-1 fraction already; coerce, divide a stray
+    # 0-100 percentage by 100, and null the few implausible values (negatives / >100
+    # data-entry errors) so every source is on the same [0, 1] scale.
+    price_weight = as.numeric(price_weight),
+    price_weight = if_else(!is.na(price_weight) & price_weight > 1 & price_weight <= 100, price_weight / 100, price_weight),
+    price_weight = if_else(!is.na(price_weight) & (price_weight < 0 | price_weight > 1), NA_real_, price_weight),
+    # Fields not recorded by KFST (present in OpenTender / TED) -> NA to align the schema.
+    eu_funded = NA,
+    is_dps = NA,
+    subcontracted = NA,
+    n_award_criteria = NA_integer_
   )
 
 # Standardise tender-level fields before they are joined onto buyer/winner rows.
@@ -147,7 +215,12 @@ data <- data %>%
 data <- data %>%
   mutate(contract_type = case_when(
     contract_type == "Offentlig kontrakt" ~ "Public contract",
-    contract_type == "Rammeaftale" ~ "Framework agreement"))
+    contract_type == "Rammeaftale" ~ "Framework agreement"),
+    # Harmonised logical framework indicator (matches OpenTender's is_framework and TED's).
+    is_framework = case_when(
+      contract_type == "Framework agreement" ~ TRUE,
+      contract_type == "Public contract" ~ FALSE,
+      TRUE ~ NA))
 
 ## Tender awarded
 # KFST rows are at the lot (delkontrakt) level, and `tender_cancelled`
@@ -195,20 +268,29 @@ data <- data %>%
 # positive duration are both present (the > 0 guard avoids divide-by-zero).
 data <- data %>%
   mutate(
-    contract_duration_months = coalesce(
+    # Base ("min") duration drives annualisation + award_end_date (min excludes
+    # options -> the documented base contract length), unchanged from before.
+    dur_months_base = coalesce(
       as.numeric(contract_duration_months_min),
       as.numeric(contract_duration_months_max)
     ),
+    # Harmonised reporting duration: midpoint of min and max (mean where both are
+    # present, else whichever is available). This is the cross-source months variable.
+    contract_duration_months = rowMeans(
+      cbind(as.numeric(contract_duration_months_min),
+            as.numeric(contract_duration_months_max)), na.rm = TRUE
+    ),
+    contract_duration_months = if_else(is.nan(contract_duration_months), NA_real_, contract_duration_months),
     annualised_tender_amount = if_else(
       contract_type == "Framework agreement" &
-        !is.na(contract_duration_months) & contract_duration_months > 0,
-      tender_amount / contract_duration_months * 12,
+        !is.na(dur_months_base) & dur_months_base > 0,
+      tender_amount / dur_months_base * 12,
       NA_real_
     ),
     annualised_lot_amount = if_else(
       contract_type == "Framework agreement" &
-        !is.na(contract_duration_months) & contract_duration_months > 0,
-      lot_amount / contract_duration_months * 12,
+        !is.na(dur_months_base) & dur_months_base > 0,
+      lot_amount / dur_months_base * 12,
       NA_real_
     )
   )
@@ -317,8 +399,12 @@ tender_lot_data <- data %>%
     "cpv_code", "cpv_code_first", "cpv_division", "cpv_division_name",
     "cpv_sector", "cpv_category",
     "tender_cancelled", "tender_status", "flag_awarded",
-    "contract_duration_months_min", "contract_duration_months_max", "award_end_date",
+    "contract_duration_months_min", "contract_duration_months_max",
+    "contract_duration_months", "award_end_date",
     "annualised_tender_amount", "annualised_lot_amount",
+    "procedure_type", "procedure_group", "procedure_group_h", "is_framework",
+    "award_criteria", "award_criteria_h", "n_award_criteria", "price_weight",
+    "eu_funded", "is_dps", "subcontracted",
     "n_lot_id"
   ))) %>%
   arrange(tender_id, lot_id, lot_number) %>%
