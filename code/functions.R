@@ -1720,3 +1720,57 @@ stack_schema <- function(entity, clean_dir = dirs$clean_data) {
   if (entity == "buyer") cols <- grep("^winner_", cols, value = TRUE, invert = TRUE)
   cols
 }
+
+# Write a dataset to disk in several formats from one call. `path` may be a bare
+# stem or carry a .rds/.csv/.parquet extension (it is stripped) -- one file per
+# requested format is written next to it. RDS stays the canonical copy the pipeline
+# reads back (fast); CSV and Parquet are additional delivery formats we keep so the
+# server format can be chosen at ship time. Parquet uses zstd (smallest; it also
+# dictionary-encodes low-cardinality strings internally) and needs the `arrow`
+# package. Returns the stem invisibly.
+save_dataset <- function(x, path, formats = c("rds", "csv", "parquet"),
+                         parquet_compression = "zstd", verbose = TRUE) {
+  stem <- sub("\\.(rds|csv|parquet)$", "", path)
+  if ("rds" %in% formats)
+    saveRDS(x, paste0(stem, ".rds"))
+  if ("csv" %in% formats)
+    data.table::fwrite(data.table::as.data.table(x), paste0(stem, ".csv"))
+  if ("parquet" %in% formats) {
+    if (!requireNamespace("arrow", quietly = TRUE))
+      stop("save_dataset(): the 'arrow' package is required to write Parquet -- install.packages('arrow').",
+           call. = FALSE)
+    arrow::write_parquet(as.data.frame(x), paste0(stem, ".parquet"), compression = parquet_compression)
+  }
+  if (verbose)
+    cat(sprintf("  saved %-42s [%s]  %d x %d\n", basename(stem),
+                paste(formats, collapse = "/"), nrow(x), ncol(x)))
+  invisible(stem)
+}
+
+# Read a clean dataset, preferring Parquet -- the default format going forward (smaller
+# and ~4x faster to read here, and it preserves column types). `path` may carry a
+# .rds/.csv/.parquet extension or be a bare stem; the sibling with the preferred format
+# is used if present, else it falls back (parquet -> rds -> csv). Set env var
+# CVR_READ_FORMAT to "parquet"/"rds"/"csv" to force a format globally (used to re-knit the
+# reports against one format). Always returns a data.table so downstream code is agnostic
+# to the source. NOTE: CSV does not preserve types -- dates/factors come back as strings
+# and some numeric-looking ids parse as integers -- so Parquet/RDS are the faithful reads.
+# Reading Parquet needs the `arrow` package.
+read_clean <- function(path, prefer = c("parquet", "rds", "csv")) {
+  prefer <- match.arg(prefer)
+  ov <- Sys.getenv("CVR_READ_FORMAT", "")
+  if (nzchar(ov)) prefer <- match.arg(ov, c("parquet", "rds", "csv"))
+  stem  <- sub("\\.(rds|csv|parquet)$", "", path)
+  order <- unique(c(prefer, "parquet", "rds", "csv"))    # preferred first, then fall back
+  for (ext in order) {
+    f <- paste0(stem, ".", ext)
+    if (file.exists(f)) {
+      if (ext == "parquet" && !requireNamespace("arrow", quietly = TRUE)) next
+      return(data.table::as.data.table(
+        if (ext == "parquet")  arrow::read_parquet(f)
+        else if (ext == "csv") data.table::fread(f, na.strings = "", keepLeadingZeros = TRUE)
+        else                   readRDS(f)))
+    }
+  }
+  stop("read_clean(): no .parquet/.rds/.csv found for ", stem, call. = FALSE)
+}
