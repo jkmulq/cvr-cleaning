@@ -63,7 +63,7 @@ matched_cvr_files <- list(
     path = file.path(dirs$clean_data, "clean_winner_data_ot_name_matched.rds"),
     column = "winner_cvr_final"
   ),
-  # Uncomment to also top up the OpenTender extraction / name_only variant CVRs:
+  # Uncomment to also top up the OpenTender extraction-variant CVRs:
   # opentender_winner_variants = list(
   #   path = file.path(dirs$clean_data, "ot_winner_datasets_stacked.rds"),
   #   column = "winner_cvr_final"
