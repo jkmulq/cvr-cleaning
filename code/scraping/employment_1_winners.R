@@ -42,9 +42,9 @@ matched_cvr_files <- list(
     path = file.path(dirs$clean_data, "clean_winner_data_kfst_name_matched.rds"),
     column = "winner_cvr_final"
   ),
-  # Robustness-stack variants (base / extraction / name_only in one file): pulls the raw-extraction and
-  # name-only winner CVRs too, so the CVR-method employment comparison (10_twfe_estudy_cvr_method.Rmd)
-  # has employment for every variant, not just the matched production CVRs.
+  # Concat-and-dedup stack (production + extraction in one file): pulls the raw-extraction winner CVRs
+  # too, so the CVR-method employment comparison (10_twfe_estudy_cvr_method.Rmd) has employment for both
+  # methods, not just the matched production CVRs.
   kfst_winner_variants = list(
     path = file.path(dirs$clean_data, "kfst_winner_datasets_stacked.rds"),
     column = "winner_cvr_final"
