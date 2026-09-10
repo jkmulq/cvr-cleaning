@@ -46,20 +46,17 @@ source(file.path(report_project_dir, "code", "functions.R"))
 clean_dir <- dirs$clean_data
 ted_dir   <- file.path(dirs$intermediates, "ted")
 
-# "Full version" = the concatenated winner dataset from code/processing/5_combine_datasets.R.
-# Fall back to stacking the per-source matched files if the combined file is not present.
-combined_winner_path <- file.path(clean_dir, "clean_winner_data_all_name_matched.rds")
-if (file.exists(combined_winner_path)) {
-  all_winners <- as_tibble(readRDS(combined_winner_path))
-} else {
-  ted_path <- file.path(clean_dir, "clean_winner_data_ted_name_matched.rds")            # new location
-  if (!file.exists(ted_path)) ted_path <- file.path(ted_dir, "ted_winner_data_name_matched.rds")  # pre-move
-  all_winners <- bind_rows(
-    readRDS(file.path(clean_dir, "clean_winner_data_kfst_name_matched.rds")) %>% mutate(dataset = "KFST"),
-    readRDS(file.path(clean_dir, "clean_winner_data_ot_name_matched.rds"))   %>% mutate(dataset = "OpenTender"),
-    readRDS(ted_path)                                                        %>% mutate(dataset = "TED")
-  ) %>% as_tibble()
-}
+# "Full version" = the three per-source matched winner datasets stacked (KFST / OpenTender / TED
+# name-matched files), tagged by `dataset` -- the per-source matched files are the source of truth for
+# these provenance counts. (The combined master table clean_all_samples_combined is exercised separately
+# in the "Combined master table" section below.)
+ted_path <- file.path(clean_dir, "clean_winner_data_ted_name_matched.rds")              # new location
+if (!file.exists(ted_path)) ted_path <- file.path(ted_dir, "ted_winner_data_name_matched.rds")  # pre-move
+all_winners <- bind_rows(
+  read_clean(file.path(clean_dir, "clean_winner_data_kfst_name_matched.rds")) %>% mutate(dataset = "KFST"),
+  read_clean(file.path(clean_dir, "clean_winner_data_ot_name_matched.rds"))   %>% mutate(dataset = "OpenTender"),
+  read_clean(ted_path)                                                        %>% mutate(dataset = "TED")
+) %>% as_tibble()
 
 # Canonical 8-digit CVR; "valid" = well-formed 8 digits (format only). Whether the CVR is a *real
 # registered firm* is the separate, airtight check `flag_cvr_final_in_registry` (shown as
@@ -285,18 +282,14 @@ bind_rows(
 # Buyer datasets
 
 ```{r buyer-load}
-combined_buyer_path <- file.path(clean_dir, "clean_buyer_data_all_name_matched.rds")
-if (file.exists(combined_buyer_path)) {
-  buyers_all <- as_tibble(readRDS(combined_buyer_path))
-} else {
-  tedb_path <- file.path(clean_dir, "clean_buyer_data_ted_name_matched.rds")            # new location
-  if (!file.exists(tedb_path)) tedb_path <- file.path(ted_dir, "ted_buyer_data_name_matched.rds")  # pre-move
-  buyers_all <- bind_rows(
-    readRDS(file.path(clean_dir, "clean_buyer_data_kfst_name_matched.rds")) %>% mutate(dataset = "KFST"),
-    readRDS(file.path(clean_dir, "clean_buyer_data_ot_name_matched.rds"))   %>% mutate(dataset = "OpenTender"),
-    readRDS(tedb_path)                                                      %>% mutate(dataset = "TED")
-  ) %>% as_tibble()
-}
+# Stack the three per-source matched buyer datasets (KFST / OpenTender / TED), tagged by `dataset`.
+tedb_path <- file.path(clean_dir, "clean_buyer_data_ted_name_matched.rds")            # new location
+if (!file.exists(tedb_path)) tedb_path <- file.path(ted_dir, "ted_buyer_data_name_matched.rds")  # pre-move
+buyers_all <- bind_rows(
+  read_clean(file.path(clean_dir, "clean_buyer_data_kfst_name_matched.rds")) %>% mutate(dataset = "KFST"),
+  read_clean(file.path(clean_dir, "clean_buyer_data_ot_name_matched.rds"))   %>% mutate(dataset = "OpenTender"),
+  read_clean(tedb_path)                                                      %>% mutate(dataset = "TED")
+) %>% as_tibble()
 
 buyer_shared <- c("tender_id", "ted_notice_id",
                   "buyer_cvr_clean", "buyer_cvr_name_match", "buyer_cvr_final", "buyer_name", "buyer_country",
@@ -393,7 +386,7 @@ win_stacks <- c(KFST = "kfst_winner_datasets_stacked.rds", OpenTender = "ot_winn
 stacks <- imap_dfr(win_stacks, function(f, src) {
   p <- file.path(clean_dir, f)
   if (!file.exists(p)) return(tibble())
-  as_tibble(readRDS(p)) %>% transmute(
+  as_tibble(read_clean(p)) %>% transmute(
     source = src, build_prod, build_extr,
     k = paste(tender_id, lot_id, norm_cvr(winner_cvr_final)),
     valid = is_valid_cvr(winner_cvr_final))
@@ -406,9 +399,9 @@ have_stacks <- nrow(stacks) > 0
 ```{r stack-agreement}
 if (have_stacks) {
   stacks %>% filter(valid) %>% group_by(source) %>%
-    summarise(production = n_distinct(k[build_prod]),
-              extraction = n_distinct(k[build_extr]),
-              both       = length(intersect(k[build_prod], k[build_extr])),
+    summarise(production = n_distinct(k[build_prod == TRUE]),
+              extraction = n_distinct(k[build_extr == TRUE]),
+              both       = length(intersect(k[build_prod == TRUE], k[build_extr == TRUE])),
               .groups = "drop") %>%
     mutate(production_only = production - both, extraction_only = extraction - both) %>%
     kable(caption = "Winner stacks: production vs extraction (lot, CVR) coverage and overlap")
@@ -420,15 +413,64 @@ if (have_stacks) {
 ```{r stack-buyer}
 buyer_stack <- file.path(clean_dir, "ot_buyer_datasets_stacked.rds")
 if (file.exists(buyer_stack)) {
-  as_tibble(readRDS(buyer_stack)) %>%
+  as_tibble(read_clean(buyer_stack)) %>%
     transmute(build_prod, build_extr,
               k = paste(tender_id, lot_id, norm_cvr(buyer_cvr_final)),
               valid = is_valid_cvr(buyer_cvr_final)) %>%
     filter(valid) %>%
-    summarise(production = n_distinct(k[build_prod]),
-              extraction = n_distinct(k[build_extr]),
-              both       = length(intersect(k[build_prod], k[build_extr]))) %>%
+    summarise(production = n_distinct(k[build_prod == TRUE]),
+              extraction = n_distinct(k[build_extr == TRUE]),
+              both       = length(intersect(k[build_prod == TRUE], k[build_extr == TRUE]))) %>%
     mutate(production_only = production - both, extraction_only = extraction - both) %>%
     kable(caption = "OpenTender buyer stack: production vs extraction (lot, CVR) coverage and overlap")
 } else "OpenTender buyer stack not found — run 3_3 to build it."
 ```
+
+# Combined master table: sample reconstruction
+
+`clean_all_samples_combined.rds` (built by `4_combine_all_datasets.R`) is the all-in-one server-delivery
+table: one row per resolved-CVR record, all six samples pooled, CVR columns standardised to `cvr_*`, and
+the sample-selection columns `data_source` / `entity` / `build_prod` / `build_extr` / `is_winner`. This
+table applies each reconstruction filter from the README's sample table to the master table and reports
+the rows it returns — a live check that every sample rebuilds exactly. (The stacking scripts additionally
+`stop()` on any mismatch against their source stacks; these counts equal those sources.)
+
+```{r combined-samples}
+combined_path <- file.path(clean_dir, "clean_all_samples_combined.rds")
+if (file.exists(combined_path)) {
+  cmb  <- as_tibble(read_clean(combined_path))
+  n_of <- function(...) nrow(dplyr::filter(cmb, ...))   # dplyr ANDs the conditions; NA logicals drop out
+  tibble::tribble(
+    ~Sample, ~`Filter on clean_all_samples_combined`, ~Rows,
+    "KFST winners — production",       'data_source == "KFST" & entity == "winner" & build_prod == TRUE',
+      n_of(data_source == "KFST", entity == "winner", build_prod == TRUE),
+    "KFST winners — extraction",       'data_source == "KFST" & entity == "winner" & build_extr == TRUE',
+      n_of(data_source == "KFST", entity == "winner", build_extr == TRUE),
+    "KFST buyers",                     'data_source == "KFST" & entity == "buyer"',
+      n_of(data_source == "KFST", entity == "buyer"),
+    "OpenTender winners — production", 'data_source == "OpenTender" & entity == "winner" & build_prod == TRUE',
+      n_of(data_source == "OpenTender", entity == "winner", build_prod == TRUE),
+    "OpenTender winners — extraction", 'data_source == "OpenTender" & entity == "winner" & build_extr == TRUE',
+      n_of(data_source == "OpenTender", entity == "winner", build_extr == TRUE),
+    "OpenTender buyers — production",  'data_source == "OpenTender" & entity == "buyer" & build_prod == TRUE',
+      n_of(data_source == "OpenTender", entity == "buyer", build_prod == TRUE),
+    "OpenTender buyers — extraction",  'data_source == "OpenTender" & entity == "buyer" & build_extr == TRUE',
+      n_of(data_source == "OpenTender", entity == "buyer", build_extr == TRUE),
+    "TED winners (awarded)",           'data_source == "TED" & entity == "winner" & is_winner == TRUE',
+      n_of(data_source == "TED", entity == "winner", is_winner == TRUE),
+    "TED non-winning bidders",         'data_source == "TED" & entity == "winner" & is_winner == FALSE',
+      n_of(data_source == "TED", entity == "winner", is_winner == FALSE),
+    "TED buyers",                      'data_source == "TED" & entity == "buyer"',
+      n_of(data_source == "TED", entity == "buyer")
+  ) %>% kable(caption = sprintf(
+    "Master table (%s rows x %s cols): rows returned by each README reconstruction filter",
+    format(nrow(cmb), big.mark = ","), ncol(cmb)))
+} else {
+  "clean_all_samples_combined.rds not found — run code/processing/4_combine_all_datasets.R to build it."
+}
+```
+
+The per-sample rows sum to more than the table's row count because the production and extraction winner
+(and OpenTender buyer) samples **overlap** on lots where both methods agree — a shared row is flagged
+`build_prod == TRUE` *and* `build_extr == TRUE` and is counted once in the table but by both filters here.
+KFST buyers and the two TED entities have no extraction variant, so each appears under exactly one filter.
