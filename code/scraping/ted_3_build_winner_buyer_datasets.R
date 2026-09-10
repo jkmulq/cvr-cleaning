@@ -124,6 +124,32 @@ for (dtn in c("ted_winner_data", "ted_buyer_data")) {
     d[, joint_tender := fifelse(joint_procurement %in% TRUE, "joint", "single")]
     d[, joint_procurement := NULL]
   }
+  # Cross-source harmonisation (mirrors 1_1 / 1_2). TED's procedure_group already uses the
+  # common vocabulary (open/restricted/negotiated/competitive_dialogue/innovation_partnership/
+  # without_call), so procedure_group_h is a straight copy. award_criteria arrives already
+  # human-readable: the XML label for legacy notices (extracted in ted_2) or the eForms
+  # ";"-joined text (price;quality;cost). Map it to the harmonised award_criteria_h category.
+  # The %chin% branches match the labels the TED XML actually uses (with the raw legacy codes
+  # kept as a fallback for the rare notice whose AC_AWARD_CRIT element had no label text).
+  if ("procedure_group" %in% names(d)) d[, procedure_group_h := procedure_group]
+  if ("award_criteria" %in% names(d)) {
+    d[, award_criteria_h := fcase(
+      award_criteria %chin% c("Lowest price", "1"), "lowest_price",
+      award_criteria %chin% c("The most economic tender", "Mixed", "Mix", "2", "3"), "price_and_quality",
+      award_criteria %chin% c("Not specified", "Not applicable", "Not defined", "Other", "8", "9", "Z"), NA_character_,
+      grepl("quality", award_criteria), "price_and_quality",             # eForms tokens
+      grepl("cost", award_criteria) & !grepl("quality", award_criteria), "cost",
+      award_criteria == "price", "lowest_price",
+      default = NA_character_)]
+  }
+  # Duration: TED records the longest contract/framework duration in days -> months.
+  if ("contract_duration_days" %in% names(d)) d[, contract_duration_months := contract_duration_days / 30.44]
+  # Price weight: reconcile a 0-100 weighting to a 0-1 fraction and null implausible values.
+  if ("price_weight" %in% names(d)) {
+    d[, price_weight := suppressWarnings(as.numeric(price_weight))]
+    d[!is.na(price_weight) & price_weight > 1 & price_weight <= 100, price_weight := price_weight / 100]
+    d[!is.na(price_weight) & (price_weight < 0 | price_weight > 1), price_weight := NA_real_]
+  }
   assign(dtn, d)
 }
 
