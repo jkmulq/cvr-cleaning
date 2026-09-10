@@ -47,10 +47,21 @@ report_project_dir <- local({
 })
 setwd(report_project_dir)
 knitr::opts_knit$set(root.dir = report_project_dir)
-report_clean_data_dir <- file.path(report_project_dir, "data", "clean")
-
 source(file.path(report_project_dir, "config.R"))
 source(file.path(report_project_dir, "code", "functions.R"))
+
+# Read the canonical pipeline outputs from the configured data root (config.R `dirs`, i.e.
+# CVR_DATA_DIR), not a stale project-local data/clean, so this report matches the rest of the pipeline.
+report_clean_data_dir <- dirs$clean_data
+
+# Valid FINAL CVR (post-match): well-formed 8 digits (format only). Whether it is a *real registered firm*
+# is the separate airtight check `flag_cvr_final_in_registry` (registry-coverage table below). NB the
+# `valid_cvr` column is the pre-match FIELD-CVR flag; use valid_final_cvr() for the delivered CVR.
+# n_field_cvr() counts distinct valid 8-digit CVRs packed in a raw winner field (KFST/TED); OpenTender has
+# its own validated count in `n_valid_cvr_raw`.
+valid_final_cvr <- function(x) { c <- gsub("[^0-9]", "", as.character(x)); c[is.na(c)] <- ""; nchar(c) == 8L }
+n_field_cvr <- function(x) { x <- as.character(x); x[is.na(x)] <- ""
+  vapply(strsplit(x, "[^0-9]+"), function(t) { t <- unique(t[t != ""]); sum(nchar(t) == 8L) }, integer(1)) }
 
 input_files <- c(
   file.path(report_clean_data_dir, "clean_winner_data_kfst.rds"),
@@ -70,12 +81,12 @@ if (length(missing_files) > 0) {
   )
 }
 
-kfst_clean <- readRDS(input_files[1])
-kfst_matched <- readRDS(input_files[2])
-kfst_buyer_matched <- readRDS(input_files[3])
-ot_clean <- readRDS(input_files[4])
-ot_matched <- readRDS(input_files[5])
-ot_buyer_matched <- readRDS(input_files[6])
+kfst_clean <- read_clean(input_files[1])
+kfst_matched <- read_clean(input_files[2])
+kfst_buyer_matched <- read_clean(input_files[3])
+ot_clean <- read_clean(input_files[4])
+ot_matched <- read_clean(input_files[5])
+ot_buyer_matched <- read_clean(input_files[6])
 
 # Graph settings
 theme_set(theme_light())
@@ -402,10 +413,7 @@ name_cleaning_example_names <- c(
 )
 
 name_cleaning_examples <- kfst_matched %>%
-  filter(
-    flag_matching_candidate,
-    toupper(trimws(winner_country)) == "DK"
-  ) %>%
+  filter(matching_candidate_type %in% c("exact DK", "contains DK")) %>%
   filter(winner_name %in% name_cleaning_example_names) %>%
   distinct(
     winner_name,
@@ -544,10 +552,10 @@ kfst_cleaning_summary <- bind_rows(
       Share = Count / kfst_original_count,
       Share.of = "Original winner rows"
     ),
-  kfst_clean %>%
-    filter(n_winners_in_lot > 1) %>%
+  kfst_matched %>%
+    filter(valid_final_cvr(winner_cvr_final), n_field_cvr(winner_cvr_original) >= 2) %>%
     summarise(
-      Measure = "Winner rows after multiple-winner expansion",
+      Measure = "Valid winner CVRs from a multiple-CVR record (expanded)",
       Count = n(),
       Share = Count / kfst_clean_count,
       Share.of = "Final winner rows"
@@ -590,14 +598,15 @@ kable(
 
 ## Candidates for name matching
 
-A **matching candidate** is a Danish firm with a winner name but no cleaned CVR. 
+A **matching candidate** is a firm with a winner name but no cleaned CVR that was admitted to name
+matching — its country is Danish or a multi-country consortium containing Denmark
+(`matching_candidate_type` is `exact DK` or `contains DK`, the pipeline's own definition). Using the
+pipeline field avoids an exact `winner_country == "DK"` test, which would drop the contains-DK consortia
+(e.g. `DK,SE`, `DK,NO`). 
 
 ```{r kfst-candidates}
 kfst_candidates <- kfst_matched %>%
-  filter(
-    flag_matching_candidate,
-    toupper(trimws(winner_country)) == "DK"
-  )
+  filter(matching_candidate_type %in% c("exact DK", "contains DK"))
 
 kfst_candidate_count <- kfst_candidates %>%
   summarise(Count = n()) %>%
@@ -887,10 +896,10 @@ ot_cleaning_summary <- bind_rows(
       Share = Count / ot_original_count,
       Share.of = "Original source rows"
     ),
-  ot_clean %>%
-    filter(source == "multiple confirmed winners") %>%
+  ot_matched %>%
+    filter(valid_final_cvr(winner_cvr_final), n_valid_cvr_raw >= 2) %>%
     summarise(
-      Measure = "Winner rows after multiple-CVR expansion",
+      Measure = "Valid winner CVRs from a multiple-CVR record (expanded)",
       Count = n(),
       Share = Count / ot_clean_count,
       Share.of = "Final winner rows"
@@ -940,13 +949,9 @@ therefore use distinct source `row_id` values.
 
 ```{r ot-candidates}
 ot_candidates <- ot_matched %>%
-  filter(
-    flag_matching_candidate,
-    toupper(trimws(winner_country)) == "DK"
-  )
+  filter(matching_candidate_type %in% c("exact DK", "contains DK"))
 
 ot_candidate_count <- ot_candidates %>%
-  distinct(row_id) %>%
   summarise(Count = n()) %>%
   pull(Count)
 ```
@@ -1097,23 +1102,18 @@ kable(
 
 ## Matching results
 
-An accepted split creates several firm rows. The results below count the original source row once.
+An accepted split creates several firm rows; each firm counts as its own winner row here (the same unit
+as report 11 and the combined dataset), so the counts match report 11's OpenTender match numbers.
 
 ```{r ot-matching-results}
 ot_candidate_results <- ot_candidates %>%
-  group_by(row_id) %>%
-  summarise(
+  transmute(
     Result = case_when(
-      any(flag_name_partition_expanded, na.rm = TRUE) ~ "Exact match",
-      any(name_match_method == "exact", na.rm = TRUE) ~ "Exact match",
-      any(name_match_method == "fuzzy", na.rm = TRUE) ~ "Fuzzy match",
+      name_match_method == "exact" ~ "Exact match",
+      name_match_method == "fuzzy" ~ "Fuzzy match",
       TRUE ~ "No automatic match"
     ),
-    Ambiguous.exact = any(
-      name_match_method == "exact" & flag_name_match_ambiguous,
-      na.rm = TRUE
-    ),
-    .groups = "drop"
+    Ambiguous.exact = name_match_method == "exact" & flag_name_match_ambiguous %in% TRUE
   )
 
 ot_matching_results <- ot_candidate_results %>%
@@ -1211,6 +1211,41 @@ kable(
 <strong>The same review rule applies to OpenTender.</strong> Fuzzy matches,
 ambiguous exact matches, and unresolved multiple-firm names still need review.
 </div>
+
+## Valid final CVRs and CVR-registry coverage
+
+The provenance and expansion counts above use the **valid final CVR** (well-formed 8 digits). A
+stricter bar is whether that CVR is actually **found in the CVR name registry**
+(`flag_cvr_final_in_registry`). Almost all valid final CVRs are in the registry; the small remainder are
+well-formed 8-digit numbers that do not resolve to a registered firm.
+
+```{r registry-coverage}
+registry_coverage <- bind_rows(
+  kfst_matched %>% transmute(source = "KFST",
+                             vf = valid_final_cvr(winner_cvr_final),
+                             reg = flag_cvr_final_in_registry %in% TRUE),
+  ot_matched %>% transmute(source = "OpenTender",
+                           vf = valid_final_cvr(winner_cvr_final),
+                           reg = flag_cvr_final_in_registry %in% TRUE)
+) %>%
+  group_by(source) %>%
+  summarise(winner_rows = n(), valid_final = sum(vf), in_registry = sum(reg), .groups = "drop") %>%
+  mutate(
+    not_in_registry = valid_final - in_registry,
+    pct_in_registry = sprintf("%.1f%%", 100 * in_registry / valid_final)
+  ) %>%
+  transmute(
+    Source = source,
+    `Winner rows` = format(winner_rows, big.mark = ",", trim = TRUE),
+    `Valid final CVR` = format(valid_final, big.mark = ",", trim = TRUE),
+    `In CVR registry` = format(in_registry, big.mark = ",", trim = TRUE),
+    `Valid but not in registry` = format(not_in_registry, big.mark = ",", trim = TRUE),
+    `% of valid in registry` = pct_in_registry
+  )
+
+kable(registry_coverage, align = c("l", "r", "r", "r", "r", "r"),
+      caption = "Valid final winner CVRs vs CVRs found in the CVR name registry, by source")
+```
 
 ## OpenTender buyer match quality
 
@@ -1774,8 +1809,8 @@ I validate these for all tender winning firms that we DO NOT send to the matchin
 # HERE -- after the dplyr chunks above (one uses first()) -- so nothing earlier is masked.
 suppressPackageStartupMessages(library(data.table))
 # Load
-main_key <- readRDS(file.path("data", "clean", "clean_cvr_name_key.rds"))
-alt_key <- readRDS(file.path("data", "clean", "clean_cvr_biname_key.rds"))
+main_key <- read_clean(file.path(report_clean_data_dir, "clean_cvr_name_key.rds"))
+alt_key <- read_clean(file.path(report_clean_data_dir, "clean_cvr_biname_key.rds"))
 
 # Keep source then bind
 main_key[, key_type := "Main names"]
