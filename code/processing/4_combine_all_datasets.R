@@ -176,7 +176,10 @@ for (b in c("tender", "lot")) {
 # ---- Column selection for the secure server ----
 # Keep an explicit allowlist of server-permissible columns and drop everything else: firm identifiers
 # (names, name fragments, registered names), redundant CVR-provenance columns (only cvr_final +
-# cvr_number_source are kept), fuzzy/field matching diagnostics, derived CPV (cpv_code / cpv_main kept),
+# cvr_number_source are kept), most fuzzy/field matching diagnostics (but the fuzzy_candidate_cvr_1..5
+# alternative-CVR candidates AND their fuzzy_candidate_score_1..5 match scores ARE kept -- the CVRs are
+# the authorised key and the scores make them interpretable; the name_* siblings are firm names and
+# stay dropped), derived CPV (cpv_code / cpv_main kept),
 # NUTS regions, and consortium-split internals. Using a KEEP-list rather than a drop-list means any
 # future/unreviewed column is dropped by default and logged -- a new column can never silently ship.
 # cvr_final stays: it is the authorised key that links to the register on the server.
@@ -242,6 +245,13 @@ keep_cols <- c(keep_cols, "annualised_tender_amount_eur", "annualised_tender_amo
 # OpenTender's award-criteria count. The source-specific originals stay alongside them.
 keep_cols <- c(keep_cols, "procedure_group_h", "award_criteria_h",
                "contract_duration_months", "n_award_criteria")
+# Alternative-CVR candidates from fuzzy name-matching (top 5) plus their 0-100 match scores. The CVRs
+# are kept because they are CVRs (the authorised key); the scores make each candidate interpretable.
+# The parallel fuzzy_candidate_name_* (firm names) stay dropped for de-identification.
+keep_cols <- c(keep_cols, "fuzzy_candidate_cvr_1", "fuzzy_candidate_cvr_2", "fuzzy_candidate_cvr_3",
+               "fuzzy_candidate_cvr_4", "fuzzy_candidate_cvr_5",
+               "fuzzy_candidate_score_1", "fuzzy_candidate_score_2", "fuzzy_candidate_score_3",
+               "fuzzy_candidate_score_4", "fuzzy_candidate_score_5")
 round2_drop <- c(
   "n_tenders_received", "n_winners_extracted", "n_buyers_extracted", "n_buyers_listed_original",
   "buyer_amount", "amount_awarded", "amount_estimated", "lot_estimated_value", "lot_awarded_value",
@@ -296,7 +306,10 @@ ord_quality <- c(
   "cvr_name_match_quality", "cvr_name_match_quality_basic", "cvr_name_match_quality_nospaces",
   "cvr_name_match_quality_broad", "cvr_name_is_substring", "valid_cvr_before_match",
   "name_match_status", "name_match_method", "name_match_step", "name_match_source",
-  "name_match_score", "name_match_n_candidates", "matching_candidate_type")
+  "name_match_score", "name_match_n_candidates", "matching_candidate_type",
+  "fuzzy_candidate_cvr_1", "fuzzy_candidate_score_1", "fuzzy_candidate_cvr_2", "fuzzy_candidate_score_2",
+  "fuzzy_candidate_cvr_3", "fuzzy_candidate_score_3", "fuzzy_candidate_cvr_4", "fuzzy_candidate_score_4",
+  "fuzzy_candidate_cvr_5", "fuzzy_candidate_score_5")
 ord_named <- c(ord_core, ord_cvr, ord_prov, ord_select, ord_tender, ord_quality)
 ord_flags <- grep("^flag_", setdiff(names(combined), ord_named), value = TRUE)                 # all remaining flags
 ord_rest  <- setdiff(names(combined), c(ord_named, ord_flags))                                 # everything else
