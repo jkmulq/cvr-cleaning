@@ -92,6 +92,17 @@ if (file.exists(firm_panel_path) && !nzchar(Sys.getenv("FIRM_PANEL_REBUILD"))) {
   message("Saved all-firms employment panel (", nrow(firm_data), " rows) -> ", firm_panel_path)
 }
 
+# ---- Industry hierarchy (up front) ----
+# DB07 branchekode is hierarchical: the leading digits give coarser levels. Zero-pad the (numeric) 6-digit
+# code, then truncate to class (4), group (3), division (2). Derived here -- whether firm_data came from
+# cache or a fresh build -- so the matching can stagger from fine (6-digit) to coarse (2-digit) on industry.
+firm_data[, industry_code6 := {
+  ii <- suppressWarnings(as.integer(industry_code)); fifelse(is.na(ii), NA_character_, sprintf("%06d", ii))
+}]
+firm_data[, `:=`(industry_class    = substr(industry_code6, 1L, 4L),
+                 industry_group    = substr(industry_code6, 1L, 3L),
+                 industry_division = substr(industry_code6, 1L, 2L))]
+
 ## Tender winners (OpenTender + KFST) -> award events
 data_ot <- readRDS(file.path(clean_data_dir, "clean_winner_data_ot_name_matched.rds")) %>%
   mutate(data_source = "OpenTender")
@@ -118,13 +129,17 @@ valid_winner_events[, event_quarter := quarter(award_date)]
 valid_winner_events[, winner_cvr_final := as.character(winner_cvr_final)]
 
 # ---- Recreate separate objects ----
-winner_data <- firm_data[firm_type == "winner",]
-control_data <- firm_data[firm_type == "never winner",]
+# Keep ONLY the columns matching needs. The panel has ~69 columns, but build_control_firm_data uses just
+# these 9 -- carrying all of them makes each pool ~a full copy of the 8 GB panel, which exhausted the 24 GB
+# vector limit (every worker's allocation then failed and was caught as NULL -> "all events failed"). The
+# full series is pulled later from the cached panel by build_event_study_panel(), not from these pools.
+match_cols <- c("cvr", "frequency", "qidx", "fte",
+                "industry_code6", "industry_class", "industry_group", "industry_division", "hq_kommune_code")
+winner_data  <- firm_data[firm_type == "winner",       ..match_cols]
+control_data <- firm_data[firm_type == "never winner", ..match_cols]
 
-# Key firm_data on cvr so each event can pull the treated + matched-control FULL series (pre AND post)
-# with a fast binary join (build_control_firm_data does `firm_data[.(cvrs)]`). Done once, before the
-# parallel loop, so every worker inherits the keyed table.
-setkey(firm_data, cvr)
+# (firm_data is no longer keyed or joined here -- matching draws from the winner/never-winner pools and
+# phase 2 stores only the compact match table. firm_data is freed just below, once the pools are set up.)
 
 # Ensure we drop any accidental winning firms from the control set
 n_before_drop <- control_data[, uniqueN(cvr)]
@@ -135,9 +150,18 @@ message(paste0(n_dropped, " winning firms snuck into control data. They have bee
 if (any(winner_data[, unique(cvr)] %in% control_data[, unique(cvr)])) {
   stop("some winning firms still remain in the control data!!!")
 }
-# ---- Find control firm match for each firm-event ----
-# Control firm = closest FTE history in the 4 pre-award quarters, closest age at
-# award, same sector (same location intended but not in the panel).
+
+# firm_data is not used again -- matching draws from the pools and phase 2 stores only the match table -- so
+# free it now (~8 GB) before the parallel matching, especially with more cores. The on-disk cache is intact.
+rm(firm_data); gc()
+
+# ---- Find eligible control firms for each firm-event (two arms) ----
+# Per event, find ALL eligible controls in TWO arms and stack them, flagged by control_type:
+#   never_winner -- firms that never win a tender (from control_data)
+#   winner       -- firms that win a tender somewhere but NOT within [event +/- lookback] (from winner_data)
+# Each arm runs the same staggered cascade (sector+kommune -> sector -> all firms in the pool)
+# independently, so control_protocol (the tier used) can differ between arms. Eligibility requires
+# positive FTE and a computable pre-period FTE gap in every pre-window quarter; selection is deferred.
 build_control_firm_data <- function(winning_firm_cvr,
                                     award_year,
                                     award_quarter,
@@ -160,188 +184,115 @@ build_control_firm_data <- function(winning_firm_cvr,
     stop(paste0("problem: winning firm ", winning_firm_cvr, " appears in the control data."))
   }
   
-  # Treated firm's own pre-window quarters. Needed by BOTH branches and by the
-  # merge / n_pre after the if/else, so compute it up front. (It previously lived
-  # only inside the staggered branch, so the FTE-only `else` path -- and the merge
-  # -- hit "object 'winning_info' not found" and every event errored to NULL.)
+  # Treated firm's contemporaneous industry / kommune (from its pre-window) -- used only to define the
+  # matching keys. No FTE is read here; all employment/FTE work is deferred to phase 2.
   winning_info <- winner_data[
     frequency == freq &
       cvr == winning_firm_cvr &
       qidx %between% c(winning_qidx - lookback, winning_qidx - 1),
-    .(cvr = cvr, frequency = frequency, year = year, quarter = quarter, qidx = qidx,
-      firm_sector = industry_code, hq_kommune_code = hq_kommune_code, employees = employees, fte = fte)
+    .(industry_code6 = industry_code6, industry_class = industry_class,
+      industry_group = industry_group, industry_division = industry_division,
+      hq_kommune_code = hq_kommune_code)
   ]
-  
-  # If staggered attributes is true, run through stricter -> looser control sets.
-  if (staggered_attributes) {
-    eligible_obs <- control_data[
-      frequency == freq &
-        qidx %between% c(winning_qidx - lookback, winning_qidx - 1) &
-        industry_code %chin% unique(winning_info$firm_sector) &
-        hq_kommune_code %chin% unique(winning_info$hq_kommune_code),
-      .(cvr = cvr, year = year, quarter = quarter, qidx = qidx,
-        firm_sector = industry_code, employees = employees, fte = fte)
-    ]
-    eligible_obs$control_protocol <- "sector, kommune, pre-award FTE"
-    
-    # Check a control was found with the above
-    if (nrow(eligible_obs) == 0) {
-      print(paste0("No eligible control firms found for winning firm CVR ", 
-                   winning_firm_cvr, " in sector ", unique(winning_info$firm_sector), 
-                   " and kommune ", unique(winning_info$hq_kommune_code), ". \n Defaulting to just sector."))
-      eligible_obs <- firm_data[
-        cvr != winning_firm_cvr &
-          frequency == freq &
-          qidx %between% c(winning_qidx - lookback, winning_qidx - 1) &
-          industry_code %chin% unique(winning_info$firm_sector),
-        .(cvr = cvr, year = year, quarter = quarter, qidx = qidx,
-          firm_sector = industry_code, employees = employees, fte = fte)
-      ]
-      
-      eligible_obs$control_protocol <- "sector, pre-award FTE"
-    }
-    
-    # Check again that eligible_obs is not empty. If it is, do not match on sector
-    if (nrow(eligible_obs) == 0) {
-      print(paste0("No eligible control firms found for winning firm CVR ", 
-                   winning_firm_cvr, " in sector ", unique(winning_info$firm_sector), 
-                   ". \n Defaulting to all firms."))
-      eligible_obs <- firm_data[
-        cvr != winning_firm_cvr &
-          frequency == freq &
-          qidx %between% c(winning_qidx - lookback, winning_qidx - 1),
-        .(cvr = cvr, year = year, quarter = quarter, qidx = qidx,
-          firm_sector = industry_code, employees = employees, fte = fte)
-      ]
-      eligible_obs$control_protocol <- "pre-award FTE"
-      
-    }
-  } else {
-    # FTE-only: no sector/kommune screen. Every firm (except the winner) with pre-award-window
-    # observations is eligible; the closest control is then chosen purely on the pre-award FTE gap
-    # (the shared ranking below). This is the intended path when use_staggered = FALSE -- not a
-    # fallback -- so there is no per-event warning here; the mode is announced once before the run.
-    eligible_obs <- control_data[
-        frequency == freq &
-        qidx %between% c(winning_qidx - lookback, winning_qidx - 1),
-      .(cvr = cvr, year = year, quarter = quarter, qidx = qidx,
-        firm_sector = industry_code, employees = employees, fte = fte)
-    ]
-    eligible_obs$control_protocol <- "pre-award FTE"
+
+  # Balanced-window eligibility (NO FTE): a firm qualifies only if it is observed for at least `lookback`
+  # distinct quarters on EACH side of the event -- in [wq-lookback, wq-1] AND [wq+1, wq+lookback]. This
+  # bounds the eligible list and guarantees a usable +/-h panel; the actual FTE matching/selection happens
+  # later via joins. covered() returns which of `cand` (or the whole pool) meet it.
+  covered <- function(pool, cand) {
+    cov <- pool[cvr %chin% cand & frequency == freq &
+                  qidx %between% c(winning_qidx - lookback, winning_qidx + lookback),
+                .(npre  = uniqueN(qidx[qidx <= winning_qidx - 1L]),
+                  npost = uniqueN(qidx[qidx >= winning_qidx + 1L])), by = cvr]
+    cov[npre >= lookback & npost >= lookback, cvr]
   }
-  
-  # Create group counter
-  eligible_obs[, firm_counter_control := .GRP, by = cvr]
-  
-  # Bind on winning_info to calculate differences
-  eligible_obs <- merge(eligible_obs, winning_info, by = "qidx",
-                        suffixes = c("_control", "_treatment"), allow.cartesian = TRUE)
-  setorder(eligible_obs, firm_counter_control, qidx)
-  
-  # Require a computable gap for every pre-period observation. n_pre is the treated
-  # firm's number of pre-window quarters with a valid FTE.
-  n_pre <- winning_info[!is.na(fte), uniqueN(qidx)]
-  
-  # Case A: the treated firm itself has no usable pre-period FTE -> cannot match.
-  if (n_pre == 0) {
+
+  # The treated firm itself must have the balanced +/-h window, else the event cannot be studied at this h.
+  if (!(winning_firm_cvr %chin% covered(winner_data, winning_firm_cvr))) {
     print(paste0("Discarding winning firm CVR ", winning_firm_cvr,
-                 ": treated firm has no valid pre-period FTE observations."))
+                 ": treated firm lacks ", lookback, " quarters of data on each side of the event."))
     return(NULL)
   }
-  
-  # Eligibility: keep only controls that, in EVERY one of the n_pre pre-period
-  # quarters, have a computable gap and positive FTE. 
-  eligible_obs[, n_gap := sum(!is.na(fte_treatment) & !is.na(fte_control) & fte_control > 0 & fte_treatment),
-               by = .(firm_counter_control, cvr_control)]
-  eligible_obs <- eligible_obs[n_gap == n_pre, ]
-  
-  # controls exist but none have strictly positive FTE with a computable gap
-  # across the whole pre-period -> discard (distinct message).
-  if (nrow(eligible_obs) == 0) {
+
+  # Find eligible controls from a pool. In staggered mode the cascade STAGGERS ON INDUSTRY from fine to
+  # coarse -- DB07 6-digit -> class(4) -> group(3) -> division(2), each while holding kommune, then division
+  # without kommune, then any industry -- recording the rung that fired in `protocol`. Each arm runs
+  # independently, so a never-winner control may match at industry6+kommune while a winner control only
+  # matches at division. `winner_exclude = TRUE` keeps only firms that win a tender SOMEWHERE but NOT within
+  # [event +/- lookback]. Every control must also pass the balanced +/-h coverage (covered()); no FTE used.
+  find_eligible_controls <- function(pool, winner_exclude) {
+    komm <- unique(winning_info$hq_kommune_code)
+    if (winner_exclude) {
+      all_w  <- event_data[, unique(winner_cvr_final)]
+      in_win <- event_data[award_qidx %between% c(winning_qidx - lookback, winning_qidx + lookback),
+                           unique(winner_cvr_final)]
+      keep_winner <- function(cvrs) cvrs[cvrs %chin% all_w & !(cvrs %chin% in_win)]
+    } else {
+      keep_winner <- function(cvrs) cvrs
+    }
+    # One rung: control CVRs whose pre-window industry (+/- kommune) matches the treated, restricted to the
+    # winner arm if requested, then filtered to those with the balanced +/-h coverage. ind_col = NULL means
+    # no industry screen (the final any-industry rung).
+    tier <- function(ind_col, ind_vals, use_komm) {
+      cand <- pool[cvr != winning_firm_cvr & frequency == freq &
+                     qidx %between% c(winning_qidx - lookback, winning_qidx - 1) &
+                     (if (is.null(ind_col)) TRUE else get(ind_col) %chin% ind_vals) &
+                     (if (use_komm) hq_kommune_code %chin% komm else TRUE),
+                   unique(cvr)]
+      cand <- keep_winner(cand)
+      if (!length(cand)) return(character(0))
+      covered(pool, cand)
+    }
+    if (staggered_attributes) {
+      rungs <- list(
+        list(col = "industry_code6",    vals = unique(winning_info$industry_code6),    komm = TRUE,  prot = "industry6, kommune"),
+        list(col = "industry_class",    vals = unique(winning_info$industry_class),    komm = TRUE,  prot = "industry4 (class), kommune"),
+        list(col = "industry_group",    vals = unique(winning_info$industry_group),    komm = TRUE,  prot = "industry3 (group), kommune"),
+        list(col = "industry_division", vals = unique(winning_info$industry_division), komm = TRUE,  prot = "industry2 (division), kommune"),
+        list(col = "industry_division", vals = unique(winning_info$industry_division), komm = FALSE, prot = "industry2 (division)"),
+        list(col = NULL,                vals = NULL,                                   komm = FALSE, prot = "any industry"))
+      cvrs <- character(0); protocol <- NA_character_
+      for (r in rungs) {
+        cvrs <- tier(r$col, r$vals, r$komm)
+        if (length(cvrs) > 0) { protocol <- r$prot; break }
+      }
+    } else {
+      cvrs <- tier(NULL, NULL, FALSE)   # FTE-only mode: any industry, just the balanced-window coverage
+      protocol <- "any industry"
+    }
+    list(cvrs = cvrs, protocol = protocol)
+  }
+
+  # Two arms: never-winners (control_data) and sometimes-winners (winner_data, excluding any that win within
+  # [event +/- lookback]). The pools are disjoint, so no control is double-counted; each arm runs its own
+  # cascade, so control_protocol can differ between arms.
+  nw <- find_eligible_controls(control_data, winner_exclude = FALSE)
+  wc <- find_eligible_controls(winner_data,  winner_exclude = TRUE)
+
+  if (length(nw$cvrs) == 0 && length(wc$cvrs) == 0) {
     print(paste0("Discarding winning firm CVR ", winning_firm_cvr,
-                 ": no control has strictly positive FTE with a computable gap across all ",
-                 n_pre, " pre-period observations."))
+                 ": no eligible control in either arm (same industry + balanced +/-", lookback, "q window)."))
     return(NULL)
   }
-  
-  
-  # Squared FTE gap at each shared pre-period quarter.
-  eligible_obs[, fte_diff_sq := (fte_control - fte_treatment)^2]
-  
-  # Compute slope = cov(qidx, fte) / var(qidx); for a within-group vectorized version:
-  eligible_obs[, trend_control := {
-    qc <- qidx - mean(qidx)
-    sum(qc * fte_control) / sum(qc^2)
-  }, by = .(firm_counter_control, cvr_control)]
-  eligible_obs[, trend_treated := {
-    qt <- qidx - mean(qidx)
-    sum(qt * fte_treatment) / sum(qt^2)
-  }, by = .(firm_counter_control, cvr_control)]
-  
-  # Closest control by mean squared gap over the (now complete) pre-period.
-  eligible_obs[, mean_fte_diff_sq := mean(fte_diff_sq, na.rm = TRUE),
-               by = .(firm_counter_control, cvr_control)]
-  eligible_obs[, level_qscore := sqrt(mean(fte_diff_sq, na.rm = TRUE)) / mean(fte_treatment, na.rm = TRUE),
-               by = .(firm_counter_control, cvr_control)]
-  eligible_obs[, trend_qscore := abs(trend_control - trend_treated)]
 
-  # Standardise qscores
-  eligible_obs[qidx == min(qidx), level_qscore_sd := scale(level_qscore)]
-  eligible_obs[qidx == min(qidx), trend_qscore_sd := scale(trend_qscore)]
-  eligible_obs[, level_qscore_sd := mean(level_qscore_sd, na.rm = TRUE), by = .(firm_counter_control, cvr_control)]
-  eligible_obs[, trend_qscore_sd := mean(trend_qscore_sd, na.rm = TRUE), by = .(firm_counter_control, cvr_control)]
-  
-  # Create event_study data
-  control_firm <- matched_firm_cvr[, .(qidx, cvr = cvr_control, 
-                                       year = year_control, quarter = quarter_control, 
-                                       employees = employees_control, 
-                                       fte = fte_control,
-                                       control_protocol, 
-                                       control_quality = mean_fte_diff_sq,
-                                       control_qscore)]
-  treated_firm <- matched_firm_cvr[, .(qidx, cvr = cvr_treatment, 
-                                       year = year_treatment, quarter = quarter_treatment, 
-                                       employees = employees_treatment, 
-                                       fte = fte_treatment,
-                                       control_protocol, 
-                                       control_quality = mean_fte_diff_sq,
-                                       control_qscore)]
-  control_event_data <- rbindlist(list(control_firm, treated_firm))
-  control_event_data[, treatment := fifelse(cvr == winning_firm_cvr, "treated", "control")]
-  control_event_data$event_year <- award_year
-  control_event_data$event_quarter <- award_quarter
-  control_event_data$event_qidx <- winning_qidx
-  control_event_data$flag_found_control <- (nrow(matched_firm_cvr) > 0)
-  control_event_data$n_eligible_controls <- length(unique(eligible_obs$cvr_control))
-  control_event_data$n_controls <- length(control_firm[, uniqueN(cvr)])
-
-  
-  # Compact MATCH RECORD (one row per matched firm): the treated firm + its matched never-winner
-  # control(s), the event timing, and the match quality. The full pre+post series is NOT pulled here --
-  # that happens once in the tail, straight from firm_data (a single keyed join), so the expensive
-  # matching can be checkpointed and reused without re-running. All matched controls share the same
-  # (minimal) gap/qscore/protocol.
-  control_cvrs <- unique(matched_firm_cvr$cvr_control)
+  # One row per firm: the treated firm once, then ALL eligible controls, flagged by control_type
+  # (never_winner / winner) and tagged with the matching tier each arm used (control_protocol).
+  # Selection and the FTE-gap quantities are deferred to phase 2 (computed from the merged panel).
   control_event_data <- data.table(
-    cvr                 = c(winning_firm_cvr, control_cvrs),
-    treatment           = c("treated", rep("control", length(control_cvrs))),
-    event_qidx          = winning_qidx,
-    event_year          = award_year,
-    event_quarter       = award_quarter,
-    control_protocol    = matched_firm_cvr$control_protocol[1],
-    control_quality     = matched_firm_cvr$mean_fte_diff_sq[1],
-    control_qscore      = matched_firm_cvr$control_qscore[1],
-    flag_found_control  = TRUE,
-    n_eligible_controls = length(unique(eligible_obs$cvr_control)),
-    n_controls          = length(control_cvrs))
-  
-  # Returned data
-  # Return ONLY the compact match record. (It previously also returned the full matched-rows table and the
-  # entire eligible-control CVR vector. Under FTE-only matching that vector is ~all firms per event and,
-  # accumulated across the thousands of events each mclapply fork handles, exhausted memory -> the workers
-  # were OS-killed with "fatal error in wrapper code". Everything the panel rebuild needs -- the treated +
-  # matched-control cvrs, event timing, match quality, and n_eligible_controls -- is already in estudy_data.)
-  list(estudy_data = control_event_data)
+    cvr                     = c(winning_firm_cvr, nw$cvrs, wc$cvrs),
+    treatment               = c("treated", rep("control", length(nw$cvrs) + length(wc$cvrs))),
+    control_type            = c("treated", rep("never_winner", length(nw$cvrs)),
+                                rep("winner", length(wc$cvrs))),
+    control_protocol        = c(NA_character_, rep(nw$protocol, length(nw$cvrs)),
+                                rep(wc$protocol, length(wc$cvrs))),
+    event_qidx              = winning_qidx,
+    event_year              = award_year,
+    event_quarter           = award_quarter,
+    flag_found_control      = TRUE,
+    n_never_winner_controls = length(nw$cvrs),
+    n_winner_controls       = length(wc$cvrs))
+
+  list(control_data = control_event_data)
 }
 
 # The full pre+post event-study panel is assembled once in the tail (after matching), via a single keyed
@@ -354,20 +305,20 @@ build_control_firm_data <- function(winning_firm_cvr,
 
 # Arguments
 h <- 8
-use_staggered <- FALSE
+use_staggered <- TRUE
 staggered_label <- ifelse(use_staggered, "staggered", "fteonly")
 n_events <- nrow(valid_winner_events)
 
 # DRY RUN: run only the first N events end-to-end to check the pipeline works. Test runs write a distinct
 # `_testN` output (and their own rawlist), so they NEVER touch the full-run files. **Set to NULL for the
 # full run.** The CONTROL_TEST_N env var, if set, overrides this in-code default.
-test_n_events <- 500L
+test_n_events <- NULL   # full run (set to a positive integer for a dry run on the first N events)
 
 .env_test_n <- suppressWarnings(as.integer(Sys.getenv("CONTROL_TEST_N", "")))
 .test_n   <- if (!is.na(.env_test_n)) .env_test_n else test_n_events   # env overrides the in-code default
 test_mode <- !is.null(.test_n) && !is.na(.test_n) && .test_n > 0L
 event_idx <- if (test_mode) seq_len(min(.test_n, n_events)) else seq_len(n_events)
-save_name <- paste0("never_winner_h", h, "_type", staggered_label,
+save_name <- paste0("matched_controls_h", h, "_type", staggered_label,
                     if (test_mode) paste0("_test", length(event_idx)) else "", ".rds")
 
 # Non-destructive path: file.path(dir, name), or name_2/_3/... if it already exists, so no save on
@@ -392,13 +343,13 @@ if (file.exists(raw_list_path) && !nzchar(Sys.getenv("CONTROL_FORCE_REMATCH")) &
   message("Reusing matched controls from checkpoint (skipping the match): ", raw_list_path)
   control_event_list <- readRDS(raw_list_path)
 } else {
-  n_cores <- max(1L, detectCores() - 3L)
+  n_cores <- max(1L, detectCores() - 1L)
   setDTthreads(1L)
   message(sprintf("Constructing controls for %d of %d events on %d cores [match: %s]%s...",
                   length(event_idx), n_events, n_cores,
                   if (use_staggered) "sector+kommune, then pre-award FTE" else "pre-award FTE only (no sector/kommune screen)",
                   if (test_mode) " [CONTROL_TEST_N subset]" else ""))
-  control_event_list <- mclapply(event_idx+10000, function(i) {
+  control_event_list <- mclapply(event_idx, function(i) {
     e <- valid_winner_events[i]
     tryCatch(
       build_control_firm_data(
@@ -419,11 +370,27 @@ if (file.exists(raw_list_path) && !nzchar(Sys.getenv("CONTROL_FORCE_REMATCH")) &
 # Surface matching failures early and clearly. A killed mclapply worker leaves an atomic try-error in place
 # of a match record (the per-event tryCatch cannot catch an OS-killed fork), which otherwise only shows up
 # cryptically downstream ("$ operator is invalid for atomic vectors").
-n_failed <- sum(!vapply(control_event_list, is.list, logical(1)))
-if (n_failed == length(control_event_list))
-  stop(sprintf("All %d events failed in matching (mclapply workers crashed -- likely out of memory). Delete the rawlist checkpoint and re-run.", n_failed))
-if (n_failed > 0)
-  message(sprintf("WARNING: %d of %d events failed in matching and are skipped.", n_failed, length(control_event_list)))
+# Distinguish the two failure modes: NULL = a guard fired or an R error was caught by the per-event tryCatch
+# (NOT a crash); try-error = an OS-killed worker (a real crash, usually OOM). Reporting them separately
+# avoids the misleading "out of memory" when the real cause is a caught error in every event.
+n_null  <- sum(vapply(control_event_list, is.null, logical(1)))
+n_crash <- sum(vapply(control_event_list, function(x) inherits(x, "try-error"), logical(1)))
+n_ok    <- length(control_event_list) - n_null - n_crash
+if (n_ok == 0)
+  stop(sprintf(paste0("No event produced a match record (of %d: %d returned NULL, %d workers crashed). ",
+                      "If NULL dominates, a guard fired or an R error was caught for every event -- run one ",
+                      "event through build_control_firm_data() WITHOUT tryCatch to see it. If crashes dominate, ",
+                      "it is likely OOM: lower n_cores and re-run (the rawlist checkpoint resumes)."),
+               length(control_event_list), n_null, n_crash))
+if (n_null + n_crash > 0)
+  message(sprintf("WARNING: %d of %d events produced no record (%d NULL, %d crashed) and are skipped.",
+                  n_null + n_crash, length(control_event_list), n_null, n_crash))
+
+# Matching is done -- free the large objects it needed (winner_data + control_data together are ~a full copy
+# of firm_data; the tender frames are large too). (intersect(...) so this is a no-op for anything already
+# gone, e.g. on the resume path.)
+rm(list = intersect(c("winner_data", "control_data", "data_ot", "data_kfst", "data_tender"), ls()))
+gc()
 
 # Build the event-study panel efficiently. First collect the compact match records into ONE table (a row
 # per event x firm: treated + matched control(s), event timing, match quality). Then a SINGLE keyed join
@@ -432,26 +399,27 @@ if (n_failed > 0)
 # 24 GB vector limit.
 setDTthreads(0L)
 match_tab <- rbindlist(purrr::compact(imap(control_event_list, function(x, i) {
-  if (!is.list(x) || is.null(x$estudy_data) || !nrow(x$estudy_data)) return(NULL)  # skip failed events
-  ed <- x$estudy_data
-  unique(ed[, .(cvr, treatment, event_qidx, event_year, event_quarter,
-                control_protocol, control_quality, control_qscore,
-                n_eligible_controls, n_controls)])[, stack_id := i]
+  if (!is.list(x) || is.null(x$control_data) || !nrow(x$control_data)) return(NULL)  # skip failed events
+  ed <- x$control_data
+  unique(ed[, .(cvr, treatment, control_type, control_protocol, event_qidx, event_year, event_quarter,
+                n_never_winner_controls, n_winner_controls)])[, stack_id := i]
 })), fill = TRUE)
 message(sprintf("Match records: %d firm-by-event rows across %d events",
                 nrow(match_tab), uniqueN(match_tab$stack_id)))
-# firm_data holds several frequencies per period; keep the analysis frequency, then join the full series.
-control_event_data <- firm_data[frequency == "quarterly_spliced"][
-  match_tab, on = "cvr", allow.cartesian = TRUE, nomatch = NULL]
-control_event_data[, event_time := qidx - event_qidx]
-control_event_data[, flag_found_control := TRUE]
+rm(control_event_list); gc()   # the raw match list is now distilled into match_tab
 
-# Non-destructive save: never overwrite an existing file on disk (see free_path above).
+# Save the COMPACT match table -- one row per (event, firm): the treated firm plus all its eligible
+# never-winner and sometimes-winner controls, flagged by control_type and the matching tier
+# (control_protocol). We deliberately DO NOT join the employment series here -- that cross product (every
+# event x control x full series) is ~100M+ rows. Keep this small "list of controls"; build a WINDOWED
+# event-study panel on demand at analysis time with build_event_study_panel()
+# (code/analysis/build_event_study_panel.R), which joins this table to firm_employment_panel_all.rds.
 out_path <- free_path(emp_dir, save_name)
 if (basename(out_path) != save_name)
   message(sprintf("'%s' already exists -- saving to '%s' instead (no overwrite).",
                   save_name, basename(out_path)))
-saveRDS(control_event_data, out_path)
-message(sprintf("Saved control_event_data: %d rows, %d stacks -> %s",
-                nrow(control_event_data), uniqueN(control_event_data$stack_id),
-                out_path))
+saveRDS(match_tab, out_path)
+message(sprintf("Saved match table: %d rows (event x firm) | %d events | %d never-winner + %d winner controls -> %s",
+                nrow(match_tab), uniqueN(match_tab$stack_id),
+                match_tab[control_type == "never_winner", .N],
+                match_tab[control_type == "winner", .N], out_path))
