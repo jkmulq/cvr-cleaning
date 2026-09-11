@@ -319,6 +319,25 @@ setcolorder(combined, new_order)
 cat(sprintf("reordered %d columns (core/CVR/source/selection/tender/quality/flags/other); trailing 'other': %s\n",
             length(new_order), paste(ord_rest, collapse = ", ")))
 
+# ---- Standardise missings to NA -----------------------------------------------------------------
+# Represent "missing" uniformly as NA across every column before shipping: empty / whitespace-only
+# strings -> NA_character_ (character cols), and NaN -> NA_real_ (numeric cols). Without this, a blank
+# string reads as present in the .rds/.parquet even though it carries no value; NA is the single,
+# type-correct missing marker. (In the .csv, fwrite already writes NA as "", so this mainly aligns the
+# .rds/.parquet with that convention.) Factors/logicals/Dates already use NA and are left untouched.
+char_cols <- names(combined)[vapply(combined, is.character, logical(1))]
+for (col in char_cols) {
+  idx <- which(!is.na(combined[[col]]) & trimws(combined[[col]]) == "")
+  if (length(idx)) set(combined, i = idx, j = col, value = NA_character_)
+}
+num_cols <- names(combined)[vapply(combined, is.numeric, logical(1))]
+for (col in num_cols) {
+  idx <- which(is.nan(combined[[col]]))
+  if (length(idx)) set(combined, i = idx, j = col, value = NA_real_)
+}
+cat(sprintf("standardised missings to NA across %d character + %d numeric columns\n",
+            length(char_cols), length(num_cols)))
+
 # Emit .rds (canonical, read back by the pipeline), .csv, and .parquet so the
 # server-delivery format can be chosen at ship time. See save_dataset() in functions.R.
 save_dataset(combined, file.path(out_dir, "clean_all_samples_combined"))
