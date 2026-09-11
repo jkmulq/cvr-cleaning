@@ -54,6 +54,19 @@ extraction[, `:=`(winner_cvr_final = cvr, winner_cvr_clean = cvr, valid_cvr = TR
 extraction[, cvr := NULL][, dataset := "extraction"]
 extraction <- merge(extraction, lot_ctx, by = c("tender_id","lot_id"), all.x = TRUE)
 
+# 2b Pre-dedup reference for 98_ (does the cross-method dedup destroy data?): per-lot sorted CVR lists
+#    of the production + extraction samples as built here, BEFORE the stack/dedup below. 98 compares
+#    these to the final combined's build_prod/build_extr reconstruction. No-CVR rows dropped to match
+#    the combine; sorted, not deduped within a lot -- a perfect reproduction of each sample's CVRs.
+ref_prod <- production[!is.na(winner_cvr_final) & winner_cvr_final != "",
+                       .(data_source = "KFST", entity = "winner", method = "production", tender_id, lot_id, cvr_final = winner_cvr_final)]
+ref_extr <- extraction[!is.na(winner_cvr_final) & winner_cvr_final != "",
+                       .(data_source = "KFST", entity = "winner", method = "extraction", tender_id, lot_id, cvr_final = winner_cvr_final)]
+predup_ref <- rbind(ref_prod, ref_extr)[, .(cvr_list = paste(sort(cvr_final), collapse = ";")),
+                                        by = .(data_source, entity, method, tender_id, lot_id)]
+chk_dir <- file.path(clean_data_dir, "checks"); dir.create(chk_dir, showWarnings = FALSE, recursive = TRUE)
+saveRDS(predup_ref, file.path(chk_dir, "predup_cvr_lists_kfst_winner.rds"))
+
 # 3 Stack the two methods; extraction rows get NA for the production-only columns via fill = TRUE.
 stacked <- rbindlist(list(production, extraction), use.names = TRUE, fill = TRUE)
 stacked[, dataset := factor(dataset, levels = c("production","extraction"))]
