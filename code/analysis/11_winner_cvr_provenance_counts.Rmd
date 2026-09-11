@@ -1,5 +1,5 @@
 ---
-title: "Winner CVR Provenance & Quality Counts"
+title: "Winner & Buyer CVR Provenance & Quality Counts"
 author: "Jack Mulqueeney"
 date: "`r Sys.Date()`"
 output:
@@ -46,128 +46,212 @@ source(file.path(report_project_dir, "code", "functions.R"))
 clean_dir <- dirs$clean_data
 ted_dir   <- file.path(dirs$intermediates, "ted")
 
-# "Full version" = the three per-source matched winner datasets stacked (KFST / OpenTender / TED
-# name-matched files), tagged by `dataset` -- the per-source matched files are the source of truth for
-# these provenance counts. (The combined master table clean_all_samples_combined is exercised separately
-# in the "Combined master table" section below.)
-ted_path <- file.path(clean_dir, "clean_winner_data_ted_name_matched.rds")              # new location
-if (!file.exists(ted_path)) ted_path <- file.path(ted_dir, "ted_winner_data_name_matched.rds")  # pre-move
-all_winners <- bind_rows(
-  read_clean(file.path(clean_dir, "clean_winner_data_kfst_name_matched.rds")) %>% mutate(dataset = "KFST"),
-  read_clean(file.path(clean_dir, "clean_winner_data_ot_name_matched.rds"))   %>% mutate(dataset = "OpenTender"),
-  read_clean(ted_path)                                                        %>% mutate(dataset = "TED")
-) %>% as_tibble()
-
 # Canonical 8-digit CVR; "valid" = well-formed 8 digits (format only). Whether the CVR is a *real
-# registered firm* is the separate, airtight check `flag_cvr_final_in_registry` (shown as
-# `in_cvr_registry` below).
+# registered firm* is the separate flag `flag_valid_cvr_in_registry` (shown as `in_cvr_registry`).
 norm_cvr <- function(x) {
   x <- gsub("[^0-9]", "", as.character(x))
   ifelse(x == "" | nchar(x) > 8, NA_character_, sprintf("%08d", suppressWarnings(as.integer(x))))
 }
 is_valid_cvr <- function(x) !is.na(norm_cvr(x))
+
+# PRIMARY SOURCE = the delivered combined master table `clean_all_samples_combined` -- exactly what the
+# server receives. Every count below is per (data_source, entity, sample), where `sample` is the
+# build-flag selection: production = `build_prod`, extraction = `build_extr`. A lot whose two methods
+# agree carries BOTH flags, so it appears in both samples (that is the intended selection behaviour).
+# read_clean() prefers the parquet, preserving types + leading-zero CVRs.
+cmb <- as_tibble(read_clean(file.path(clean_dir, "clean_all_samples_combined.rds")))
+smp <- bind_rows(
+  cmb %>% filter(build_prod %in% TRUE) %>% mutate(sample = "production"),
+  cmb %>% filter(build_extr %in% TRUE) %>% mutate(sample = "extraction")
+)
 ```
 
-```{r stack}
-# Columns shared by all three winner datasets (TED also carries non-winning bidders -> is_winner).
-shared <- c("tender_id", "lot_id", "ted_notice_id", "lot_number", "flag_awarded",
-            "winner_cvr_clean", "winner_cvr_name_match", "winner_cvr_final", "winner_name", "winner_country",
-            "cvr_number_source", "matching_candidate_type", "name_match_status", "name_match_method", "name_match_source",
-            "cvr_name_match_quality", "cvr_name_match_quality_basic",
-            "cvr_name_match_quality_nospaces", "cvr_name_match_quality_broad", "cvr_name_is_substring",
-            "flag_name_match_found", "flag_name_match_ambiguous", "flag_review_name_match",
-            "flag_manual_name_review", "flag_cvr_recovered_from_invalid", "flag_cvr_final_in_registry",
-            "flag_missing_winner_cvr", "flag_missing_winner_cvr_final")
+# Combined-based counts (server-reproducible)
 
-# KFST/OpenTender are winners-only and carry no is_winner column, so in the combined file their
-# is_winner is NA -> treat as TRUE; TED keeps its TRUE/FALSE non-winning-bidder flag.
-winners <- all_winners %>%
-  mutate(is_winner = if ("is_winner" %in% names(.)) coalesce(is_winner, TRUE) else TRUE) %>%
-  select(dataset, is_winner, any_of(shared)) %>%
-  filter(is_winner %in% TRUE) %>%
-  mutate(
-    valid_clean    = is_valid_cvr(winner_cvr_clean),      # CVR from source extraction
-    valid_namematch = is_valid_cvr(winner_cvr_name_match), # CVR from name matching only
-    valid_final    = is_valid_cvr(winner_cvr_final),      # final combined CVR
-    cvr_final_norm = norm_cvr(winner_cvr_final)
-  )
-```
+Everything in this section is computed directly from the de-identified server-delivery table
+`clean_all_samples_combined`, so a recipient can reproduce it exactly. The raw source-CVR and firm-name
+columns are removed for de-identification, so the old "extracted vs name-matched CVR" split is now the
+**sample** (`extraction` = raw field CVRs via `build_extr`; `production` = the resolved final CVR via
+`build_prod`), and per-CVR provenance is the `cvr_number_source` string. `cvr_name_match` is the
+name-matched CVR that is kept in the delivery.
 
-# Headline counts
+## Headline
 
 ```{r headline}
-winners %>%
-  group_by(dataset) %>%
+smp %>%
+  group_by(data_source, entity, sample) %>%
   summarise(
     rows                = n(),
-    tenders             = n_distinct(tender_id),
     awarded_lots        = n_distinct(paste(tender_id, lot_id)[flag_awarded %in% TRUE]),
-    valid_cvr_extracted = sum(valid_clean),
-    valid_cvr_namematch = sum(valid_namematch),
-    valid_cvr_final     = sum(valid_final),
-    in_cvr_registry     = sum(flag_cvr_final_in_registry %in% TRUE),
-    unique_final_cvrs   = n_distinct(cvr_final_norm[valid_final]),
-    pct_final_valid     = round(100 * mean(valid_final), 1),
+    valid_cvr_final     = sum(is_valid_cvr(cvr_final)),
+    valid_cvr_namematch = sum(is_valid_cvr(cvr_name_match)),
+    in_cvr_registry     = sum(flag_valid_cvr_in_registry %in% TRUE),
+    unique_final_cvrs   = n_distinct(norm_cvr(cvr_final)[is_valid_cvr(cvr_final)]),
+    pct_final_valid     = round(100 * mean(is_valid_cvr(cvr_final)), 1),
     .groups = "drop"
   ) %>%
-  kable(caption = "Valid winner CVRs by dataset and provenance stage")
+  arrange(data_source, entity, sample) %>%
+  kable(caption = "Valid CVRs by data source, entity and sample (from the delivered combined)")
 ```
-
-# Provenance columns
 
 ## `cvr_number_source` — how each final CVR was obtained
 
 ```{r cvr-number-source}
-winners %>%
-  count(dataset, cvr_number_source) %>%
-  pivot_wider(names_from = dataset, values_from = n, values_fill = 0) %>%
-  arrange(desc(TED)) %>%
-  kable(caption = "cvr_number_source (row counts)")
+smp %>%
+  count(data_source, entity, sample, cvr_number_source) %>%
+  arrange(data_source, entity, sample, desc(n)) %>%
+  kable(caption = "cvr_number_source row counts, per data source / entity / sample")
 ```
 
 ## `matching_candidate_type` and `name_match_status`
 
 ```{r cand-type}
-winners %>%
-  count(dataset, matching_candidate_type) %>%
-  pivot_wider(names_from = dataset, values_from = n, values_fill = 0) %>%
-  kable(caption = "matching_candidate_type (row counts)")
+smp %>%
+  count(data_source, entity, sample, matching_candidate_type) %>%
+  arrange(data_source, entity, sample, desc(n)) %>%
+  kable(caption = "matching_candidate_type row counts")
 
-winners %>%
-  count(dataset, name_match_status) %>%
-  pivot_wider(names_from = dataset, values_from = n, values_fill = 0) %>%
-  kable(caption = "name_match_status (row counts)")
+smp %>%
+  count(data_source, entity, sample, name_match_status) %>%
+  arrange(data_source, entity, sample, desc(n)) %>%
+  kable(caption = "name_match_status row counts")
 ```
 
 ## Provenance flags (count of TRUE)
 
 ```{r flags}
+# Entity-agnostic provenance flags (the entity-specific missing-CVR flags differ winner vs buyer, so
+# they are excluded from this pooled table).
 prov_flags <- c("flag_name_match_found", "flag_name_match_ambiguous", "flag_review_name_match",
-                "flag_manual_name_review", "flag_cvr_recovered_from_invalid",
-                "flag_cvr_final_in_registry", "flag_missing_winner_cvr", "flag_missing_winner_cvr_final")
-
-winners %>%
-  group_by(dataset) %>%
+                "flag_manual_name_review", "flag_cvr_recovered_from_invalid", "flag_valid_cvr_in_registry")
+smp %>%
+  group_by(data_source, entity, sample) %>%
   summarise(across(all_of(prov_flags), ~ sum(.x %in% TRUE)), .groups = "drop") %>%
-  pivot_longer(-dataset, names_to = "flag", values_to = "n_true") %>%
-  pivot_wider(names_from = dataset, values_from = n_true) %>%
+  pivot_longer(-c(data_source, entity, sample), names_to = "flag", values_to = "n_true") %>%
+  arrange(data_source, entity, sample, flag) %>%
   kable(caption = "Provenance flags (rows flagged TRUE)")
 ```
 
-## Multiple-CVR vs single-CVR records
+## Name-match source and method
+
+```{r match-source}
+smp %>%
+  filter(!is.na(name_match_source)) %>%
+  count(data_source, entity, sample, name_match_source) %>%
+  arrange(data_source, entity, sample, desc(n)) %>%
+  kable(caption = "Name-match source: registry key that matched (official name vs biname)")
+
+smp %>%
+  filter(!is.na(name_match_method)) %>%
+  count(data_source, entity, sample, name_match_method) %>%
+  arrange(data_source, entity, sample, desc(n)) %>%
+  kable(caption = "Name-match method: exact vs fuzzy")
+```
+
+## Name-match quality
+
+```{r quality}
+smp %>%
+  filter(!is.na(cvr_name_match_quality)) %>%
+  group_by(data_source, entity, sample) %>%
+  summarise(
+    n_scored        = n(),
+    mean_quality    = round(mean(cvr_name_match_quality), 1),
+    median_quality  = round(median(cvr_name_match_quality), 1),
+    pct_perfect_100 = round(100 * mean(cvr_name_match_quality == 100), 1),
+    pct_substring   = round(100 * mean(cvr_name_is_substring %in% TRUE), 1),
+    .groups = "drop"
+  ) %>%
+  arrange(data_source, entity, sample) %>%
+  kable(caption = "Name-match quality summary (scored rows only)")
+
+smp %>%
+  filter(!is.na(cvr_name_match_quality)) %>%
+  mutate(bucket = cut(cvr_name_match_quality, c(-Inf, 50, 80, 99.999, Inf),
+                      labels = c("<50", "50-80", "80-<100", "100"))) %>%
+  count(data_source, entity, sample, bucket) %>%
+  arrange(data_source, entity, sample, bucket) %>%
+  kable(caption = "cvr_name_match_quality distribution (scored rows)")
+```
+
+## Cross-source winner agreement
+
+```{r agreement}
+# Do KFST / OpenTender / TED assign the same winner-CVR set to a shared notice (and notice-lot)? From the
+# combined PRODUCTION sample, using cvr_final + ted_notice_id + data_source (all kept in the delivery).
+prod_win <- cmb %>%
+  filter(build_prod %in% TRUE, entity == "winner", flag_awarded %in% TRUE,
+         !is.na(ted_notice_id), ted_notice_id != "")
+
+winner_sets <- function(df, keys) {
+  df %>%
+    mutate(cvr = norm_cvr(cvr_final)) %>%
+    filter(!is.na(cvr), if_all(all_of(keys), ~ !is.na(.x) & .x != "")) %>%
+    group_by(across(all_of(keys))) %>%
+    summarise(cvrs = list(sort(unique(cvr))), .groups = "drop")
+}
+
+agree <- function(a, b, keys, label) {
+  A <- winner_sets(filter(prod_win, data_source == a), keys)
+  B <- winner_sets(filter(prod_win, data_source == b), keys)
+  j <- inner_join(A, B, by = keys, suffix = c("_a", "_b"))
+  tibble(
+    comparison     = label,
+    level          = if (length(keys) > 1) "notice-lot" else "notice",
+    comparable     = nrow(j),
+    exact_pct      = round(100 * mean(map2_lgl(j$cvrs_a, j$cvrs_b, setequal)), 1),
+    any_common_pct = round(100 * mean(map2_lgl(j$cvrs_a, j$cvrs_b, ~ length(intersect(.x, .y)) > 0)), 1)
+  )
+}
+
+# Notice-LEVEL only: cross-source lot-level agreement needs a shared lot key. `lot_id` is not
+# comparable across sources (TED "LOT-0001" vs OpenTender UUIDs), and the ordinal `lot_number` that
+# made it comparable is dropped from the combined -- so lot-level agreement is not reproducible here.
+bind_rows(
+  agree("TED", "KFST",       "ted_notice_id", "TED vs KFST"),
+  agree("TED", "OpenTender", "ted_notice_id", "TED vs OpenTender"),
+  agree("KFST", "OpenTender", "ted_notice_id", "KFST vs OpenTender")
+) %>%
+  arrange(comparison) %>%
+  kable(caption = "Winner-CVR agreement across sources at the notice level (production sample, from the combined)")
+```
+
+# Internal analyses (NOT reproducible from the delivered combined)
+
+The two analyses below need the **raw winner-CVR field** and the **firm names**, which are removed from
+`clean_all_samples_combined` for de-identification. They are therefore computed from the internal
+per-source matched files and **cannot be reproduced by a server recipient**.
+
+```{r internal-load}
+ted_path <- file.path(clean_dir, "clean_winner_data_ted_name_matched.rds")
+if (!file.exists(ted_path)) ted_path <- file.path(ted_dir, "ted_winner_data_name_matched.rds")
+all_winners <- bind_rows(
+  read_clean(file.path(clean_dir, "clean_winner_data_kfst_name_matched.rds")) %>% mutate(dataset = "KFST"),
+  read_clean(file.path(clean_dir, "clean_winner_data_ot_name_matched.rds"))   %>% mutate(dataset = "OpenTender"),
+  read_clean(ted_path)                                                        %>% mutate(dataset = "TED")
+) %>% as_tibble() %>%
+  mutate(is_winner = if ("is_winner" %in% names(.)) coalesce(is_winner, TRUE) else TRUE) %>%
+  filter(is_winner %in% TRUE)
+
+tedb_path <- file.path(clean_dir, "clean_buyer_data_ted_name_matched.rds")
+if (!file.exists(tedb_path)) tedb_path <- file.path(ted_dir, "ted_buyer_data_name_matched.rds")
+buyers_all <- bind_rows(
+  read_clean(file.path(clean_dir, "clean_buyer_data_kfst_name_matched.rds")) %>% mutate(dataset = "KFST"),
+  read_clean(file.path(clean_dir, "clean_buyer_data_ot_name_matched.rds"))   %>% mutate(dataset = "OpenTender"),
+  read_clean(tedb_path)                                                      %>% mutate(dataset = "TED")
+) %>% as_tibble()
+```
+
+## Multiple-CVR record structure (internal)
 
 ```{r multiple-cvr}
-# How many valid final CVRs came from a raw record whose winner-CVR field listed MULTIPLE CVRs (so the
-# record was expanded into several winner rows) vs a single-CVR record vs no field CVR at all (the final
-# CVR came from name matching). Per-source signal for "how many CVRs the raw field listed": OpenTender
-# uses its own validated count `n_valid_cvr_raw`; KFST/TED parse distinct 8-digit tokens from
-# `winner_cvr_original` (TED has one organisation per row, so it is effectively never a multi-CVR record).
+# How many valid final CVRs came from a raw record whose winner-CVR field listed MULTIPLE CVRs (expanded
+# into several winner rows) vs a single-CVR record vs no field CVR (final CVR came from name matching).
 tok_count <- function(x) { x <- as.character(x); x[is.na(x)] <- ""
   vapply(strsplit(x, "[^0-9]+"), function(t) { t <- unique(t[t != ""]); sum(nchar(t) == 8L) }, integer(1)) }
 
 all_winners %>%
-  mutate(is_winner = if ("is_winner" %in% names(.)) coalesce(is_winner, TRUE) else TRUE) %>%
-  filter(is_winner %in% TRUE, is_valid_cvr(winner_cvr_final)) %>%
+  filter(is_valid_cvr(winner_cvr_final)) %>%
   mutate(
     n_field_cvr = if_else(dataset == "OpenTender",
                           suppressWarnings(as.integer(n_valid_cvr_raw)),
@@ -178,178 +262,10 @@ all_winners %>%
   ) %>%
   count(dataset, cvr_record) %>%
   pivot_wider(names_from = dataset, values_from = n, values_fill = 0) %>%
-  kable(caption = "Valid winner CVRs by raw-record CVR structure (multiple = field listed >=2 CVRs, expanded into several winner rows)")
+  kable(caption = "Valid winner CVRs by raw-record CVR structure (INTERNAL: needs the raw winner-CVR field)")
 ```
 
-## Name-match source and method
-
-```{r match-source}
-# Among rows whose CVR came from name matching: which registry key matched (official `name` vs `biname`
-# alternative name) and by what method (`exact` vs `fuzzy`), per dataset.
-winners %>%
-  filter(!is.na(name_match_source)) %>%
-  count(dataset, name_match_source) %>%
-  pivot_wider(names_from = dataset, values_from = n, values_fill = 0) %>%
-  kable(caption = "Name-match source: registry key that matched (official name vs biname), by dataset")
-
-winners %>%
-  filter(!is.na(name_match_method)) %>%
-  count(dataset, name_match_method) %>%
-  pivot_wider(names_from = dataset, values_from = n, values_fill = 0) %>%
-  kable(caption = "Name-match method: exact vs fuzzy, by dataset")
-```
-
-# Name-match quality
-
-```{r quality-summary}
-winners %>%
-  filter(!is.na(cvr_name_match_quality)) %>%
-  group_by(dataset) %>%
-  summarise(
-    n_scored        = n(),
-    mean_quality    = round(mean(cvr_name_match_quality), 1),
-    median_quality  = round(median(cvr_name_match_quality), 1),
-    pct_perfect_100 = round(100 * mean(cvr_name_match_quality == 100), 1),
-    pct_substring   = round(100 * mean(cvr_name_is_substring %in% TRUE), 1),
-    .groups = "drop"
-  ) %>%
-  kable(caption = "Name-match quality summary (scored rows only)")
-```
-
-```{r quality-buckets}
-winners %>%
-  filter(!is.na(cvr_name_match_quality)) %>%
-  mutate(bucket = cut(cvr_name_match_quality, c(-Inf, 50, 80, 99.999, Inf),
-                      labels = c("<50", "50–80", "80–<100", "100"))) %>%
-  count(dataset, bucket) %>%
-  pivot_wider(names_from = dataset, values_from = n, values_fill = 0) %>%
-  kable(caption = "cvr_name_match_quality distribution (scored rows)")
-```
-
-```{r quality-variants}
-winners %>%
-  filter(!is.na(cvr_name_match_quality)) %>%
-  group_by(dataset) %>%
-  summarise(across(starts_with("cvr_name_match_quality") & where(is.numeric),
-                   ~ round(mean(.x, na.rm = TRUE), 1)), .groups = "drop") %>%
-  kable(caption = "Mean of each name-match quality variant (scored rows)")
-```
-
-# Cross-source winner agreement
-
-```{r agreement}
-awarded_winners <- function(df) {
-  if (!"is_winner" %in% names(df)) df$is_winner <- TRUE
-  df %>% mutate(is_winner = coalesce(is_winner, TRUE)) %>%   # KFST/OT NA -> TRUE (winners-only)
-    filter(is_winner %in% TRUE, flag_awarded %in% TRUE)
-}
-
-# Winner-CVR set per key, dropping rows with an invalid CVR or a blank key component.
-winner_sets <- function(df, keys) {
-  df %>%
-    mutate(cvr = norm_cvr(winner_cvr_final), lot_number = trimws(as.character(lot_number))) %>%
-    filter(!is.na(cvr), if_all(all_of(keys), ~ !is.na(.x) & .x != "")) %>%
-    group_by(across(all_of(keys))) %>%
-    summarise(cvrs = list(sort(unique(cvr))), .groups = "drop")
-}
-
-agree <- function(a_df, b_df, keys, label) {
-  j <- inner_join(winner_sets(a_df, keys), winner_sets(b_df, keys), by = keys, suffix = c("_a", "_b"))
-  tibble(
-    comparison     = label,
-    level          = if (length(keys) > 1) "lot" else "notice",
-    comparable     = nrow(j),
-    exact_pct      = round(100 * mean(map2_lgl(j$cvrs_a, j$cvrs_b, setequal)), 1),
-    any_common_pct = round(100 * mean(map2_lgl(j$cvrs_a, j$cvrs_b, ~ length(intersect(.x, .y)) > 0)), 1)
-  )
-}
-
-ted_w  <- awarded_winners(filter(all_winners, dataset == "TED"))
-kfst_w <- awarded_winners(filter(all_winners, dataset == "KFST"))
-ot_w   <- awarded_winners(filter(all_winners, dataset == "OpenTender"))
-
-bind_rows(
-  agree(ted_w,  kfst_w, "ted_notice_id", "TED vs KFST"),
-  agree(ted_w,  ot_w,   "ted_notice_id", "TED vs OpenTender"),
-  agree(kfst_w, ot_w,   "ted_notice_id", "KFST vs OpenTender"),
-  agree(ted_w,  kfst_w, c("ted_notice_id", "lot_number"), "TED vs KFST"),
-  agree(ted_w,  ot_w,   c("ted_notice_id", "lot_number"), "TED vs OpenTender")
-) %>%
-  arrange(level, comparison) %>%
-  kable(caption = "Winner-CVR agreement (exact_pct = identical winner set; any_common_pct = >=1 shared winner)")
-```
-
-# Buyer datasets
-
-```{r buyer-load}
-# Stack the three per-source matched buyer datasets (KFST / OpenTender / TED), tagged by `dataset`.
-tedb_path <- file.path(clean_dir, "clean_buyer_data_ted_name_matched.rds")            # new location
-if (!file.exists(tedb_path)) tedb_path <- file.path(ted_dir, "ted_buyer_data_name_matched.rds")  # pre-move
-buyers_all <- bind_rows(
-  read_clean(file.path(clean_dir, "clean_buyer_data_kfst_name_matched.rds")) %>% mutate(dataset = "KFST"),
-  read_clean(file.path(clean_dir, "clean_buyer_data_ot_name_matched.rds"))   %>% mutate(dataset = "OpenTender"),
-  read_clean(tedb_path)                                                      %>% mutate(dataset = "TED")
-) %>% as_tibble()
-
-buyer_shared <- c("tender_id", "ted_notice_id",
-                  "buyer_cvr_clean", "buyer_cvr_name_match", "buyer_cvr_final", "buyer_name", "buyer_country",
-                  "cvr_number_source", "matching_candidate_type", "name_match_status",
-                  "cvr_name_match_quality", "cvr_name_is_substring",
-                  "flag_name_match_found", "flag_review_name_match", "flag_manual_name_review",
-                  "flag_cvr_recovered_from_invalid", "flag_cvr_final_in_registry",
-                  "flag_missing_buyer_cvr", "flag_missing_buyer_cvr_final")
-
-buyers <- buyers_all %>%
-  select(dataset, any_of(buyer_shared)) %>%
-  mutate(
-    valid_clean     = is_valid_cvr(buyer_cvr_clean),        # NA/0 for KFST (no extracted-CVR column)
-    valid_namematch = is_valid_cvr(buyer_cvr_name_match),
-    valid_final     = is_valid_cvr(buyer_cvr_final),
-    cvr_final_norm  = norm_cvr(buyer_cvr_final)
-  )
-```
-
-```{r buyer-headline}
-buyers %>%
-  group_by(dataset) %>%
-  summarise(
-    rows                = n(),
-    valid_cvr_extracted = sum(valid_clean),
-    valid_cvr_namematch = sum(valid_namematch),
-    valid_cvr_final     = sum(valid_final),
-    in_cvr_registry     = sum(flag_cvr_final_in_registry %in% TRUE),
-    unique_final_cvrs   = n_distinct(cvr_final_norm[valid_final]),
-    pct_final_valid     = round(100 * mean(valid_final), 1),
-    .groups = "drop"
-  ) %>%
-  kable(caption = "Valid buyer CVRs by dataset and provenance stage")
-```
-
-```{r buyer-provenance}
-buyers %>%
-  count(dataset, cvr_number_source) %>%
-  pivot_wider(names_from = dataset, values_from = n, values_fill = 0) %>%
-  arrange(desc(TED)) %>%
-  kable(caption = "buyer cvr_number_source (row counts)")
-
-buyers %>%
-  count(dataset, name_match_status) %>%
-  pivot_wider(names_from = dataset, values_from = n, values_fill = 0) %>%
-  kable(caption = "buyer name_match_status (row counts)")
-
-buyers %>%
-  filter(!is.na(cvr_name_match_quality)) %>%
-  group_by(dataset) %>%
-  summarise(n_scored = n(),
-            mean_quality = round(mean(cvr_name_match_quality), 1),
-            median_quality = round(median(cvr_name_match_quality), 1),
-            pct_perfect_100 = round(100 * mean(cvr_name_match_quality == 100), 1),
-            pct_substring = round(100 * mean(cvr_name_is_substring %in% TRUE), 1),
-            .groups = "drop") %>%
-  kable(caption = "buyer name-match quality summary (scored rows)")
-```
-
-# Foreign-language names on Danish-registered firms
+## Foreign-language names (internal)
 
 ```{r foreign-terms}
 swedish_re <- paste(c("ö", "ä", "Köpenhamn", "kopenhamn", "Stockholm", "[Ss]verige", "[Ss]weden", "broderna",
@@ -359,7 +275,7 @@ swedish_re <- paste(c("ö", "ä", "Köpenhamn", "kopenhamn", "Stockholm", "[Ss]v
 foreign_terms <- function(df, name_col, country_col, side) {
   ctry <- if (country_col %in% names(df)) df[[country_col]] else NA_character_
   tibble(dataset = df$dataset, nm = df[[name_col]],
-         is_dk = is.na(ctry) | toupper(trimws(ctry)) == "DK") %>%      # no country -> Danish authority
+         is_dk = is.na(ctry) | toupper(trimws(ctry)) == "DK") %>%
     filter(is_dk, !is.na(nm)) %>%
     distinct(dataset, nm) %>%
     mutate(swedish = str_detect(nm, swedish_re)) %>%
@@ -369,11 +285,11 @@ foreign_terms <- function(df, name_col, country_col, side) {
 }
 
 bind_rows(
-  foreign_terms(winners, "winner_name", "winner_country", "winner"),
-  foreign_terms(buyers,  "buyer_name",  "buyer_country",  "buyer")
+  foreign_terms(all_winners, "winner_name", "winner_country", "winner"),
+  foreign_terms(buyers_all,  "buyer_name",  "buyer_country",  "buyer")
 ) %>%
   arrange(side, dataset) %>%
-  kable(caption = "Swedish letters/terms on distinct Danish-registered winner/buyer names")
+  kable(caption = "Swedish letters/terms on distinct Danish-registered names (INTERNAL: needs firm names)")
 ```
 
 # Concat-and-dedup stacks: production vs extraction
@@ -425,52 +341,3 @@ if (file.exists(buyer_stack)) {
     kable(caption = "OpenTender buyer stack: production vs extraction (lot, CVR) coverage and overlap")
 } else "OpenTender buyer stack not found — run 3_3 to build it."
 ```
-
-# Combined master table: sample reconstruction
-
-`clean_all_samples_combined.rds` (built by `4_combine_all_datasets.R`) is the all-in-one server-delivery
-table: one row per resolved-CVR record, all six samples pooled, CVR columns standardised to `cvr_*`, and
-the sample-selection columns `data_source` / `entity` / `build_prod` / `build_extr` / `is_winner`. This
-table applies each reconstruction filter from the README's sample table to the master table and reports
-the rows it returns — a live check that every sample rebuilds exactly. (The stacking scripts additionally
-`stop()` on any mismatch against their source stacks; these counts equal those sources.)
-
-```{r combined-samples}
-combined_path <- file.path(clean_dir, "clean_all_samples_combined.rds")
-if (file.exists(combined_path)) {
-  cmb  <- as_tibble(read_clean(combined_path))
-  n_of <- function(...) nrow(dplyr::filter(cmb, ...))   # dplyr ANDs the conditions; NA logicals drop out
-  tibble::tribble(
-    ~Sample, ~`Filter on clean_all_samples_combined`, ~Rows,
-    "KFST winners — production",       'data_source == "KFST" & entity == "winner" & build_prod == TRUE',
-      n_of(data_source == "KFST", entity == "winner", build_prod == TRUE),
-    "KFST winners — extraction",       'data_source == "KFST" & entity == "winner" & build_extr == TRUE',
-      n_of(data_source == "KFST", entity == "winner", build_extr == TRUE),
-    "KFST buyers",                     'data_source == "KFST" & entity == "buyer"',
-      n_of(data_source == "KFST", entity == "buyer"),
-    "OpenTender winners — production", 'data_source == "OpenTender" & entity == "winner" & build_prod == TRUE',
-      n_of(data_source == "OpenTender", entity == "winner", build_prod == TRUE),
-    "OpenTender winners — extraction", 'data_source == "OpenTender" & entity == "winner" & build_extr == TRUE',
-      n_of(data_source == "OpenTender", entity == "winner", build_extr == TRUE),
-    "OpenTender buyers — production",  'data_source == "OpenTender" & entity == "buyer" & build_prod == TRUE',
-      n_of(data_source == "OpenTender", entity == "buyer", build_prod == TRUE),
-    "OpenTender buyers — extraction",  'data_source == "OpenTender" & entity == "buyer" & build_extr == TRUE',
-      n_of(data_source == "OpenTender", entity == "buyer", build_extr == TRUE),
-    "TED winners (awarded)",           'data_source == "TED" & entity == "winner" & is_winner == TRUE',
-      n_of(data_source == "TED", entity == "winner", is_winner == TRUE),
-    "TED non-winning bidders",         'data_source == "TED" & entity == "winner" & is_winner == FALSE',
-      n_of(data_source == "TED", entity == "winner", is_winner == FALSE),
-    "TED buyers",                      'data_source == "TED" & entity == "buyer"',
-      n_of(data_source == "TED", entity == "buyer")
-  ) %>% kable(caption = sprintf(
-    "Master table (%s rows x %s cols): rows returned by each README reconstruction filter",
-    format(nrow(cmb), big.mark = ","), ncol(cmb)))
-} else {
-  "clean_all_samples_combined.rds not found — run code/processing/4_combine_all_datasets.R to build it."
-}
-```
-
-The per-sample rows sum to more than the table's row count because the production and extraction winner
-(and OpenTender buyer) samples **overlap** on lots where both methods agree — a shared row is flagged
-`build_prod == TRUE` *and* `build_extr == TRUE` and is counted once in the table but by both filters here.
-KFST buyers and the two TED entities have no extraction variant, so each appears under exactly one filter.
