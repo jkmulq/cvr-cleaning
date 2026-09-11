@@ -3,10 +3,10 @@
 This dictionary documents **every variable in the shared schema** of the two full matched winner
 datasets:
 
-- `data/clean/clean_winner_data_kfst_name_matched.rds` (162 columns)
-- `data/clean/clean_winner_data_ot_name_matched.rds` (320 columns)
+- `data/clean/clean_winner_data_kfst_name_matched.rds` (181 columns)
+- `data/clean/clean_winner_data_ot_name_matched.rds` (338 columns)
 
-Only the **122 columns common to both** are listed here — the analytical schema that lets KFST and
+Only the **141 columns common to both** are listed here — the analytical schema that lets KFST and
 OpenTender be pooled. Each source additionally carries its own native columns (OpenTender: the many
 `tender_publications_*` source fields; KFST: `semi_tier`, `consortium_*`, tier-3b `field_*` pairing
 columns); those source-specific columns are out of scope for this file. The matched **buyer** datasets
@@ -31,6 +31,19 @@ table. `2_1` = `code/processing/2_1_match_kfst.R`, `2_3` = `code/processing/2_3_
 the matching layer. `ted_dates_*` = the TED XML date-lineage chain (`code/scraping/ted_dates_*`), joined
 onto the tender-lot data in `1_1`/`1_2`.
 
+**Relationship to the delivery dictionary (`variable_key_expanded.xlsx`).** This file documents the
+**matched-winner analytical schema** (and, via the winner→buyer analogy, the matched buyers). The
+server-facing delivery dictionary — the "Final key" sheet of `variable_key_expanded.xlsx` — instead
+lists the columns of the **combined** dataset (`clean_all_samples_combined`): it adds the combined-only
+structural columns (`data_source`, `entity`, `version`, `build_prod` / `build_extr`, `cvr_final`) and the
+buyer rows, and it **drops the firm-name and name-matching internals** documented here (`winner_name`,
+`winner_cvr_clean`, the prepared-name forms, `registered_name_match`, `fuzzy_candidate_name_*`, …) for
+de-identification. Names and descriptions are kept consistent across the two; where a name was
+standardised, the delivery name is used here too (e.g. `valid_cvr_before_match`,
+`flag_valid_cvr_in_registry`). The harmonised cross-source variables (`procedure_group_h`,
+`award_criteria_h`, `contract_duration_months`, the logical `is_framework` / `is_dps` / `eu_funded` /
+`subcontracted`, …) are documented in [§2 Tender attributes](#2-tender-attributes) below.
+
 ---
 
 ## 1. Tender / lot identifiers and structure
@@ -50,12 +63,24 @@ onto the tender-lot data in `1_1`/`1_2`.
 | Variable | Origin | Created in | Depends on | Description & example |
 |---|---|---|---|---|
 | `contract_type` | raw→clean | 1_1 / 1_2 | source contract-type field | Recoded to English: `Public contract` / `Framework agreement`. |
-| `divided_tender` | raw→clean | 1_1 / 1_2 | source divided field | Whether the tender is split into lots (KFST `Opdelt udbud`). Standardised to English `yes` / `no` in both sources (KFST `Ja`→`yes`, `Nej`→`no`). |
+| `divided_tender` | raw→clean | 1_1 / 1_2 | source divided field | Whether the tender is split into lots. Standardised to **logical** `TRUE`/`FALSE` in both sources (KFST `Opdelt udbud` `Ja`→`TRUE`, `Nej`→`FALSE`; OpenTender `tender_hasLots` `yes`→`TRUE`, `no`→`FALSE`). |
 | `joint_tender` | raw→clean | 1_1 / 1_2 | source joint/single field | Recoded `single` / `joint`. |
 | `consortium_winner` | raw | 1_1 / 1_2 | — | **Raw source flag**, not a cleaned indicator — it is the source's own "winner is a consortium" field (KFST `Konsortium/Sammenslutning`, `Ja`/`Nej`; OT its own value), carried through verbatim and *not* reconciled against the actual extracted consortium splits. Treat it as noisy provenance, not ground truth; the reliable consortium signal is the KFST split machinery (`is_consortium`, `consortium_number`). |
 | `tender_cancelled` | raw→clean | 1_1 / 1_2 | source annulment field | Whether the lot/tender was annulled. Standardised to **logical** `TRUE`/`FALSE` in both sources (KFST `Ja`→`TRUE`, `Nej`→`FALSE`; OT already logical). |
 | `flag_awarded` | derived | 1_1 / 1_2 | `tender_cancelled` (KFST) / `tender_isAwarded` (OT) | `TRUE` if the lot was actually awarded. **Difference from `tender_cancelled`:** `tender_cancelled` is the raw annulment field (was the procedure formally cancelled?), while `flag_awarded` is the derived usable-for-analysis signal — for KFST it is simply `!tender_cancelled`, but for OT it comes from the separate `tender_isAwarded` field, so a lot can be non-cancelled yet still not awarded. Many OT lots are not awarded because OT publishes contract-notice / in-progress rows that never reach an award (no winner recorded), not because they were cancelled. Drives the "keep awarded lots" filters. |
-| `is_awarded_winner` | derived | 2_1 / 2_3 / ted_4 / 3_1 / 3_2 / 5_combine | `flag_awarded`, `is_winner` | Convenience flag for the canonical "one row = one awarded winner" filter: `flag_awarded == TRUE & is_winner != FALSE`. KFST/OpenTender carry no `is_winner` (winners-only → treated as `TRUE`), so for them it equals `flag_awarded`; TED's non-winning bidders (`is_winner == FALSE`) and OpenTender's non-awarded notices (`flag_awarded == FALSE`) are `FALSE`. **Winner side only** (no buyer analog). Present on the combined winner dataset and the winner concat-and-dedup stacks (`3_1`/`3_2`); on the per-source matched files after their next build. |
+| `is_awarded_winner` | derived | 2_1 / 2_3 / ted_4 / 3_1 / 3_2 / 4_combine | `flag_awarded`, `is_winner` | Convenience flag for the canonical "one row = one awarded winner" filter: `flag_awarded == TRUE & is_winner != FALSE`. KFST/OpenTender carry no `is_winner` (winners-only → treated as `TRUE`), so for them it equals `flag_awarded`; TED's non-winning bidders (`is_winner == FALSE`) and OpenTender's non-awarded notices (`flag_awarded == FALSE`) are `FALSE`. **Winner side only** (no buyer analog). Present on the combined winner dataset and the winner concat-and-dedup stacks (`3_1`/`3_2`); on the per-source matched files after their next build. |
+| `procedure_type` | raw→clean | 1_1 / 1_2 / ted_2 | source procedure field | The source's own procedure type, kept as-is; KFST's Danish is translated to English in 1_1 (e.g. `Offentligt udbud`→`Open procedure`), OpenTender keeps its code (`OPEN`, `RESTRICTED`, …), TED keeps its `PT_*` code. Not harmonised across sources — see `procedure_group_h`. |
+| `procedure_group` | raw→clean | 1_1 / ted lineage | source procedure-group field | The source's own coarse procedure group: KFST variable 36 translated to English (`Flexible procedures` / `Other` / …); TED's native group. OpenTender has no native group → `NA`. Harmonised cross-source version is `procedure_group_h`. |
+| `procedure_group_h` | derived | 1_1 / 1_2 / ted_3 | `procedure_type` / `procedure_group` | **Harmonised** procedure group across all three sources onto the common EU vocabulary: `open` / `restricted` / `negotiated` / `competitive_dialogue` / `innovation_partnership` / `without_call` / `other`; `NA` where unspecified. OpenTender is derived from its procedure code; KFST mapped from its granular procedure; TED copied from its native group. |
+| `award_criteria` | raw→clean | 1_1 / ted_3 | source award-criteria field | Award criterion in human-readable form: KFST translated to English (`Lowest price` / `Best price-quality ratio` / `Cost`); TED legacy label read from the XML (`Lowest price` / `Most economically advantageous tender` / `Mixed`) or its eForms `price;quality;cost` text. OpenTender records only a count (see `n_award_criteria`) → `NA`. |
+| `award_criteria_h` | derived | 1_1 / ted_3 | `award_criteria` | **Harmonised** award criterion: `lowest_price` / `price_and_quality` (most economically advantageous) / `cost`; `NA` where unspecified. KFST and TED mapped (the TED code meaning is read from the XML label, not asserted); OpenTender `NA`. |
+| `n_award_criteria` | raw→clean | 1_2 | OT `tender_awardCriteria_count` | Number of award criteria (OpenTender only). KFST and TED have no such count → `NA`. |
+| `contract_duration_months` | derived | 1_1 / 1_2 / ted_3 | source duration fields | **Harmonised** contract duration in months: KFST = midpoint of the min/max month fields; OpenTender = estimated months (else days/30.44, else years×12); TED = duration days / 30.44. |
+| `is_framework` | derived | 1_1 / 1_2 / ted lineage | `contract_type` | Logical framework-agreement indicator. KFST/OpenTender derived from `contract_type` (`Framework agreement`→`TRUE`, `Public contract`→`FALSE`); TED native. |
+| `is_dps` | raw→clean | 1_2 / ted lineage | OT `tender_isDps` | Logical dynamic-purchasing-system flag. OpenTender from its yes/no; TED native; KFST does not record it → `NA`. |
+| `eu_funded` | raw→clean | 1_2 / ted_2 | OT `tender_isEUFunded` | Logical EU-funding flag. OpenTender from its yes/no; TED native; KFST does not record it → `NA`. |
+| `subcontracted` | raw→clean | 1_2 / ted_2 | OT `bid_isSubcontracted` | Logical subcontracting flag. OpenTender from its yes/no; TED native; KFST does not record it → `NA`. |
+| `price_weight` | raw→clean | 1_1 / ted_3 | source price-weight field | Weight of price among the award criteria, reconciled to a 0–1 fraction (KFST already 0–1; 0–100 percentages divided by 100; implausible negatives / >100 nulled). OpenTender has no price weight → `NA`. |
 
 ## 3. Amounts
 
@@ -103,7 +128,7 @@ onto the tender-lot data in `1_1`/`1_2`.
 | Variable | Origin | Created in | Depends on | Description & example |
 |---|---|---|---|---|
 | `winner_name` | raw→clean | 1_1 / 1_2 | source winner-name field | Winner firm name for this member row (post winner-field split), e.g. `Personalegruppen A/S`. |
-| `winner_country` | raw→clean | 1_1 / 1_2 (+ `5_combine`) | source country field | Winner country. In the combined dataset the code is harmonised to ISO 3166 **alpha-2** by `5_combine_datasets.R` (`standardise_country()`), mapping the TED XML's alpha-3 codes (`DNK`→`DK`, `SWE`→`SE`, …) onto the alpha-2 used by KFST/OpenTender. Some KFST rows could not be — and were not worth — fully cleaning and remain **messy multi-country strings** (e.g. `DK,SE`, or mixed-consortium `DK,IE`); those are left as-is. Prefer `flag_foreign_winner` to string equality on this column. |
+| `winner_country` | raw→clean | 1_1 / 1_2 (+ `4_combine`) | source country field | Winner country. In the combined dataset the code is harmonised to ISO 3166 **alpha-2** by `4_combine_all_datasets.R` (`standardise_country()`), mapping the TED XML's alpha-3 codes (`DNK`→`DK`, `SWE`→`SE`, …) onto the alpha-2 used by KFST/OpenTender. Some KFST rows could not be — and were not worth — fully cleaning and remain **messy multi-country strings** (e.g. `DK,SE`, or mixed-consortium `DK,IE`); those are left as-is. Prefer `flag_foreign_winner` to string equality on this column. |
 | `winner_name_original` | raw | 1_1 / 1_2 | — | The whole, unsplit winner-name field as delivered (audit snapshot). |
 | `winner_country_original` | raw | 1_1 / 1_2 | — | The whole, unsplit winner-country field as delivered. |
 | `winner_name_in_data` | derived | 2_1 / 2_3 | `winner_name` | The winner name carried into matching (as seen in the data). |
@@ -120,7 +145,7 @@ onto the tender-lot data in `1_1`/`1_2`.
 |---|---|---|---|---|
 | `winner_cvr_original` | raw | 1_1 / 1_2 | — | The whole, unsplit winner-CVR field as delivered (audit snapshot). |
 | `winner_cvr_clean` | raw→clean | 1_1 / 1_2 | `winner_cvr_original` (KFST: field split) | Cleaned per-member CVR: whitespace/letters/punctuation stripped; may be filled by same-name borrow. e.g. `28706650`. |
-| `valid_cvr` | derived | 1_1 / 1_2 | `winner_cvr_clean` | `TRUE` iff `winner_cvr_clean` is a well-formed 8-digit CVR (format only, not registry). |
+| `valid_cvr_before_match` | derived | 1_1 / 1_2 | `winner_cvr_clean` | `TRUE` iff `winner_cvr_clean` is a well-formed 8-digit CVR (format only, not registry). |
 | `flag_cvr_ws` | derived | 1_1 / 1_2 | `winner_cvr_original` | The CVR candidate contained whitespace before cleaning. |
 | `flag_cvr_alphabet` | derived | 1_1 / 1_2 | `winner_cvr_original` | It contained letters (e.g. a `DK` prefix). |
 | `flag_cvr_punct` | derived | 1_1 / 1_2 | `winner_cvr_original` | It contained punctuation. |
@@ -141,12 +166,12 @@ onto the tender-lot data in `1_1`/`1_2`.
 | `flag_cancelled` | derived | 1_1 / 1_2 | `tender_cancelled` | Source marks the tender/lot cancelled. |
 | `flag_missing_cvr_with_name` | derived | 1_1 / 1_2 | `flag_missing_winner_cvr`, `flag_missing_winner_name` | CVR missing but name present — a name-match candidate. **Redundant with `flag_matching_candidate`** (identical condition; see note below). Kept only for backward compatibility; prefer `flag_matching_candidate`. |
 | `flag_matching_candidate` | derived | 1_1 / 1_2 | `flag_missing_winner_cvr`, `flag_missing_winner_name` (name present & CVR missing) | Row is eligible for the name-matching workflow (formerly `flag_check_fuzzy_match`). Canonical flag for "name present, CVR missing". |
-| `flag_review_cvr` | derived | 1_1 / 1_2 | `valid_cvr`, `flag_missing_winner_cvr` | Non-missing CVR that is not syntactically valid. |
+| `flag_review_cvr` | derived | 1_1 / 1_2 | `valid_cvr_before_match`, `flag_missing_winner_cvr` | Non-missing CVR that is not syntactically valid. |
 | `flag_no_winner_info` | derived | 1_1 / 1_2 | the missingness flags | CVR, name, and country all missing. |
 | `flag_verify_cvr_external` | derived | 1_1 / 1_2 | `flag_missing_cvr_with_name`, `flag_review_cvr` | Row worth checking against an external CVR register. |
 | `flag_missing_winner_cvr_final` | derived | 2_1 / 2_3 | `winner_cvr_final` | **Post-match** version of `flag_missing_winner_cvr`: CVR missing/blank *after* matching/borrowing/field-pairing filled it. See the [post-match flags note](#post-match-_final-review-flags). |
 | `flag_missing_cvr_with_name_final` | derived | 2_1 / 2_3 | `flag_missing_winner_cvr_final`, `winner_name` | Post-match version of `flag_missing_cvr_with_name`. |
-| `flag_review_cvr_final` | derived | 2_1 / 2_3 | `flag_missing_winner_cvr_final`, `flag_cvr_final_in_registry` | Post-match version of `flag_review_cvr`: has a final CVR that is **not** in the registry. |
+| `flag_review_cvr_final` | derived | 2_1 / 2_3 | `flag_missing_winner_cvr_final`, `flag_valid_cvr_in_registry` | Post-match version of `flag_review_cvr`: has a final CVR that is **not** in the registry. |
 | `flag_no_winner_info_final` | derived | 2_1 / 2_3 | `flag_missing_winner_cvr_final`, `winner_name`, `winner_country` | Post-match version of `flag_no_winner_info`. |
 | `flag_verify_cvr_external_final` | derived | 2_1 / 2_3 | `flag_missing_cvr_with_name_final`, `flag_review_cvr_final` | Post-match version of `flag_verify_cvr_external`. |
 
@@ -180,7 +205,7 @@ onto the tender-lot data in `1_1`/`1_2`.
 | `cvr_number_source` | derived | 2_1 / 2_3 | resolution precedence + `flag_borrowed_cvr`, `type`, `name_match_*` | Plain-English provenance of `winner_cvr_final` (raw field split / tier-3b field pairing / exact-fuzzy match / backfilled from another lot / not a candidate). **Full value-by-value dictionary in the [Notes](#cvr_number_source--value-dictionary) below.** |
 | `matching_candidate_type` | derived | 2_1 / 2_3 | `flag_matching_candidate`, `winner_country` | Why admitted to matching: `exact DK` / `contains DK` / `NA`. |
 | `flag_cvr_recovered_from_invalid` | derived | 2_1 / 2_3 | `winner_cvr_candidate_original`, `winner_cvr_final`, registry | Original field CVR wasn't a registered CVR but a valid final was recovered (typo/extra-digit/foreign/placeholder). |
-| `flag_cvr_final_in_registry` | derived | 2_1 / 2_3 | `winner_cvr_final`, registry | `TRUE` iff the final CVR exists in the CVR registry (stricter than `valid_cvr`). |
+| `flag_valid_cvr_in_registry` | derived | 2_1 / 2_3 | `winner_cvr_final`, registry | `TRUE` iff the final CVR exists in the CVR registry (stricter than `valid_cvr_before_match`). |
 
 ## 11. CVR ↔ name quality (independent QA)
 
@@ -208,8 +233,8 @@ The CVR missingness/review flags come in two vintages:
 - **`*_final`** versions are computed in the **matchers** (2_1 / 2_3) on `winner_cvr_final` — i.e.
   **after** name matching, same-name borrowing, and (KFST) tier-3b field pairing have resolved a CVR. A row
   that had no CVR in the raw field but was matched by name is `flag_missing_winner_cvr == TRUE` yet
-  `flag_missing_winner_cvr_final == FALSE`. `flag_review_cvr_final` uses `flag_cvr_final_in_registry`
-  (registry membership) as its validity signal rather than the syntactic `valid_cvr`.
+  `flag_missing_winner_cvr_final == FALSE`. `flag_review_cvr_final` uses `flag_valid_cvr_in_registry`
+  (registry membership) as its validity signal rather than the syntactic `valid_cvr_before_match`.
 
 For "what is still missing/suspect in the delivered data", read the `*_final` flags. For "what the raw
 source provided", read the un-suffixed ones. The **buyer** datasets carry the same `*_final` family
@@ -220,11 +245,9 @@ matching). KFST buyers have no country field, so `flag_no_buyer_info_final` omit
 ### Winner vs buyer schema differences
 
 The matched **buyer** datasets are the winner schema with `buyer_*` swapped in for `winner_*`, so the two
-align column-for-column almost everywhere. The gap is easiest to read off the **combined** outputs built
-by `5_combine_datasets.R` — `clean_winner_data_all_name_matched.*` (405 columns) and
-`clean_buyer_data_all_name_matched.*` (377 columns), each stacking the KFST + OpenTender + TED matched
-rows under a `dataset` flag. Their column sets: **345 identical**, **60 winner-only**, **32 buyer-only** —
-so winner is **28 columns wider**.
+align column-for-column almost everywhere. Comparing the full winner-side vs buyer-side schemas (the union
+of the KFST + OpenTender + TED matched columns for each entity): **345 identical**, **60 winner-only**,
+**32 buyer-only** — so winner is **28 columns wider**.
 
 Most of the one-sided columns are just the entity analytical families (Sections 6–11) wearing the other
 prefix — `winner_name_basic` ↔ `buyer_name_basic`, `winner_cvr_final` ↔ `buyer_cvr_final`,
@@ -234,8 +257,9 @@ prefix — `winner_name_basic` ↔ `buyer_name_basic`, `winner_cvr_final` ↔ `b
 block: the winner table also carries the **buyer-context** identity columns — `buyer_name`, `buyer_nuts`,
 etc. ride along on winner rows — whereas the buyer table does **not** carry winner identity. So
 `buyer_name`/`buyer_nuts` are *shared* columns, while `winner_name`/`winner_nuts` are winner-only.
-`ot_source_file` — OpenTender's annual-CSV provenance, preserved by `5_combine` — is likewise a shared
-column on both sides, populated for OpenTender rows and `NA` elsewhere.)
+`ot_source_file` — OpenTender's annual-CSV provenance, renamed from its native `dataset` column in the
+stacks (`3_2`/`3_3`) and carried through `4_combine` — is likewise a shared column on both sides,
+populated for OpenTender rows and `NA` elsewhere.)
 
 The width difference is the structural columns with **no counterpart on the other side**. They are
 source-specific (outside this file's shared scope; the flags are defined in
