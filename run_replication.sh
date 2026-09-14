@@ -219,9 +219,16 @@ run_r_script "code/scraping/ted_4_match_winners.R"
 run_r_script "code/scraping/ted_5_match_buyers.R"
 
 # Combine all six matched samples (KFST/OT/TED x winner/buyer; the stacks where they exist) into one long
-# dataset with sample-selection columns (data_source, entity, dataset, build_prod, build_extr), CVR columns
-# standardised to cvr_*, and country harmonised. This is the all-in-one server-delivery table.
+# dataset, unique on (data_source, entity, tender_id, lot_id, cvr_final), with the sample-selection column
+# cvr_method (+ build_prod/build_extr convenience booleans), CVR columns standardised to cvr_*, and country
+# harmonised. This is the all-in-one server-delivery table.
 run_r_script "code/processing/4_combine_all_datasets.R"
+
+# Gate the delivery: post-combine data checks -- variable list <-> variable key, missingness per
+# source/entity, tender/lot-level agreement, cvr_method reproduces the pre-dedup production/extraction
+# samples, and the combined is unique on (data_source, entity, tender_id, lot_id, cvr_final). 98_ stop()s
+# on any failure, so a non-zero exit here aborts the run before anything is shipped.
+run_r_script "code/processing/98_final_data_checks.R"
 
 echo
 echo "Replication complete. Outputs are in data/clean."
