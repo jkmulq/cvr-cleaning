@@ -1675,16 +1675,17 @@ null_negative_amounts <- function(df) {
   df
 }
 
-# ── Stack column contract ─────────────────────────────────────────────────────
-# The 3_x concat-and-dedup stacks carry the UNION of the analytical/provenance columns across the
-# entity's matched sources (winner: KFST + OpenTender; buyer: OpenTender only), minus the raw
-# source-dump columns (kept only in the full *_name_matched.rds files). Computed from the actual files
-# (not hard-coded) so it tracks the data; both sides fill NA where a column is source-unique.
-
-# The raw DIGIWHIST/source-dump columns to drop: publication/indicator metadata, bid/bidder detail,
-# geography, estimated/final price variants, and raw free-text/date/duration fields. Analytical amounts
-# (tender_amount*/lot_amount*), dates (award_date, the ted lineage dates), and CPV are NOT matched here.
-.stack_raw_drop <- function(cols) {
+# ── Raw source-dump columns ───────────────────────────────────────────────────
+# The 3_x concat-and-dedup stacks carry EVERY analytical/provenance column through to 4_combine,
+# where the single final keep_cols selection is applied. The only thing they strip is the raw
+# DIGIWHIST/OpenTender source-dump columns (publication/indicator metadata, bid/bidder detail,
+# geography, estimated/final price variants, raw free-text/date/duration fields, and the raw
+# procedure/DPS/funding/criteria fields that 1_2 has already distilled into harmonised columns).
+# This is a NEGATIVE pattern drop -- it names only the junk, so any analytical column (including
+# newly added harmonised ones) always flows through and can never be silently dropped upstream.
+# Returns the subset of `cols` that are raw dumps (drop these); analytical amounts, dates and CPV
+# are NOT matched here.
+raw_dump_cols <- function(cols) {
   pat <- paste(c("^tender_publications_", "^tender_indicator_", "^tender_addressOfImplementation_",
     "^lot_addressOfImplementation_", "^bid_", "^bidder_", "^lot_indicator_", "^framework_",
     "_row_nr$", "^tender_estimatedPrice", "^tender_finalPrice", "^lot_estimatedPrice"), collapse = "|")
@@ -1703,22 +1704,7 @@ null_negative_amounts <- function(df) {
     "lot_fundingProgrammes", "lot_smeBidsCount", "lot_validBidsCount", "lot_electronicBidsCount",
     "lot_foreignCompaniesBidsCount", "lot_nonEuMemberStatesCompaniesBidsCount", "lot_otherEuMemberStatesCompaniesBidsCount",
     "buyer_city", "buyer_postcode", "buyer_nuts", "buyer_id", "buyer_buyerType", "buyer_mainActivities")
-  cols[!(grepl(pat, cols) | cols %in% extra)]
-}
-
-# The union column set for an entity's stack. `dataset` is excluded here -- OpenTender's native `dataset`
-# (annual source CSV) is renamed to `ot_source_file` by the builder, which then adds its own `dataset`
-# provenance flag. Buyers drop any winner_* columns (an OpenTender source artifact: buyer rows should not
-# carry winner identity). Matched files must exist (guaranteed by run_replication.sh ordering).
-stack_schema <- function(entity, clean_dir = dirs$clean_data) {
-  stopifnot(entity %in% c("winner", "buyer"))
-  srcs <- if (entity == "winner") c("kfst", "ot") else "ot"
-  path <- function(s) file.path(clean_dir, sprintf("clean_%s_data_%s_name_matched.rds", entity, s))
-  for (s in srcs) if (!file.exists(path(s))) stop(sprintf("stack_schema(%s): missing %s", entity, path(s)), call. = FALSE)
-  cols <- unique(unlist(lapply(srcs, function(s) names(readRDS(path(s))))))
-  cols <- setdiff(.stack_raw_drop(cols), "dataset")
-  if (entity == "buyer") cols <- grep("^winner_", cols, value = TRUE, invert = TRUE)
-  cols
+  cols[grepl(pat, cols) | cols %in% extra]
 }
 
 # Write a dataset to disk in several formats from one call. `path` may be a bare
