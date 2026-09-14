@@ -91,10 +91,13 @@ fi
 
 # The pipeline runs each step with `Rscript --vanilla` (below), which skips
 # ~/.Renviron. CVR_DATA_DIR (the required data root, honored by config.R) is often
-# set in ~/.Renviron rather than exported, so resolve it once via a plain Rscript
-# and export it here so every --vanilla step inherits it.
+# set in ~/.Renviron rather than exported, so resolve it once via Rscript and export
+# it here so every --vanilla step inherits it.
+# --no-init-file skips ~/.Rprofile (so renv/activate.R does NOT run) while still
+# reading ~/.Renviron: renv prints an "out-of-sync" notice to STDOUT on activation,
+# which would otherwise be captured into CVR_DATA_DIR and corrupt every path.
 if [ -z "${CVR_DATA_DIR:-}" ]; then
-  CVR_DATA_DIR="$("$RSCRIPT" -e 'cat(Sys.getenv("CVR_DATA_DIR"))' 2>/dev/null || true)"
+  CVR_DATA_DIR="$("$RSCRIPT" --no-init-file -e 'cat(Sys.getenv("CVR_DATA_DIR"))' 2>/dev/null || true)"
   [ -n "$CVR_DATA_DIR" ] && export CVR_DATA_DIR
 fi
 # CVR_DATA_DIR is required -- there is no <project>/data fallback. Fail fast with a
