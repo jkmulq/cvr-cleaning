@@ -440,6 +440,16 @@ buyer_data[, buyer_number := suppressWarnings(as.integer(buyer_number))]
 # 8 Save. The final matched buyer dataset goes to clean/ alongside the KFST/OpenTender clean buyer data
 # (same clean_*_name_matched naming); the manual-review list stays in intermediates/ted as a QC artifact.
 buyer_data <- as.data.table(null_negative_amounts(buyer_data))   # TED -1 "unpublished" sentinels -> NA, raw kept in `<col>_raw`
+
+# ---- One row per (notice, lot, buyer CVR) ----
+# TED can list the same buyer on a notice-lot more than once. Buyers carry no per-contract amount to sum,
+# so collapse to ONE row per (notice_id, lot_id, buyer_cvr_final), keeping the first row. Only resolved-CVR
+# rows are collapsed; unresolved-CVR rows are left as-is (they are dropped in 4_combine).
+.bhas <- !is.na(buyer_data$buyer_cvr_final) & buyer_data$buyer_cvr_final != ""
+.bone <- unique(buyer_data[.bhas], by = c("notice_id", "lot_id", "buyer_cvr_final"))
+cat(sprintf("TED buyer: collapsed %d duplicate (notice,lot,CVR) rows\n", sum(.bhas) - nrow(.bone)))
+buyer_data <- rbind(.bone, buyer_data[!.bhas], use.names = TRUE)
+
 save_dataset(buyer_data, file.path(clean_data_dir, "clean_buyer_data_ted_name_matched"))  # .rds + .csv + .parquet
 saveRDS(manual_name_review, file.path(ted_dir, "manual_name_review_ted_buyer.rds"))
 

@@ -481,6 +481,27 @@ winner_data[, winner_number := suppressWarnings(as.integer(winner_number))]
 # (same clean_*_name_matched naming); the manual-review list stays in intermediates/ted as a QC artifact.
 winner_data <- as.data.table(null_negative_amounts(winner_data))   # TED -1 "unpublished" sentinels -> NA, raw kept in `<col>_raw`
 winner_data[, is_awarded_winner := awarded_winner(winner_data)]   # awarded (flag_awarded) & is_winner (TED keeps bidders)
+
+# ---- Sum per-contract amounts within (notice, lot, winner CVR) ----
+# TED records one row per award-contract entry, so a firm holding several contracts on one notice-lot
+# appears more than once. Collapse to ONE row per (notice_id, lot_id, winner_cvr_final, is_winner) -- the
+# delivered (tender, lot, CVR) grain -- summing the per-contract winner_amount (the TOTAL value awarded to
+# that firm on that lot) and keeping the first value for every other column. tender_amount / lot_amount are
+# notice/lot-level (constant within the key) and are NOT summed. Only resolved-CVR rows are collapsed;
+# unresolved-CVR rows carry no firm key and are left as-is (they are dropped in 4_combine).
+win_sum_cols <- intersect(c("winner_amount", "winner_amount_raw"), names(winner_data))
+win_key      <- c("notice_id", "lot_id", "winner_cvr_final", "is_winner")
+.has_final   <- !is.na(winner_data$winner_cvr_final) & winner_data$winner_cvr_final != ""
+.collapse    <- winner_data[.has_final]
+.untouched   <- winner_data[!.has_final]
+.sum_or_na   <- function(x) if (all(is.na(x))) NA_real_ else sum(x, na.rm = TRUE)
+.amt         <- .collapse[, lapply(.SD, .sum_or_na), by = win_key, .SDcols = win_sum_cols]
+.one         <- unique(.collapse, by = win_key)                        # first row per key (all other cols)
+if (length(win_sum_cols)) .one[.amt, on = win_key, (win_sum_cols) := mget(paste0("i.", win_sum_cols))]
+cat(sprintf("TED winner: summed contract amounts, collapsed %d duplicate (notice,lot,CVR,is_winner) rows\n",
+            nrow(.collapse) - nrow(.one)))
+winner_data  <- rbind(.one, .untouched, use.names = TRUE)
+
 save_dataset(winner_data, file.path(clean_data_dir, "clean_winner_data_ted_name_matched"))  # .rds + .csv + .parquet
 saveRDS(manual_name_review, file.path(ted_dir, "manual_name_review_ted_winner.rds"))
 
