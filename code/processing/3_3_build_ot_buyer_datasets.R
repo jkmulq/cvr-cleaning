@@ -12,8 +12,8 @@
 #
 # OUTPUT (data/clean/ot_buyer_datasets_stacked.rds):
 #   dataset     : "production" | "extraction" -- the method that produced the surviving row.
-#   build_prod / build_extr : construction flags -- rebuild each sample EXACTLY by a simple filter:
-#     production sample = build_prod == TRUE ;  extraction sample = build_extr == TRUE
+#   cvr_method  : method(s) that produced the CVR -- "production", "extraction", or "production; extraction".
+#     Rebuild each sample EXACTLY: production = grepl("production", cvr_method); extraction = grepl("extraction", cvr_method).
 
 rm(list = ls()); source("config.R")
 suppressWarnings(suppressPackageStartupMessages({library(data.table); library(tidyverse)}))
@@ -64,7 +64,7 @@ extraction <- merge(extraction, lot_ctx, by = c("tender_id","lot_id"), all.x = T
 
 # 2b Pre-dedup reference for 98_ (does the cross-method dedup destroy data?): per-lot sorted CVR lists
 #    of the production + extraction samples as built here, BEFORE the stack/dedup below. 98 compares
-#    these to the final combined's build_prod/build_extr reconstruction. No-CVR rows dropped to match
+#    these to the final combined's cvr_method reconstruction. No-CVR rows dropped to match
 #    the combine; sorted, not deduped within a lot -- a perfect reproduction of each sample's CVRs.
 ref_prod <- production[!is.na(buyer_cvr_final) & buyer_cvr_final != "",
                        .(data_source = "OpenTender", entity = "buyer", method = "production", tender_id, lot_id, cvr_final = buyer_cvr_final)]
@@ -79,45 +79,47 @@ saveRDS(predup_ref, file.path(chk_dir, "predup_cvr_lists_ot_buyer.rds"))
 stacked <- rbindlist(list(production, extraction), use.names = TRUE, fill = TRUE)
 stacked[, dataset := factor(dataset, levels = c("production","extraction"))]
 
-# 4 Lot-level dedup: where production and extraction agree on the lot's whole CVR set, keep one copy
-#   (production); where they disagree, keep both methods' rows. build_prod / build_extr then rebuild each
-#   sample exactly by a simple filter (build_prod for production, build_extr for extraction).
-stacked[, cvr_list_prod := paste(sort(unique(buyer_cvr_final[dataset == "production"])), collapse = ";"), by = .(tender_id, lot_id)]
-stacked[, cvr_list_extr := paste(sort(unique(buyer_cvr_final[dataset == "extraction"])),  collapse = ";"), by = .(tender_id, lot_id)]
-stacked[, cvr_list_equal := cvr_list_prod == cvr_list_extr]
-stacked_deduped <- stacked[(dataset == "production" & cvr_list_equal) | cvr_list_equal == FALSE]
-stacked_deduped[, build_prod := (dataset == "production" & cvr_list_equal == FALSE) | cvr_list_equal == TRUE]
-stacked_deduped[, build_extr := (dataset == "extraction"  & cvr_list_equal == FALSE) | cvr_list_equal == TRUE]
+# 4 CVR-level dedup -> ONE row per distinct (tender_id, lot_id, buyer_cvr_final). A CVR is in the
+#   production sample if it appears among the production rows and in the extraction sample if it appears
+#   among the extraction rows. `cvr_method` lists the method(s) that produced this CVR, ";"-joined in
+#   production-before-extraction order: "production", "extraction", or "production; extraction". Rebuild each
+#   sample by a grepl filter -- production = grepl("production", cvr_method); extraction = grepl("extraction",
+#   cvr_method). Where both methods produced the same CVR the two rows collapse to ONE (unique on (tender,
+#   lot, CVR)); the production copy is kept (richer metadata; extraction rows are thin) by ordering production
+#   ahead of extraction before unique().
+setorder(stacked, tender_id, lot_id, buyer_cvr_final, dataset)
+stacked[, cvr_method := paste(unique(dataset), collapse = "; "), by = .(tender_id, lot_id, buyer_cvr_final)]
+stacked_deduped <- unique(stacked, by = c("tender_id", "lot_id", "buyer_cvr_final"))
 
 # 5 Carry every analytical/provenance column through to 4_combine, which applies the single final
 #    column selection (keep_cols). Removed here: the internal dedup scratch, the raw source-dump
 #    columns (raw_dump_cols(): negative pattern drop of known junk), and OpenTender's winner_*
 #    source artifact (buyer rows must not carry winner identity).
-drop_now <- unique(c("cvr_list_prod", "cvr_list_extr", "cvr_list_equal",
-                     grep("^winner_", names(stacked_deduped), value = TRUE),
+drop_now <- unique(c(grep("^winner_", names(stacked_deduped), value = TRUE),
                      raw_dump_cols(names(stacked_deduped))))
-stacked_deduped[, (drop_now) := NULL]
-lead <- intersect(c("dataset","build_prod","build_extr","tender_id","lot_id","buyer_number",
+if (length(drop_now)) stacked_deduped[, (drop_now) := NULL]
+lead <- intersect(c("dataset","cvr_method","tender_id","lot_id","buyer_number",
                     "buyer_name","buyer_cvr_final"), names(stacked_deduped))
 setcolorder(stacked_deduped, c(lead, setdiff(names(stacked_deduped), lead)))
 
-# 6 Self-check: build_prod / build_extr must reproduce the production and extraction samples exactly.
+# 6 Self-check: cvr_method must reproduce the production and extraction samples exactly.
 #   Per tender-lot, compare the sorted CVR list of each original sample against its rebuilt version; halt if off.
 .prod_orig  <- production[,     .(l = paste(sort(buyer_cvr_final), collapse = ";")), by = .(tender_id, lot_id)]
 .extr_orig  <- extraction[,     .(l = paste(sort(buyer_cvr_final), collapse = ";")), by = .(tender_id, lot_id)]
-.prod_built <- stacked_deduped[build_prod == TRUE, .(l = paste(sort(buyer_cvr_final), collapse = ";")), by = .(tender_id, lot_id)]
-.extr_built <- stacked_deduped[build_extr == TRUE, .(l = paste(sort(buyer_cvr_final), collapse = ";")), by = .(tender_id, lot_id)]
+.prod_built <- stacked_deduped[grepl("production", cvr_method), .(l = paste(sort(buyer_cvr_final), collapse = ";")), by = .(tender_id, lot_id)]
+.extr_built <- stacked_deduped[grepl("extraction", cvr_method), .(l = paste(sort(buyer_cvr_final), collapse = ";")), by = .(tender_id, lot_id)]
 .pm <- merge(.prod_orig, .prod_built, by = c("tender_id","lot_id"), all = TRUE, suffixes = c("_orig","_built"))
 .em <- merge(.extr_orig, .extr_built, by = c("tender_id","lot_id"), all = TRUE, suffixes = c("_orig","_built"))
 if (anyNA(.pm$l_orig) || anyNA(.pm$l_built) || !all(.pm$l_orig == .pm$l_built))
-  stop("build_prod does not reproduce the production sample (tender-lot CVR-list mismatch).", call. = FALSE)
+  stop("cvr_method does not reproduce the production sample (tender-lot CVR-list mismatch).", call. = FALSE)
 if (anyNA(.em$l_orig) || anyNA(.em$l_built) || !all(.em$l_orig == .em$l_built))
-  stop("build_extr does not reproduce the extraction sample (tender-lot CVR-list mismatch).", call. = FALSE)
-cat("  self-check passed: build_prod rebuilds production and build_extr rebuilds extraction exactly.\n")
+  stop("cvr_method does not reproduce the extraction sample (tender-lot CVR-list mismatch).", call. = FALSE)
+cat("  self-check passed: cvr_method rebuilds production and extraction exactly.\n")
 
 out_path <- Sys.getenv("OT_BUYER_STACK_OUT", unset = file.path(clean_data_dir, "ot_buyer_datasets_stacked.rds"))
 save_dataset(stacked_deduped, out_path)   # .rds (canonical) + .csv + .parquet
 cat(sprintf("ot_buyer_datasets_stacked.rds: %d rows, %d cols\n", nrow(stacked_deduped), ncol(stacked_deduped)))
 print(stacked_deduped[, .N, by = dataset][order(dataset)])
-cat(sprintf("  rebuild: production (build_prod)=%d | extraction (build_extr)=%d\n",
-            sum(stacked_deduped$build_prod), sum(stacked_deduped$build_extr)))
+cat(sprintf("  rebuild: production=%d | extraction=%d\n",
+            sum(grepl("production", stacked_deduped$cvr_method)),
+            sum(grepl("extraction", stacked_deduped$cvr_method))))

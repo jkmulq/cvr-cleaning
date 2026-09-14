@@ -16,11 +16,11 @@
 #   data_source : "KFST" | "OpenTender" | "TED"   (named data_source, not source: OpenTender already has a
 #                 native `source` column -- its CVR-cleaning provenance -- which is left untouched)
 #   entity      : "winner" | "buyer"
-#   dataset     : "production" | "extraction"   (matched files are all "production")
-#   build_prod  : logical -- row is in the production/name-matched sample of its data_source+entity
-#   build_extr  : logical -- row is in the raw-extraction sample (FALSE for the matched-only sources)
-# Any one sample = data_source & entity & build_prod  (or build_extr). e.g. OT winner extraction 
-#   data_source == "OpenTender" & entity == "winner" & build_extr.
+#   cvr_method  : the method(s) that extracted this (tender, lot, CVR), ";"-joined -- "production",
+#                 "extraction", or "production; extraction" (both). Matched-only sources (TED, KFST buyer)
+#                 are "production". The delivered table is UNIQUE on
+#                 (data_source, entity, tender_id, lot_id, cvr_final) -- one row per CVR.
+# Any one sample: production = grepl("production", cvr_method); extraction = grepl("extraction", cvr_method).
 #
 # CVR columns are standardised: the entity's `winner_cvr_*` / `buyer_cvr_*` become `cvr_*` (so winner and
 # buyer CVRs share one set of columns). The buyer-context `buyer_cvr_original` carried on winner rows is
@@ -60,7 +60,9 @@ parts <- lapply(spec, function(s) {
   # sample-selection columns (data_source, not source: OpenTender has its own native `source` column)
   d[, `:=`(data_source = src, entity = ent)]
   if ("dataset" %in% names(d)) d[, dataset := as.character(dataset)] else d[, dataset := "production"]
-  if (!is_stack) d[, `:=`(build_prod = TRUE, build_extr = FALSE)]   # matched files: production sample only
+  # cvr_method is built per (tender, lot, CVR) in the 3_* stack builders; the matched-only sources
+  # (TED, KFST buyer) have no raw-extraction method, so they are "production".
+  if (!is_stack) d[, cvr_method := "production"]
   d[]
 })
 
@@ -77,7 +79,7 @@ for (cc in intersect(c("winner_country", "buyer_country"), names(combined)))
 combined[, dataset := factor(dataset, levels = c("production", "extraction"))]
 
 # lead with the sample-selection + key identity columns, then everything else
-lead <- intersect(c("data_source","entity","dataset","build_prod","build_extr","tender_id","lot_id",
+lead <- intersect(c("data_source","entity","dataset","cvr_method","tender_id","lot_id",
                     "cvr_final","winner_name","buyer_name","is_awarded_winner","cvr_number_source"),
                   names(combined))
 setcolorder(combined, c(lead, setdiff(names(combined), lead)))
@@ -95,17 +97,17 @@ for (s in spec) {
   if (nrow(fsetdiff(ok, ck)) || nrow(fsetdiff(ck, ok)))
     stop(sprintf("selection check: (%s, %s) slice does not reproduce %s", src, ent, f), call. = FALSE)
   if (is_stack) {
-    for (flag in c("build_prod", "build_extr")) {
-      ok2 <- unique(o[get(flag) == TRUE, .(tender_id, lot_id, cvr = get(cvrcol))])
-      ck2 <- unique(combined[data_source == src & entity == ent & get(flag) == TRUE,
+    for (m in c("production", "extraction")) {
+      ok2 <- unique(o[grepl(m, cvr_method), .(tender_id, lot_id, cvr = get(cvrcol))])
+      ck2 <- unique(combined[data_source == src & entity == ent & grepl(m, cvr_method),
                              .(tender_id, lot_id, cvr = cvr_final)])
       if (nrow(fsetdiff(ok2, ck2)) || nrow(fsetdiff(ck2, ok2)))
-        stop(sprintf("selection check: (%s, %s) %s does not reproduce the stack's %s sample", src, ent, flag, flag), call. = FALSE)
+        stop(sprintf("selection check: (%s, %s) %s does not reproduce the stack's %s sample", src, ent, m, m), call. = FALSE)
     }
   } else {
     sl <- combined[data_source == src & entity == ent]
-    if (!all(sl$build_prod) || any(sl$build_extr))
-      stop(sprintf("selection check: matched source (%s, %s) should be build_prod=TRUE, build_extr=FALSE", src, ent), call. = FALSE)
+    if (!all(sl$cvr_method == "production"))
+      stop(sprintf("selection check: matched source (%s, %s) should be cvr_method == 'production'", src, ent), call. = FALSE)
   }
 }
 cat("selection-column self-check passed: every (data_source, entity[, build flag]) slice reproduces its source dataset.\n")
@@ -158,9 +160,32 @@ if ("tender_status" %in% names(combined)) {
 
 # ---- Final harmonisation and variable consolidation: renames + derived EUR/DKK annualised amounts ----
 # Renames applied to the combined table only (the per-source files keep the old names).
-ren <- c(dataset = "version", flag_cvr_final_in_registry = "flag_valid_cvr_in_registry",
+ren <- c(flag_cvr_final_in_registry = "flag_valid_cvr_in_registry",
          type = "kfst_consortium_split_method", valid_cvr = "valid_cvr_before_match")
 for (old in names(ren)) if (old %in% names(combined)) setnames(combined, old, ren[[old]])
+
+# cvr_method (production / extraction / production; extraction) lists the method(s) that produced each
+# (tender, lot, CVR). It is built in the 3_* stack builders and set to "production" for the matched-only
+# sources above, so it is already present on every row. build_prod / build_extr are convenience booleans
+# derived from it -- a row is in the production sample if cvr_method mentions "production" and the
+# extraction sample if it mentions "extraction" -- kept alongside cvr_method for filtering convenience.
+combined[, build_prod := grepl("production", cvr_method)]
+combined[, build_extr := grepl("extraction", cvr_method)]
+
+# ---- Safety net: enforce one row per (data_source, entity, tender_id, lot_id, cvr_final) ----
+# Every source now delivers this grain upstream: the three stacks are CVR-level unique (3_1/3_2/3_3), and
+# TED collapses one row per (notice, lot, CVR) in ted_4/ted_5 -- summing per-contract winner_amount there
+# (amount aggregation lives in the source scripts, not here). This is a backstop for any residual duplicate
+# (e.g. a KFST buyer listed twice on a lot): collapse to one row per key, keeping the most complete record
+# (fewest NAs; ties -> first). It does NOT sum. cvr_method is unaffected.
+ukey <- c("data_source", "entity", "tender_id", "lot_id", "cvr_final")
+n_before_unique <- nrow(combined)
+combined[, .row_na := rowSums(is.na(.SD)), .SDcols = setdiff(names(combined), ukey)]
+setorderv(combined, c(ukey, ".row_na"))
+combined <- unique(combined, by = ukey)
+combined[, .row_na := NULL]
+cat(sprintf("uniqueness collapse: %d -> %d rows (removed %d duplicate (source,entity,tender,lot,CVR) rows)\n",
+            n_before_unique, nrow(combined), n_before_unique - nrow(combined)))
 # annualised_* are in the original currency; add EUR/DKK variants by scaling with each amount's own
 # original->EUR/DKK conversion ratio (NA where the base amount is missing/zero).
 for (b in c("tender", "lot")) {
@@ -184,8 +209,7 @@ for (b in c("tender", "lot")) {
 # future/unreviewed column is dropped by default and logged -- a new column can never silently ship.
 # cvr_final stays: it is the authorised key that links to the register on the server.
 keep_cols <- c(
-  "data_source", "entity", "dataset", "build_prod",
-  "build_extr", "tender_id", "lot_id", "cvr_final",
+  "data_source", "entity", "cvr_method", "build_prod", "build_extr", "tender_id", "lot_id", "cvr_final",
   "is_awarded_winner", "cvr_number_source", "ot_source_file", "consortium_flag",
   "semi_tier", "registry_score", "is_consortium", "type",
   "contract_type", "n_lots", "n_lots_announced",
@@ -234,7 +258,6 @@ keep_cols <- c(
   "lot_amount_dkk_raw", "buyer_amount"
 )
 # ---- Final harmonisation and variable consolidation: renames, added columns, and drops on the allowlist ----
-keep_cols[keep_cols == "dataset"]                    <- "version"
 keep_cols[keep_cols == "flag_cvr_final_in_registry"] <- "flag_valid_cvr_in_registry"
 keep_cols[keep_cols == "type"]                       <- "kfst_consortium_split_method"
 keep_cols[keep_cols == "valid_cvr"]                  <- "valid_cvr_before_match"
@@ -281,7 +304,7 @@ combined <- combined[, ..keep_present]
 ord_core   <- c("data_source", "tender_id", "lot_id", "ted_notice_id", "entity")
 ord_cvr    <- c("cvr_final", "cvr_name_match", "cvr_recovered_from_formatting")   # final -> less final
 ord_prov   <- c("cvr_number_source")
-ord_select <- c("version", "build_prod", "build_extr", "is_winner", "is_awarded_winner")
+ord_select <- c("cvr_method", "build_prod", "build_extr", "is_winner", "is_awarded_winner")
 ord_tender <- c(
   "contract_type", "contract_nature", "n_lots", "n_lots_announced", "n_lot_winners", "n_lot_id",
   "n_bidders", "n_tenders_received", "n_tenders_sme", "n_winners_extracted", "n_buyers_extracted", "n_buyers_listed_original",
@@ -343,6 +366,8 @@ cat(sprintf("standardised missings to NA across %d character + %d numeric column
 save_dataset(combined, file.path(out_dir, "clean_all_samples_combined"))
 
 message(sprintf("clean_all_samples_combined: %d rows, %d cols", nrow(combined), ncol(combined)))
-print(combined[, .(rows = .N, production = sum(build_prod), extraction = sum(build_extr)),
+print(combined[, .(rows = .N,
+                   production = sum(grepl("production", cvr_method)),
+                   extraction = sum(grepl("extraction", cvr_method))),
                by = .(data_source, entity)][order(data_source, entity)])
 message("Written to ", out_dir)

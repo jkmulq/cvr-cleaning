@@ -4,8 +4,9 @@
 #   (1) its columns match the variable-key "Final key (preview)" sheet exactly;
 #   (2) missingness of every variable, per (data_source, entity) pair;
 #   (3) tender/lot-level columns agree across entities within each (data_source, tender_id, lot_id);
-#   (4) the sample-selection rules (build_prod / build_extr) reproduce the PRE-DEDUP production /
-#       extraction datasets (vs the references saved by 3_1/3_2/3_3) -- i.e. the dedup is lossless.
+#   (4) the sample-selection rule (cvr_method) reproduces the PRE-DEDUP production / extraction
+#       datasets (vs the references saved by 3_1/3_2/3_3) -- i.e. the CVR-level dedup is lossless;
+#   (5) the delivered combined is unique on (data_source, entity, tender_id, lot_id, cvr_final).
 # Standalone check -- not part of the production pipeline.
 # =============================================================================
 rm(list = ls())
@@ -98,9 +99,10 @@ if (nrow(disagree) == 0L) {
   failures <- c(failures, sprintf("3: %d tender-level column(s) disagree within a lot", nrow(disagree)))
 }
 
-# 4 The sample-selection rules (build_prod / build_extr) reproduce the PRE-DEDUP production / extraction
-#   datasets. Load the pre-dedup references saved by 3_1/3_2/3_3 (per-lot CVR lists captured BEFORE the
-#   cross-method dedup) and rebuild the equivalent from the delivered combined's build flags. If the
+# 4 The sample-selection rule (cvr_method) reproduces the PRE-DEDUP production / extraction datasets.
+#   Load the pre-dedup references saved by 3_1/3_2/3_3 (per-lot CVR lists captured BEFORE the
+#   cross-method dedup) and rebuild the equivalent from the delivered combined's cvr_method
+#   (production = grepl("production", cvr_method); extraction = grepl("extraction", cvr_method)). If the
 #   dedup (or the combine/save) dropped or altered any CVR, the rebuilt lists will not match -- so this
 #   confirms the dedup is lossless and the README's selection rules recover the datasets they claim.
 #   Same lot key + cvr_list rule as the references (tender_id + lot_id; for TED tender_id is the notice
@@ -114,11 +116,11 @@ ref <- rbindlist(lapply(file.path(dirs$clean_data, "checks", ref_files), readRDS
 # no reference. ref_pairs is derived from the references so it stays in sync if the deduped set changes.
 ref_pairs <- ref[, unique(paste(data_source, entity, sep = " | "))]
 fd <- final_data[paste(data_source, entity, sep = " | ") %in% ref_pairs]
-prod_rows <- fd[build_prod == TRUE, 
-                .(data_source, entity, tender_id, lot_id, cvr_final, 
+prod_rows <- fd[grepl("production", cvr_method),
+                .(data_source, entity, tender_id, lot_id, cvr_final,
                   method = "production")]
-extr_rows <- fd[build_extr == TRUE, 
-                .(data_source, entity, tender_id, lot_id, cvr_final, 
+extr_rows <- fd[grepl("extraction", cvr_method),
+                .(data_source, entity, tender_id, lot_id, cvr_final,
                   method = "extraction")]
 rebuilt <- rbind(prod_rows, extr_rows)[
   , .(cvr_list = paste(sort(cvr_final), collapse = ";")),
@@ -129,9 +131,9 @@ setorderv(ref, kcols)
 setorderv(rebuilt, kcols)
 # identical() on the sorted tables (as data.frames -- data.tables carry an internal pointer that makes
 # a direct identical() always FALSE). TRUE only if every (source, entity, method, tender, lot) row and
-# its cvr_list match exactly, i.e. the build flags reproduce the pre-dedup datasets perfectly.
+# its cvr_list match exactly, i.e. cvr_method reproduces the pre-dedup datasets perfectly.
 if (identical(as.data.frame(ref), as.data.frame(rebuilt))) {
-  message(sprintf("Passed: build_prod/build_extr reproduce the pre-dedup production + extraction datasets (all %d lot-method rows).",
+  message(sprintf("Passed: cvr_method reproduces the pre-dedup production + extraction datasets (all %d lot-method rows).",
                   nrow(ref)))
 } else {
   cmp <- merge(ref, rebuilt, by = kcols, all = TRUE, suffixes = c("_ref", "_rebuilt"))
@@ -139,7 +141,22 @@ if (identical(as.data.frame(ref), as.data.frame(rebuilt))) {
   message(sprintf("Failed: reference (%d rows) and rebuilt (%d rows) not identical; %d differing lot-method rows:",
                   nrow(ref), nrow(rebuilt), nrow(bad_rebuild)))
   print(head(bad_rebuild, 5))
-  failures <- c(failures, "4: build flags do not reproduce the pre-dedup datasets")
+  failures <- c(failures, "4: cvr_method does not reproduce the pre-dedup datasets")
+}
+
+# 5 The delivered combined is UNIQUE on (data_source, entity, tender_id, lot_id, cvr_final): one row per
+#   CVR. The CVR-level dedup in the 3_* builders collapses a CVR produced by both methods into a single
+#   row (cvr_method = "both"), so no (source, entity, tender, lot, CVR) key may repeat.
+ukey <- c("data_source", "entity", "tender_id", "lot_id", "cvr_final")
+n_dup_rows <- nrow(final_data) - nrow(unique(final_data, by = ukey))
+if (n_dup_rows == 0L) {
+  message(sprintf("Passed: combined is unique on (%s) -- no duplicate CVR rows.", paste(ukey, collapse = ", ")))
+} else {
+  dup_keys <- final_data[, .N, by = ukey][N > 1L][order(-N)]
+  message(sprintf("Failed: %d duplicate rows across %d repeated keys on (%s):",
+                  n_dup_rows, nrow(dup_keys), paste(ukey, collapse = ", ")))
+  print(head(dup_keys, 5))
+  failures <- c(failures, sprintf("5: %d duplicate (source,entity,tender,lot,cvr) rows", n_dup_rows))
 }
 
 # ---- Summary: stop if any check failed, so 98_ can gate the pipeline ----
