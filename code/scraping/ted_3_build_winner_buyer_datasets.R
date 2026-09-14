@@ -75,9 +75,12 @@ build <- function(roles, prefix, keep_is_winner = FALSE) {
   }
   p <- merge(p, lot_key,    by = c("notice_id", "lot"), all.x = TRUE)   # clean lot_id
   p <- merge(p, notice_ctx, by = "notice_id", all.x = TRUE)
-  # Row currency: the party's own currency (winners), falling back to the lot- then notice-level
-  # currency. Buyers have no party amount, so they inherit the lot/notice currency of the contract.
-  fb <- intersect(c("currency", "lot_currency", "notice_currency"), names(p))
+  # Row currency: the CONTRACT currency (lot- then notice-level), with the per-party currency only as a
+  # last-resort fallback. tender_amount (= the notice-level awarded total) and lot_amount are contract-
+  # level figures, so they must be converted (in ted_4/ted_5) by the contract currency -- otherwise a
+  # winner who reported their own award in a different currency (e.g. EUR) would wrongly re-scale the
+  # notice total (in DKK). Contract-first makes a lot's winner and buyer rows convert identically.
+  fb <- intersect(c("lot_currency", "notice_currency", "currency"), names(p))
   if (length(fb)) {
     p[, currency := Reduce(fcoalesce, lapply(fb, function(cc) as.character(p[[cc]])))]
     drop_fb <- setdiff(fb, "currency")
