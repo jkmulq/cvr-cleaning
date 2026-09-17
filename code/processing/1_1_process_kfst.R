@@ -383,7 +383,7 @@ tender_lot_data <- data %>%
     "pub_date", "award_date", "award_url", "submit_date",
     "divided_tender", "joint_tender", "consortium_winner",
     "cpv_code", "cpv_code_first", "cpv_division", "cpv_division_name",
-    "cpv_sector", "cpv_category",
+    "cpv_sector", "cpv_category", "contract_nature",
     "tender_cancelled", "tender_status", "flag_awarded",
     "contract_duration_months_min", "contract_duration_months_max",
     "contract_duration_months", "award_end_date",
