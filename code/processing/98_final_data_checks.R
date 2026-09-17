@@ -6,7 +6,8 @@
 #   (3) tender/lot-level columns agree across entities within each (data_source, tender_id, lot_id);
 #   (4) the sample-selection rule (cvr_method) reproduces the PRE-DEDUP production / extraction
 #       datasets (vs the references saved by 3_1/3_2/3_3) -- i.e. the CVR-level dedup is lossless;
-#   (5) the delivered combined is unique on (data_source, entity, tender_id, lot_id, cvr_final).
+#   (5) the delivered combined is unique on (data_source, entity, tender_id, lot_id, cvr_final);
+#   (6) provenance: every KFST winner extraction CVR traces to the raw 'Vinders CVR' source field.
 # Standalone check -- not part of the production pipeline.
 # =============================================================================
 rm(list = ls())
@@ -22,7 +23,7 @@ final_data <- read_clean(file.path(dirs$clean_data, "clean_all_samples_combined"
 var_key <- readxl::read_excel(file.path(dirs$data, "variable_key_expanded.xlsx"),
                               sheet = "Final key (preview)")
 
-# Run all four checks, collecting any failures, then stop at the end if there were any -- so one run
+# Run all checks, collecting any failures, then stop at the end if there were any -- so one run
 # reports every check rather than aborting at the first failure.
 failures <- character(0)
 
@@ -107,7 +108,8 @@ if (nrow(disagree) == 0L) {
 #   confirms the dedup is lossless and the README's selection rules recover the datasets they claim.
 #   Same lot key + cvr_list rule as the references (tender_id + lot_id; for TED tender_id is the notice
 #   id; CVRs sorted, not deduped -> exact per-lot CVR multiset).
-ref_files <- c("predup_cvr_lists_kfst_winner.rds", "predup_cvr_lists_ot_winner.rds", "predup_cvr_lists_ot_buyer.rds")
+ref_files <- c("predup_cvr_lists_kfst_winner.rds", "predup_cvr_lists_ot_winner.rds", "predup_cvr_lists_ot_buyer.rds",
+               "predup_cvr_lists_ted_winner.rds", "predup_cvr_lists_ted_buyer.rds")
 ref <- rbindlist(lapply(file.path(dirs$clean_data, "checks", ref_files), readRDS))
 
 # Rebuild from the combined, restricted to the deduped source-entities the references cover
@@ -122,7 +124,10 @@ prod_rows <- fd[grepl("production", cvr_method),
 extr_rows <- fd[grepl("extraction", cvr_method),
                 .(data_source, entity, tender_id, lot_id, cvr_final,
                   method = "extraction")]
-rebuilt <- rbind(prod_rows, extr_rows)[
+nm_rows   <- fd[grepl("name_match", cvr_method),
+                .(data_source, entity, tender_id, lot_id, cvr_final,
+                  method = "name_match")]
+rebuilt <- rbind(prod_rows, extr_rows, nm_rows)[
   , .(cvr_list = paste(sort(cvr_final), collapse = ";")),
   by = .(data_source, entity, method, tender_id, lot_id)]
 
@@ -157,6 +162,34 @@ if (n_dup_rows == 0L) {
                   n_dup_rows, nrow(dup_keys), paste(ukey, collapse = ", ")))
   print(head(dup_keys, 5))
   failures <- c(failures, sprintf("5: %d duplicate (source,entity,tender,lot,cvr) rows", n_dup_rows))
+}
+
+# 6 Provenance (KFST winner extraction): every extraction-sample CVR must be a standalone 8-digit run in
+#   the raw KFST 'Vinders CVR' field for that lot. Moved here from the retired
+#   tests/test_kfst_winner_datasets.R and rewritten against the combined. (The test's other assertions are
+#   already covered: structure/no-invalid-CVR/uniqueness by checks 1 & 5; production reproduction by check 4.)
+#   Reads BOTH sheets -- 2.0 Udbudsdata + 2.1 Profylaksebekendtgørelser -- namespacing the profylakse ids
+#   with "P" exactly as 1_1 does, so the (tender_id, lot_id) keys line up with the combined.
+is8 <- function(x) !is.na(x) & grepl("^[0-9]{8}$", x)
+kfst_xlsx <- file.path(dirs$raw_data, "kfst", "udbudsdata_kfst.xlsx")
+raw_field <- rbindlist(lapply(
+  list(c("^2\\.0 Udbudsdata", ""), c("Profylakse", "P")),
+  function(sp) {
+    sh <- grep(sp[1], readxl::excel_sheets(kfst_xlsx), value = TRUE)[1]
+    r  <- as.data.table(readxl::read_excel(kfst_xlsx, sheet = sh, col_types = "text"))
+    r[, .(tender_id = paste0(sp[2], `Løbenummer`), lot_id = paste0(sp[2], `Nummerplade`), f = `Vinders CVR`)]
+  }))
+raw_field <- raw_field[!is.na(f), .(cvr = unlist(regmatches(f, gregexpr("(?<![0-9])[0-9]{8}(?![0-9])", f, perl = TRUE)))),
+                       by = .(tender_id, lot_id)]
+ex <- unique(final_data[data_source == "KFST" & entity == "winner" & grepl("extraction", cvr_method) & is8(cvr_final),
+                        .(tender_id = as.character(tender_id), lot_id = as.character(lot_id), cvr = as.character(cvr_final))])
+n_untraced <- nrow(ex[!raw_field, on = .(tender_id, lot_id, cvr)])
+if (n_untraced == 0L) {
+  message(sprintf("Passed: all %d KFST winner extraction CVRs trace to the raw 'Vinders CVR' field (both sheets).", nrow(ex)))
+} else {
+  message(sprintf("Failed: %d of %d KFST winner extraction CVR(s) do NOT trace to the raw field:", n_untraced, nrow(ex)))
+  print(head(ex[!raw_field, on = .(tender_id, lot_id, cvr)], 5))
+  failures <- c(failures, sprintf("6: %d untraceable KFST extraction CVRs", n_untraced))
 }
 
 # ---- Summary: stop if any check failed, so 98_ can gate the pipeline ----
