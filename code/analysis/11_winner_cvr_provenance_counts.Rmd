@@ -204,12 +204,24 @@ agree <- function(a, b, keys, label) {
   A <- winner_sets(filter(prod_win, data_source == a), keys)
   B <- winner_sets(filter(prod_win, data_source == b), keys)
   j <- inner_join(A, B, by = keys, suffix = c("_a", "_b"))
+  # Per-notice Jaccard share of winner-CVRs: |A intersect B| / |A union B|.
+  inter <- map2_int(j$cvrs_a, j$cvrs_b, ~ length(intersect(.x, .y)))
+  uni   <- map2_int(j$cvrs_a, j$cvrs_b, ~ length(union(.x, .y)))
+  share <- inter / uni
+  incomplete <- share < 1                       # notices where the two sources do NOT fully agree
   tibble(
-    comparison     = label,
-    level          = if (length(keys) > 1) "notice-lot" else "notice",
-    comparable     = nrow(j),
-    exact_pct      = round(100 * mean(map2_lgl(j$cvrs_a, j$cvrs_b, setequal)), 1),
-    any_common_pct = round(100 * mean(map2_lgl(j$cvrs_a, j$cvrs_b, ~ length(intersect(.x, .y)) > 0)), 1)
+    comparison         = label,
+    level              = if (length(keys) > 1) "notice-lot" else "notice",
+    comparable         = nrow(j),
+    exact_pct          = round(100 * mean(map2_lgl(j$cvrs_a, j$cvrs_b, setequal)), 1),
+    any_common_pct     = round(100 * mean(map2_lgl(j$cvrs_a, j$cvrs_b, ~ length(intersect(.x, .y)) > 0)), 1),
+    # Share of common CVRs within a notice (Jaccard). Unweighted = mean over notices; weighted = pooled
+    # sum(intersection)/sum(union), i.e. each notice weighted by its union size; incomplete = mean over
+    # only the notices without complete agreement (share < 1).
+    mean_share_pct     = round(100 * mean(share), 1),
+    wtd_mean_share_pct = round(100 * sum(inter) / sum(uni), 1),
+    n_incomplete       = sum(incomplete),
+    incomplete_mean_share_pct = if (any(incomplete)) round(100 * mean(share[incomplete]), 1) else NA_real_
   )
 }
 
@@ -222,7 +234,10 @@ bind_rows(
   agree("KFST", "OpenTender", "ted_notice_id", "KFST vs OpenTender")
 ) %>%
   arrange(comparison) %>%
-  kable(caption = "Winner-CVR agreement across sources at the notice level (production sample, from the combined)")
+  kable(caption = paste("Winner-CVR agreement across sources at the notice level (production sample).",
+                        "share = |A intersect B| / |A union B| per notice:",
+                        "mean_share_pct = unweighted mean; wtd_mean_share_pct = union-size-weighted (pooled);",
+                        "incomplete_mean_share_pct = unweighted mean over the n_incomplete notices without full agreement."))
 ```
 
 # Production vs extraction coverage and overlap
