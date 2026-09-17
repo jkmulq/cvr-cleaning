@@ -201,6 +201,15 @@ data <- data %>%
       tender_procedureType == "OTHER" ~ "other",
       TRUE ~ NA_character_
     ),
+    # direct_award: contract awarded WITHOUT a call for competition. Harmonised cross-source
+    # from procedure_group_h (OT's NEGOTIATED_WITHOUT_PUBLICATION / OUTRIGHT_AWARD -> without_call);
+    # TRUE for without_call, FALSE for any other known procedure, NA where unmapped. KFST derives
+    # it the same way (it has no direct-award procedures); TED carries its native lineage flag.
+    direct_award = case_when(
+      procedure_group_h == "without_call" ~ TRUE,
+      !is.na(procedure_group_h) ~ FALSE,
+      TRUE ~ NA
+    ),
     eu_funded = case_when(tender_isEUFunded == "yes" ~ TRUE, tender_isEUFunded == "no" ~ FALSE, TRUE ~ NA),
     is_dps = case_when(tender_isDps == "yes" ~ TRUE, tender_isDps == "no" ~ FALSE, TRUE ~ NA),
     subcontracted = case_when(bid_isSubcontracted == "yes" ~ TRUE, bid_isSubcontracted == "no" ~ FALSE, TRUE ~ NA),
