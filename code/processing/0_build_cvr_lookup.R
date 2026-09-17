@@ -15,7 +15,11 @@ suppressWarnings(suppressPackageStartupMessages({
 source(file.path(PROJECT_DIR, "code", "functions.R"))
 
 sample_size <- Sys.getenv("CVR_LOOKUP_SAMPLE_SIZE")
-batch_size <- as.integer(Sys.getenv("CVR_LOOKUP_BATCH_SIZE", "1000"))
+# Default 250 (not 1000): the lookup now pulls the full `virksomhedMetadata` block per firm (sector,
+# employee/FTE bands, HQ address, legal form, status), so each scroll hit is much larger. At size=1000 the
+# Virk scroll context becomes unstable and drops ("search_context_missing"); 250 keeps responses light and
+# the scroll stable. Raise it only if pulling names-only (metadata removed from virk_lookup_source_fields).
+batch_size <- as.integer(Sys.getenv("CVR_LOOKUP_BATCH_SIZE", "250"))
 overwrite <- tolower(Sys.getenv("CVR_LOOKUP_OVERWRITE", "false")) == "true"
 output_stamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
 
