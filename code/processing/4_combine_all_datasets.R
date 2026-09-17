@@ -336,9 +336,7 @@ ord_quality <- c(
   "cvr_name_match_quality_broad", "cvr_name_is_substring", "valid_cvr_before_match",
   "name_match_status", "name_match_method", "name_match_step", "name_match_source",
   "name_match_score", "name_match_n_candidates", "matching_candidate_type",
-  "fuzzy_candidate_cvr_1", "fuzzy_candidate_score_1", "fuzzy_candidate_cvr_2", "fuzzy_candidate_score_2",
-  "fuzzy_candidate_cvr_3", "fuzzy_candidate_score_3", "fuzzy_candidate_cvr_4", "fuzzy_candidate_score_4",
-  "fuzzy_candidate_cvr_5", "fuzzy_candidate_score_5")
+  "fuzzy_candidate_cvr_2", "fuzzy_candidate_score_2")
 ord_named <- c(ord_core, ord_cvr, ord_prov, ord_select, ord_tender, ord_quality)
 ord_flags <- grep("^flag_", setdiff(names(combined), ord_named), value = TRUE)                 # all remaining flags
 ord_rest  <- setdiff(names(combined), c(ord_named, ord_flags))                                 # everything else
