@@ -22,8 +22,44 @@ raw_data_name <- "udbudsdata_kfst.xlsx"
 # Source functions
 source(file.path(PROJECT_DIR, "code", "functions.R"))
 
-# 1 Load data
-data <- read_excel(file.path(raw_data_dir, "kfst", raw_data_name), sheet = "2.0 Udbudsdata")
+# 1 Load data. KFST publishes ordinary tenders in "2.0 Udbudsdata" and direct-award
+# (no prior call for competition) contracts in the separate "2.1 Profylaksebekendtgørelser"
+# sheet -- which shares 2.0's exact 58-column schema (same names, same order). Read both and
+# stack them so direct awards enter the pipeline too, tagging each profylakse row's origin
+# (src_direct_award) so it is classified as a direct award below: its procedure labels
+# ("... uden forudgående offentliggørelse", "overgået til forhandling", concession-without-
+# publication, etc.) are not in the ordinary procedure vocabulary, and per KFST's codebook the
+# sheet itself defines these as awards made without competition. readxl infers a couple of
+# columns' types differently per sheet (postnummer, duration-max), so coerce the profylakse
+# columns to the 2.0 types before binding.
+kfst_path <- file.path(raw_data_dir, "kfst", raw_data_name)
+kfst_sheets <- excel_sheets(kfst_path)
+s_main <- grep("^2\\.0 Udbudsdata",  kfst_sheets, value = TRUE)[1]
+s_prof <- grep("Profylakse",         kfst_sheets, value = TRUE)[1]
+data <- read_excel(kfst_path, sheet = s_main)
+prof <- read_excel(kfst_path, sheet = s_prof)
+stopifnot(identical(names(data), names(prof)))                       # same schema + order
+# CRITICAL: the profylakse sheet numbers Løbenummer (tender_id) and Nummerplade (lot_id)
+# INDEPENDENTLY from 1 -- they overlap almost entirely with 2.0's ids (1,097/1,097 tender ids,
+# 1,111/1,156 lot ids). Namespace the profylakse ids with a "P" prefix so the two id spaces stay
+# disjoint after binding; otherwise unrelated tenders would be merged. Ids become character (the
+# tender_id/lot_id keys are character downstream and in the combined dataset anyway).
+for (.idc in c("Løbenummer", "Nummerplade")) {
+  data[[.idc]] <- as.character(data[[.idc]])
+  prof[[.idc]] <- paste0("P", as.character(prof[[.idc]]))
+}
+# Reconcile the other columns' per-sheet inferred types (readxl guesses a few differently).
+for (.col in setdiff(names(data), c("Løbenummer", "Nummerplade"))) if (!identical(class(data[[.col]]), class(prof[[.col]]))) {
+  .tgt <- class(data[[.col]])[1]
+  prof[[.col]] <- if (.tgt %in% c("numeric", "double", "integer")) suppressWarnings(as.numeric(prof[[.col]]))
+                  else if (.tgt %in% c("POSIXct", "POSIXt", "Date")) as.POSIXct(prof[[.col]])
+                  else as.character(prof[[.col]])
+}
+data$src_direct_award <- FALSE
+prof$src_direct_award <- TRUE
+data <- dplyr::bind_rows(data, prof)
+cat(sprintf("KFST load: %d ordinary (2.0) + %d profylakse/direct-award (2.1) rows -> %d total\n",
+            sum(!data$src_direct_award), sum(data$src_direct_award), nrow(data)))
 
 # The source sheet has two columns literally named "Udbudsprocedure" (procedure type =
 # variable 35, procedure group = variable 36); readxl de-duplicates them positionally.
@@ -94,6 +130,7 @@ data <- data %>%
 data <- data %>%
   mutate(
     procedure_group_h = case_when(
+      src_direct_award ~ "without_call",   # every profylakse (2.1) row is a direct award (no call for competition)
       procedure_type_raw %in% c("Offentligt udbud", "Offentligt udbud hasteprocedure") ~ "open",
       procedure_type_raw %in% c("Begrænset udbud", "Begrænset udbud hasteprocedure") ~ "restricted",
       procedure_type_raw %in% c("Udbud med forhandling", "Udbud med forhandling hasteprocedure",
@@ -105,7 +142,20 @@ data <- data %>%
       procedure_type_raw == "Tildelingsprocedure med forudgående offentliggørelse af en koncessionsbekendtgørelse" ~ "other",
       TRUE ~ NA_character_   # "Uspecificeret" and anything unmapped
     ),
+    # direct_award: contract awarded WITHOUT a call for competition (direct / negotiated
+    # without prior publication). KFST's udbudsdata contains only procedures WITH a call or
+    # publication -- every negotiated variant is explicitly "med forudgående indkaldelse"
+    # (with prior call) or "med offentliggørelse" (with publication); there is no
+    # without-publication/direct-award type. So this is FALSE for every known procedure and
+    # NA only where the procedure is unspecified/unmapped. Harmonised cross-source: OT derives
+    # it identically from procedure_group_h, TED carries its native lineage flag.
+    direct_award = case_when(
+      procedure_group_h == "without_call" ~ TRUE,
+      !is.na(procedure_group_h) ~ FALSE,
+      TRUE ~ NA
+    ),
     procedure_type = case_when(
+      src_direct_award ~ "Direct award (no prior publication)",
       procedure_type_raw == "Offentligt udbud" ~ "Open procedure",
       procedure_type_raw == "Offentligt udbud hasteprocedure" ~ "Open procedure (accelerated)",
       procedure_type_raw == "Begrænset udbud" ~ "Restricted procedure",
@@ -122,6 +172,7 @@ data <- data %>%
       TRUE ~ NA_character_
     ),
     procedure_group = case_when(
+      src_direct_award ~ "Direct award",
       procedure_group_raw == "Offentligt udbud" ~ "Open procedure",
       procedure_group_raw == "Begrænset udbud" ~ "Restricted procedure",
       procedure_group_raw == "Fleksible udbudsprocedurer" ~ "Flexible procedures",
@@ -152,6 +203,9 @@ data <- data %>%
     subcontracted = NA,
     n_award_criteria = NA_integer_
   )
+# src_direct_award has done its job (it set procedure_* + direct_award for the direct-award rows,
+# which is now fully captured by direct_award == TRUE); drop the internal marker so it never ships.
+data$src_direct_award <- NULL
 
 # Standardise tender-level fields before they are joined onto buyer/winner rows.
 ## Tender/lot amount. 
@@ -387,8 +441,8 @@ tender_lot_data <- data %>%
     "tender_cancelled", "tender_status", "flag_awarded",
     "contract_duration_months_min", "contract_duration_months_max",
     "contract_duration_months", "award_end_date",
-    "annualised_tender_amount", "annualised_lot_amount",
     "procedure_type", "procedure_group", "procedure_group_h", "is_framework",
+    "direct_award",
     "award_criteria", "award_criteria_h", "n_award_criteria", "price_weight",
     "eu_funded", "is_dps", "subcontracted",
     "n_lot_id"
@@ -418,10 +472,10 @@ if (rebuild_ted_dates) {
   source(file.path(PROJECT_DIR, "code", "scraping", "ted_dates_5_panel.R"))
 }
 kfst_notice_dates <- readRDS(file.path(dirs$intermediates, "ted", "kfst_notice_dates.rds"))
-# Panel keys come from the raw xlsx read as text; match tender_lot_data's types (tender_id numeric,
-# lot_id character) so the join keys line up.
+# Panel keys come from the raw xlsx read as text; match tender_lot_data's types (both tender_id
+# and lot_id are character -- see the "P"-namespaced profylakse ids at load) so the keys line up.
 kfst_notice_dates <- kfst_notice_dates %>%
-  mutate(tender_id = as.numeric(tender_id), lot_id = as.character(lot_id))
+  mutate(tender_id = as.character(tender_id), lot_id = as.character(lot_id))
 tender_lot_data <- left_join(tender_lot_data, kfst_notice_dates, by = c("tender_id", "lot_id"))
 
 
