@@ -403,8 +403,15 @@ tender_lot_data <- data %>%
 ## has no KFST date panel yet, so the source() calls build the whole date chain -- fetching all OT+KFST
 ## notice XML into the (Box) cache, cache-first + resumable -- and writing BOTH the OT and KFST panels.
 ## Because run_replication runs 1_1 before 1_2, this is where the one-time full fetch happens.
-detect_kfst_notice_dates <- file.exists(file.path(dirs$intermediates, "ted", "kfst_notice_dates.rds"))
-if (!detect_kfst_notice_dates) {
+# Rebuild the KFST TED notice-date panel when it is MISSING or when REBUILD_TED_DATES is set.
+# run_replication.sh exports REBUILD_TED_DATES=true, so a plain pipeline rerun always refreshes the
+# panel -- picking up any change to award_universe()/kfst_award_map() (e.g. the 2.1 profylakse/direct-
+# award notices) without a manual cache delete. The fetch is cache-first (only new notice XML is pulled),
+# so the refresh is cheap on reruns. A standalone `Rscript 1_1` (no flag) reuses the cached panel.
+panel_file <- file.path(dirs$intermediates, "ted", "kfst_notice_dates.rds")
+rebuild_ted_dates <- !file.exists(panel_file) ||
+  tolower(Sys.getenv("REBUILD_TED_DATES", "false")) %in% c("true", "1", "yes")
+if (rebuild_ted_dates) {
   source(file.path(PROJECT_DIR, "code", "scraping", "ted_dates_1_fetch.R"))
   source(file.path(PROJECT_DIR, "code", "scraping", "ted_dates_2_lineage.R"))
   source(file.path(PROJECT_DIR, "code", "scraping", "ted_dates_3_extract.R"))
