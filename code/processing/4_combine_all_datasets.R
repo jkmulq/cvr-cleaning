@@ -76,7 +76,20 @@ combined <- combined[!is.na(cvr_final) & cvr_final != ""]
 for (cc in intersect(c("winner_country", "buyer_country"), names(combined)))
   combined[, (cc) := standardise_country(get(cc))]
 
-combined[, dataset := factor(dataset, levels = c("production", "extraction"))]
+# Null negative "not disclosed" sentinels in count columns. TED legacy XML uses -1 (and -2 when summed over
+# lots) for undisclosed tender counts; these are MISSINGS, not real counts, so map <0 -> NA (all missings
+# are NA regardless of type -- character counts like n_bids_received are coerced to check the sign).
+for (cc in intersect(c("n_bidders", "n_tenders_sme", "n_tenders_received", "n_bids_received"), names(combined))) {
+  x <- combined[[cc]]
+  if (is.numeric(x)) {
+    combined[which(x < 0), (cc) := NA]
+  } else {
+    xi <- suppressWarnings(as.integer(x))
+    combined[which(!is.na(xi) & xi < 0), (cc) := NA_character_]
+  }
+}
+
+combined[, dataset := factor(dataset, levels = c("production", "extraction", "name_match"))]
 
 # lead with the sample-selection + key identity columns, then everything else
 lead <- intersect(c("data_source","entity","dataset","cvr_method","tender_id","lot_id",
