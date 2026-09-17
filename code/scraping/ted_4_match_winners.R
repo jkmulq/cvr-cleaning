@@ -432,10 +432,10 @@ winner_data[, flag_verify_cvr_external_final := fcase(
   default = FALSE
 )]
 
-# 7c Lineage dates + annualised amounts from the TED notice-date panel (built by the
-#    ted_dates_* chain: award->competition->planning dates + the framework duration
-#    from the competition notice, keyed by the award notice = TED notice_id). This
-#    mirrors the OT/KFST lineage-date join; first-time replication builds the panel.
+# 7c Lineage dates from the TED notice-date panel (built by the ted_dates_* chain:
+#    award->competition->planning dates, keyed by the award notice = TED notice_id).
+#    This mirrors the OT/KFST lineage-date join; first-time replication builds the panel.
+#    (Annualisation is done centrally in 4_combine from contract_duration_months.)
 ted_panel_file <- file.path(ted_dir, "ted_notice_dates.rds")
 if (!file.exists(ted_panel_file)) {
   source(file.path(PROJECT_DIR, "code", "scraping", "ted_dates_1_fetch.R"))
@@ -450,18 +450,11 @@ lineage_date_cols <- c(
   "award_dispatch_date", "award_publication_date", "award_tender_deadline_date", "award_contract_date")
 winner_data <- merge(
   winner_data,
-  ted_dates_panel[, c("notice_id", lineage_date_cols, "framework_duration_days"), with = FALSE],
+  ted_dates_panel[, c("notice_id", lineage_date_cols), with = FALSE],
   by = "notice_id", all.x = TRUE, sort = FALSE)
 
-# Annualise framework amounts: total / duration_days * 365, for frameworks with a positive duration
-# (the > 0 guard avoids divide-by-zero). Non-frameworks / missing duration stay NA (as in 1_2).
-winner_data[, annualised_tender_amount := fifelse(
-  is_framework %in% TRUE & !is.na(framework_duration_days) & framework_duration_days > 0,
-  tender_amount / framework_duration_days * 365, NA_real_)]
-winner_data[, annualised_lot_amount := fifelse(
-  is_framework %in% TRUE & !is.na(framework_duration_days) & framework_duration_days > 0,
-  lot_amount / framework_duration_days * 365, NA_real_)]
-winner_data[, framework_duration_days := NULL]
+# Annualised amounts are computed centrally in 4_combine for all sources and all contract types,
+# standardised on contract_duration_months (built in ted_3 from the TED II.2.7 duration).
 
 # Rows for manual review
 manual_name_review <- winner_data[flag_manual_name_review == TRUE,
