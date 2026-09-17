@@ -186,16 +186,23 @@ combined <- unique(combined, by = ukey)
 combined[, .row_na := NULL]
 cat(sprintf("uniqueness collapse: %d -> %d rows (removed %d duplicate (source,entity,tender,lot,CVR) rows)\n",
             n_before_unique, nrow(combined), n_before_unique - nrow(combined)))
-# annualised_* are in the original currency; add EUR/DKK variants by scaling with each amount's own
-# original->EUR/DKK conversion ratio (NA where the base amount is missing/zero).
-for (b in c("tender", "lot")) {
-  base <- paste0("annualised_", b, "_amount"); amt <- paste0(b, "_amount")
-  if (all(c(base, amt, paste0(amt, "_eur"), paste0(amt, "_dkk")) %in% names(combined))) {
-    r_eur <- combined[[paste0(amt, "_eur")]] / combined[[amt]]
-    r_dkk <- combined[[paste0(amt, "_dkk")]] / combined[[amt]]
-    set(combined, j = paste0(base, "_eur"), value = combined[[base]] * ifelse(is.finite(r_eur), r_eur, NA_real_))
-    set(combined, j = paste0(base, "_dkk"), value = combined[[base]] * ifelse(is.finite(r_dkk), r_dkk, NA_real_))
+# Annualise amounts for ALL contract types (not just frameworks), standardised on the harmonised
+# contract_duration_months (= KFST mean(min,max) / OT native months / TED days/30.44): per-year value =
+# amount / contract_duration_months * 12, for any row with a positive duration. This OVERRIDES the old
+# per-source framework-only, day-vs-month annualisation (single source of truth here). Each currency variant
+# (original / _eur / _dkk) is annualised from its own amount column; rows with no positive duration -> NA.
+if ("contract_duration_months" %in% names(combined)) {
+  dm <- suppressWarnings(as.numeric(combined[["contract_duration_months"]]))
+  ok <- !is.na(dm) & dm > 0
+  for (a in c("tender", "lot")) for (suff in c("", "_eur", "_dkk")) {
+    src <- paste0(a, "_amount", suff); tgt <- paste0("annualised_", a, "_amount", suff)
+    if (src %in% names(combined)) {
+      v <- rep(NA_real_, nrow(combined))
+      v[ok] <- suppressWarnings(as.numeric(combined[[src]][ok])) / dm[ok] * 12
+      set(combined, j = tgt, value = v)
+    }
   }
+  cat(sprintf("annualised amounts: %d rows with positive duration (all contract types) via contract_duration_months\n", sum(ok)))
 }
 
 # ---- Column selection for the secure server ----
