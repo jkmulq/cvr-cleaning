@@ -260,3 +260,39 @@ cmb %>%
   arrange(data_source, entity) %>%
   kable(caption = "Production vs extraction (tender, lot, CVR) coverage and overlap, per source/entity (from the combined)")
 ```
+
+## Production vs extraction agreement (within source, lot level)
+
+Within a single source `lot_id` is comparable (unlike across sources), so we can measure how much the two
+CVR-resolution methods agree per lot. For each `(tender, lot)` where **both** methods produced a CVR, the
+share is the Jaccard `|prod ∩ extr| / |prod ∪ extr|`; `mean_share_pct` is the unweighted mean over lots,
+`wtd_mean_share_pct` weights each lot by its union size (pooled), and `incomplete_mean_share_pct` is the mean
+over only the `n_incomplete` lots without complete agreement. TED has no extraction method, so it does not appear.
+
+```{r prod-extr-agreement}
+pe_sets <- cmb %>%
+  filter(is_valid_cvr(cvr_final)) %>%
+  mutate(cvr = norm_cvr(cvr_final)) %>%
+  group_by(data_source, entity, tender_id, lot_id) %>%
+  summarise(prod = list(sort(unique(cvr[grepl("production", cvr_method)]))),
+            extr = list(sort(unique(cvr[grepl("extraction", cvr_method)]))), .groups = "drop") %>%
+  filter(lengths(prod) > 0 & lengths(extr) > 0) %>%      # comparable = both methods present in the lot
+  mutate(inter = map2_int(prod, extr, ~ length(intersect(.x, .y))),
+         uni   = map2_int(prod, extr, ~ length(union(.x, .y))),
+         share = inter / uni,
+         exact = map2_lgl(prod, extr, setequal),
+         anyc  = inter > 0)
+
+pe_sets %>%
+  group_by(data_source, entity) %>%
+  summarise(comparable_lots           = n(),
+            exact_pct                 = round(100 * mean(exact), 1),
+            any_common_pct            = round(100 * mean(anyc), 1),
+            mean_share_pct            = round(100 * mean(share), 1),
+            wtd_mean_share_pct        = round(100 * sum(inter) / sum(uni), 1),
+            n_incomplete              = sum(share < 1),
+            incomplete_mean_share_pct = ifelse(any(share < 1), round(100 * mean(share[share < 1]), 1), NA_real_),
+            .groups = "drop") %>%
+  arrange(data_source, entity) %>%
+  kable(caption = "Production vs extraction CVR agreement WITHIN each source, at the lot level (lots with both methods present)")
+```
