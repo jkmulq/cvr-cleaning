@@ -132,6 +132,13 @@ rebuilt <- rbind(prod_rows, extr_rows, nm_rows)[
   by = .(data_source, entity, method, tender_id, lot_id)]
 
 kcols <- c("data_source", "entity", "method", "tender_id", "lot_id")
+# 4_combine standardises blank strings to NA, but the pre-dedup references (saved by 3_* BEFORE that step)
+# keep an empty tender_id/lot_id as "". TED notice-level rows legitimately have an empty lot_id, so the same
+# (tender, CVR) would otherwise bucket under lot_id="" in the reference vs lot_id=NA in the rebuilt and
+# spuriously mismatch. Treat "" and NA identically on the key columns before comparing.
+for (dt in list(ref, rebuilt)) for (kc in c("tender_id", "lot_id")) {
+  dt[!is.na(get(kc)) & trimws(get(kc)) == "", (kc) := NA_character_]
+}
 setorderv(ref, kcols)
 setorderv(rebuilt, kcols)
 # identical() on the sorted tables (as data.frames -- data.tables carry an internal pointer that makes
@@ -191,6 +198,66 @@ if (n_untraced == 0L) {
   print(head(ex[!raw_field, on = .(tender_id, lot_id, cvr)], 5))
   failures <- c(failures, sprintf("6: %d untraceable KFST extraction CVRs", n_untraced))
 }
+
+# 7 Informational data-quality metrics -- NON-GATING. Surfaces distributional/coverage signals from the
+#   raw-reconciliation review (CVR validity, contract_nature domain, direct-award namespacing, currency peg,
+#   is_winner coverage, annualisation consistency, duration plausibility). Wrapped so a metric erroring can
+#   never stop the pipeline; these WARN only and are excluded from `failures`.
+message("\n--- 7. Informational data-quality metrics (non-gating) ---")
+tryCatch({
+  fd <- final_data; pk <- c("data_source", "entity")
+
+  # 7a cvr_final validity: ~100% clean 8-digit expected (NA already dropped upstream).
+  print(fd[, .(rows = .N, pct_cvr_8digit = round(100 * mean(grepl("^[0-9]{8}$", cvr_final)), 3)), by = pk][order(data_source, entity)])
+
+  # 7b contract_nature: out-of-domain count (want 0), coverage + cpv-mismatch rate by source.
+  if ("contract_nature" %in% names(fd)) {
+    ood <- fd[!is.na(contract_nature) & !(tolower(contract_nature) %chin% c("works", "services", "supplies")), .N]
+    message(sprintf("7b contract_nature out-of-domain values: %d (want 0)", ood))
+    print(fd[, .(contract_nature_cov = round(100 * mean(!is.na(contract_nature)), 1),
+                 cpv_mismatch_pct = if ("flag_nature_cpv_mismatch" %in% names(fd)) round(100 * mean(flag_nature_cpv_mismatch, na.rm = TRUE), 2) else NA_real_),
+             by = data_source][order(data_source)])
+  }
+
+  # 7c KFST direct_award <-> "P" namespacing (want the 2nd and 3rd counts = 0).
+  kf <- fd[data_source == "KFST"]
+  message(sprintf("7c KFST direct_award vs 'P'-id: P&TRUE=%d | P&not-TRUE=%d | non-P&TRUE=%d",
+                  kf[grepl("^P", tender_id) & direct_award %in% TRUE, .N],
+                  kf[grepl("^P", tender_id) & !(direct_award %in% TRUE), .N],
+                  kf[!grepl("^P", tender_id) & direct_award %in% TRUE, .N]))
+
+  # 7d currency peg (dkk/eur ~ 7.46038) + currency-label gaps.
+  for (a in c("tender", "lot")) {
+    ec <- paste0(a, "_amount_eur"); dc <- paste0(a, "_amount_dkk")
+    if (all(c(ec, dc) %in% names(fd))) {
+      ok <- !is.na(fd[[ec]]) & !is.na(fd[[dc]]) & fd[[ec]] != 0
+      if (any(ok)) { r <- fd[[dc]][ok] / fd[[ec]][ok]
+        message(sprintf("7d %s_amount dkk/eur: min=%.5f median=%.5f max=%.5f | off-peg(>0.1%%)=%d",
+                        a, min(r), median(r), max(r), sum(abs(r - 7.46038) / 7.46038 > 0.001))) }
+    }
+  }
+  if ("currency" %in% names(fd))
+    message(sprintf("7d currency label blank but _eur/_dkk populated: %d rows (amounts fine; label only)",
+                    fd[(is.na(currency) | trimws(currency) == "") & (!is.na(tender_amount_dkk) | !is.na(tender_amount_eur)), .N]))
+
+  # 7e is_winner coverage by source/entity (OT is expected all-NA -> use is_awarded_winner there).
+  if ("is_winner" %in% names(fd))
+    print(fd[, .(is_winner_cov = round(100 * mean(!is.na(is_winner)), 1)), by = pk][order(data_source, entity)])
+
+  # 7f annualisation recompute: annualised_tender_amount == tender_amount / contract_duration_months * 12.
+  if (all(c("annualised_tender_amount", "tender_amount", "contract_duration_months") %in% names(fd))) {
+    dm <- suppressWarnings(as.numeric(fd$contract_duration_months))
+    okd <- !is.na(dm) & dm > 0 & !is.na(fd$tender_amount) & !is.na(fd$annualised_tender_amount)
+    rec <- fd$tender_amount[okd] / dm[okd] * 12
+    message(sprintf("7f annualised_tender_amount recompute mismatches: %d of %d checkable rows (want 0)",
+                    sum(abs(rec - fd$annualised_tender_amount[okd]) > 1e-6 * pmax(1, abs(fd$annualised_tender_amount[okd]))), sum(okd)))
+  }
+
+  # 7g duration plausibility: implausibly long contract_duration_months (source data-entry errors).
+  if ("contract_duration_months" %in% names(fd))
+    message(sprintf("7g contract_duration_months > 600 months (~>50yr, implausible): %d rows",
+                    fd[!is.na(contract_duration_months) & contract_duration_months > 600, .N]))
+}, error = function(e) message("7: informational metrics errored (non-fatal): ", conditionMessage(e)))
 
 # ---- Summary: stop if any check failed, so 98_ can gate the pipeline ----
 if (length(failures)) {
