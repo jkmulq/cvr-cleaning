@@ -41,10 +41,22 @@ kfst_award_map <- function() {
                       award_url = character(), award_notice_id = character())
   xlsx <- file.path(dirs$raw_data, "kfst", "udbudsdata_kfst.xlsx")
   if (!file.exists(xlsx)) return(empty)
-  k <- as.data.table(readxl::read_excel(xlsx, sheet = "2.0 Udbudsdata", col_types = "text"))
-  k <- k[, .(tender_id = `Løbenummer`, lot_id = `Nummerplade`,
-             award_url = `Link til bekendtgørelse om indgået kontrakt`)]
-  k <- k[!is.na(award_url) & trimws(award_url) != ""]
+  sheets <- readxl::excel_sheets(xlsx)
+  # Read one KFST sheet's (tender_id, lot_id, award_url), prefixing the ids. The 2.1
+  # Profylaksebekendtgørelser (direct-award) sheet numbers its ids independently from 1, so its
+  # tender_id/lot_id are "P"-namespaced -- EXACTLY as in the 1_1 bind (code/processing/1_1_process_kfst.R)
+  # -- so the panel keys line up with the cleaned KFST rows on the (tender_id, lot_id) join.
+  read_sheet <- function(pattern, prefix) {
+    nm <- grep(pattern, sheets, value = TRUE)[1]
+    if (is.na(nm)) return(empty[, .(tender_id, lot_id, award_url)])
+    d <- as.data.table(readxl::read_excel(xlsx, sheet = nm, col_types = "text"))
+    d <- d[, .(tender_id = paste0(prefix, `Løbenummer`),
+               lot_id    = paste0(prefix, `Nummerplade`),
+               award_url = `Link til bekendtgørelse om indgået kontrakt`)]
+    d[!is.na(award_url) & trimws(award_url) != ""]
+  }
+  k <- rbindlist(list(read_sheet("^2\\.0 Udbudsdata", ""),   # ordinary tenders
+                      read_sheet("Profylakse",        "P")))  # direct awards
   if (!nrow(k)) return(empty)
   k[, award_notice_id := derive_notice_id(award_url)]
   unique(k[!is.na(award_notice_id)], by = c("tender_id", "lot_id", "award_notice_id"))
