@@ -306,9 +306,9 @@ winner_data[, flag_cvr_final_in_registry :=
 # Mirrors the derivations in 1_2 (cleaning) / 2_3 (matching) so the TED build
 # carries the same columns. TED-specific source columns (amount_awarded,
 # date_contract_award, cpv_main, ...) are kept AND aliased to the shared names.
-# Lineage dates (planning_*/competition_*/award_*) and the annualised amounts
-# depend on the notice-date panel + competition-notice duration and are added
-# in ted_4b (part 7c below reserves the columns).
+# Lineage dates (planning_*/competition_*/award_*) depend on the notice-date panel
+# and are added in part 7c below. Annualised amounts are derived centrally in
+# 4_combine from contract_duration_months (all sources, all contract types).
 # ============================================================================
 
 # --- Core field aliases (same data, shared names) ---
