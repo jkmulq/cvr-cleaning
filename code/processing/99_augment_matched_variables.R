@@ -2,8 +2,9 @@
 # re-running the (~10 hour) name-matching scripts.
 #
 # The tender/lot-level variables (awarded flag, award/framework end dates,
-# contract duration, annualised amounts, ...) are produced by the fast
-# processing scripts (1_1, 1_2); the matching step never changes them. This
+# contract duration, ...) are produced by the fast processing scripts (1_1, 1_2);
+# the matching step never changes them. (Annualised amounts are derived later, in
+# 4_combine.) This
 # script joins them from the freshly-regenerated clean data onto the existing
 # *_name_matched.rds files by a stable row key, in place.
 #
@@ -41,8 +42,8 @@ vars <- c(
   "framework_duration_days",        # OpenTender
   "contract_duration_months_min",   # KFST
   "contract_duration_months_max",   # KFST
-  "annualised_tender_amount",
-  "annualised_lot_amount",
+  # annualised_* are no longer produced by 1_1/1_2; they are derived centrally in
+  # 4_combine from contract_duration_months (all sources, all contract types).
   "tender_amount_eur",              # both sources (EUR/DKK at the fixed ERM II peg)
   "tender_amount_dkk",
   "lot_amount_eur",
