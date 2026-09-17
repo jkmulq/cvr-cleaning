@@ -43,8 +43,8 @@ spec <- list(
   list("ot_winner_datasets_stacked.rds",         stack_dir, "OpenTender", "winner", TRUE),
   list("ot_buyer_datasets_stacked.rds",          stack_dir, "OpenTender", "buyer",  TRUE),
   list("clean_buyer_data_kfst_name_matched.rds", clean,     "KFST",       "buyer",  FALSE),
-  list("clean_winner_data_ted_name_matched.rds", clean,     "TED",        "winner", FALSE),
-  list("clean_buyer_data_ted_name_matched.rds",  clean,     "TED",        "buyer",  FALSE)
+  list("ted_winner_datasets_stacked.rds",        stack_dir, "TED",        "winner", TRUE),
+  list("ted_buyer_datasets_stacked.rds",         stack_dir, "TED",        "buyer",  TRUE)
 )
 
 parts <- lapply(spec, function(s) {
@@ -110,7 +110,7 @@ for (s in spec) {
   if (nrow(fsetdiff(ok, ck)) || nrow(fsetdiff(ck, ok)))
     stop(sprintf("selection check: (%s, %s) slice does not reproduce %s", src, ent, f), call. = FALSE)
   if (is_stack) {
-    for (m in c("production", "extraction")) {
+    for (m in c("production", "extraction", "name_match")) {
       ok2 <- unique(o[grepl(m, cvr_method), .(tender_id, lot_id, cvr = get(cvrcol))])
       ck2 <- unique(combined[data_source == src & entity == ent & grepl(m, cvr_method),
                              .(tender_id, lot_id, cvr = cvr_final)])
@@ -177,13 +177,32 @@ ren <- c(flag_cvr_final_in_registry = "flag_valid_cvr_in_registry",
          type = "kfst_consortium_split_method", valid_cvr = "valid_cvr_before_match")
 for (old in names(ren)) if (old %in% names(combined)) setnames(combined, old, ren[[old]])
 
-# cvr_method (production / extraction / production; extraction) lists the method(s) that produced each
-# (tender, lot, CVR). It is built in the 3_* stack builders and set to "production" for the matched-only
-# sources above, so it is already present on every row. build_prod / build_extr are convenience booleans
-# derived from it -- a row is in the production sample if cvr_method mentions "production" and the
-# extraction sample if it mentions "extraction" -- kept alongside cvr_method for filtering convenience.
-combined[, build_prod := grepl("production", cvr_method)]
-combined[, build_extr := grepl("extraction", cvr_method)]
+# cvr_method (";"-joined production / extraction / name_match) lists the method(s) that produced each
+# (tender, lot, CVR). It is built in the 3_* stack builders (KFST/OT winner, OT buyer, TED winner/buyer)
+# and set to "production" for the sole remaining matched-only source (KFST buyer) above, so it is already
+# present on every row. KFST buyers have NO source-CVR field -- their production CVR IS the name-matched CVR
+# -- so tag them name_match too (they are inherently the name-only sample -- no field CVR to differ).
+# build_prod / build_extr / build_name_match are convenience booleans derived from cvr_method (a row is in
+# a sample if cvr_method mentions that method) -- kept alongside cvr_method for filtering convenience.
+combined[data_source == "KFST" & entity == "buyer", cvr_method := "production; name_match"]
+combined[, build_prod       := grepl("production", cvr_method)]
+combined[, build_extr       := grepl("extraction", cvr_method)]
+combined[, build_name_match := grepl("name_match", cvr_method)]
+
+# Currency label: TED carries its native (multi-)currency; KFST amounts are always DKK and OpenTender
+# always EUR, but those two sources leave the `currency` string blank. Fill it so the column is complete
+# cross-source -- the *_eur/*_dkk amounts were already converted per-source, this only labels them, and
+# TED's native values are left untouched.
+if ("currency" %in% names(combined)) {
+  combined[data_source == "KFST"       & (is.na(currency) | trimws(currency) == ""), currency := "DKK"]
+  combined[data_source == "OpenTender" & (is.na(currency) | trimws(currency) == ""), currency := "EUR"]
+}
+
+# QC cross-check: the buyer-declared contract nature (contract_nature, from KFST Kontrakttype / OT
+# tender_supplyType / TED contract_nature) vs the CPV-derived cpv_category. They agree ~97%; TRUE flags the
+# ~3% where they differ (declared is generally authoritative; cpv_category is inferred from the first CPV).
+combined[, flag_nature_cpv_mismatch := !is.na(contract_nature) & !is.na(cpv_category) &
+           tolower(contract_nature) != tolower(cpv_category)]
 
 # ---- Safety net: enforce one row per (data_source, entity, tender_id, lot_id, cvr_final) ----
 # Every source now delivers this grain upstream: the three stacks are CVR-level unique (3_1/3_2/3_3), and
@@ -229,7 +248,7 @@ if ("contract_duration_months" %in% names(combined)) {
 # future/unreviewed column is dropped by default and logged -- a new column can never silently ship.
 # cvr_final stays: it is the authorised key that links to the register on the server.
 keep_cols <- c(
-  "data_source", "entity", "cvr_method", "build_prod", "build_extr", "tender_id", "lot_id", "cvr_final",
+  "data_source", "entity", "cvr_method", "build_prod", "build_extr", "build_name_match", "tender_id", "lot_id", "cvr_final",
   "is_awarded_winner", "cvr_number_source", "ot_source_file", "consortium_flag",
   "semi_tier", "registry_score", "is_consortium", "type",
   "contract_type", "n_lots", "n_lots_announced",
@@ -238,7 +257,7 @@ keep_cols <- c(
   "flag_all_orig_lot_amt_missing", "n_bidders", "pub_date", "award_date",
   "submit_date", "divided_tender", "joint_tender", "consortium_winner",
   "cpv_code", "cpv_code_first", "cpv_division", "cpv_division_name", "cpv_sector", "cpv_category",
-  "tender_cancelled", "tender_status", "flag_awarded",
+  "tender_cancelled", "tender_status", "flag_awarded", "flag_nature_cpv_mismatch",
   "contract_duration_months_min", "contract_duration_months_max", "award_end_date", "annualised_tender_amount",
   "annualised_lot_amount", "n_lot_id", "ted_notice_id", "planning_dispatch_date",
   "planning_publication_date", "planning_tender_deadline_date", "competition_dispatch_date", "competition_publication_date",
@@ -323,7 +342,7 @@ combined <- combined[, ..keep_present]
 ord_core   <- c("data_source", "tender_id", "lot_id", "ted_notice_id", "entity")
 ord_cvr    <- c("cvr_final", "cvr_name_match", "cvr_recovered_from_formatting")   # final -> less final
 ord_prov   <- c("cvr_number_source")
-ord_select <- c("cvr_method", "build_prod", "build_extr", "is_winner", "is_awarded_winner")
+ord_select <- c("cvr_method", "build_prod", "build_extr", "build_name_match", "is_winner", "is_awarded_winner")
 ord_tender <- c(
   "contract_type", "contract_nature", "n_lots", "n_lots_announced", "n_lot_winners", "n_lot_id",
   "n_bidders", "n_tenders_received", "n_tenders_sme", "n_winners_extracted", "n_buyers_extracted", "n_buyers_listed_original",
