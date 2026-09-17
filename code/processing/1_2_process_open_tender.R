@@ -386,6 +386,12 @@ data <- data %>%
     cpv_category = cpv_prepared$category
   )
 
+## Declared contract nature (works/services/supplies) from OpenTender's own `tender_supplyType`, carried
+## alongside the CPV-derived cpv_category (they agree ~97%; the declared value is authoritative).
+data <- data %>%
+  mutate(contract_nature = dplyr::recode(toupper(trimws(tender_supplyType)),
+           SUPPLIES = "supplies", SERVICES = "services", WORKS = "works", .default = NA_character_))
+
 ## Tender awarded
 # Make a flag at the lot level for whether the lot is awarded.
 # I am strict here: only say TRUE if "yes", otherwise false

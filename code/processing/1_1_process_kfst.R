@@ -285,6 +285,16 @@ data <- data %>%
     cpv_category = cpv_prepared$category
   )
 
+## Declared contract nature (works/services/supplies) from the buyer's own `Kontrakttype` classification,
+## carried alongside the CPV-derived cpv_category (they agree ~98%; the declared value is authoritative).
+## The raw Danish `Kontrakttype` itself is dropped later by keep_cols in 4_combine.
+data <- data %>%
+  mutate(contract_nature = dplyr::case_when(
+    Kontrakttype == "Varekøb"                     ~ "supplies",
+    Kontrakttype == "Levering af tjenesteydelser" ~ "services",
+    Kontrakttype == "Bygge- og anlægsarbejder"    ~ "works",
+    TRUE ~ NA_character_))
+
 # Order columns nicely
 data <- data %>% 
   select(tender_id, lot_id, lot_number,
