@@ -1145,7 +1145,20 @@ empty_virk_name_table <- function(name_column = c("name", "binavn")) {
     gyldigtil = character(),
     registration_date = character(),
     lifecycle_start = character(),
-    lifecycle_end = character()
+    lifecycle_end = character(),
+    # firm metadata (extract_virk_metadata) -- keep this list in sync with that function
+    status = character(),
+    hovedbranche_code = character(), hovedbranche_text = character(),
+    bibranche_1_code = character(), bibranche_1_text = character(),
+    bibranche_2_code = character(), bibranche_2_text = character(),
+    bibranche_3_code = character(), bibranche_3_text = character(),
+    employee_interval = character(), antal_ansatte = character(),
+    fte_interval = character(), antal_aarsvaerk = character(),
+    employment_year = character(), employment_source = character(),
+    legal_form_code = character(), legal_form_text = character(),
+    hq_kommune_code = character(), hq_kommune_name = character(),
+    hq_postnummer = character(), hq_city = character(),
+    hq_street = character(), hq_country = character()
   )
 
   data.table::setnames(out, "registered_name", name_column)
@@ -1217,24 +1230,107 @@ extract_virk_lifecycle_summary <- function(firm) {
   )
 }
 
+# Parse a Virk address object (beliggenhedsadresse) into flat parts. NULL-safe -> NA when absent.
+virk_address_parts <- function(addr) {
+  if (is.null(addr) || length(addr) == 0) {
+    return(list(kommune_code = NA_character_, kommune_name = NA_character_,
+                postnummer = NA_character_, city = NA_character_,
+                street = NA_character_, country = NA_character_))
+  }
+  city <- virk_scalar(addr$postdistrikt)
+  if (is.na(city)) city <- virk_scalar(addr$bynavn)
+  list(
+    kommune_code = virk_scalar(addr$kommune$kommuneKode),
+    kommune_name = virk_scalar(addr$kommune$kommuneNavn),
+    postnummer   = virk_scalar(addr$postnummer),
+    city         = city,
+    street       = virk_scalar(addr$vejnavn),
+    country      = virk_scalar(addr$landekode)
+  )
+}
+
+# Firm-level metadata for the CVR-name registry key, from the current-snapshot `virksomhedMetadata` block:
+# sector (main + up to 3 secondary), current employee band, legal form, HQ location, and composite status.
+# One flat named list per firm; every field NULL-safe via virk_scalar() -> NA when Virk omits it.
+# (Birth date + active dates come from extract_virk_lifecycle_summary(), added alongside these.)
+# The latest reported employment snapshot. Virk has no single "current employees" field; the most recent
+# figure lives across the beskaeftigelse nodes -- prefer the latest reported month, then month, quarter,
+# year. Returns both the headcount and the FTE (aarsvaerk), each as an interval band + a point count.
+virk_latest_employment <- function(md) {
+  nodes <- list(md$nyesteErstMaanedsbeskaeftigelse, md$nyesteMaanedsbeskaeftigelse,
+                md$nyesteKvartalsbeskaeftigelse, md$nyesteAarsbeskaeftigelse)
+  srcs  <- c("erst_month", "month", "quarter", "year")
+  for (i in seq_along(nodes)) {
+    r <- nodes[[i]]
+    if (!is.null(r) && length(r) > 0) {
+      return(list(
+        employee_interval = virk_scalar(r$intervalKodeAntalAnsatte),
+        antal_ansatte     = virk_scalar(r$antalAnsatte),
+        fte_interval      = virk_scalar(r$intervalKodeAntalAarsvaerk),
+        antal_aarsvaerk   = virk_scalar(r$antalAarsvaerk),
+        employment_year   = virk_scalar(r$aar),
+        employment_source = srcs[i]
+      ))
+    }
+  }
+  list(employee_interval = NA_character_, antal_ansatte = NA_character_,
+       fte_interval = NA_character_, antal_aarsvaerk = NA_character_,
+       employment_year = NA_character_, employment_source = NA_character_)
+}
+
+extract_virk_metadata <- function(firm) {
+  md <- firm$virksomhedMetadata
+  hq <- virk_address_parts(md$nyesteBeliggenhedsadresse)
+  emp <- virk_latest_employment(md)
+  list(
+    status            = virk_scalar(md$sammensatStatus),
+    hovedbranche_code = virk_scalar(md$nyesteHovedbranche$branchekode),
+    hovedbranche_text = virk_scalar(md$nyesteHovedbranche$branchetekst),
+    bibranche_1_code  = virk_scalar(md$nyesteBibranche1$branchekode),
+    bibranche_1_text  = virk_scalar(md$nyesteBibranche1$branchetekst),
+    bibranche_2_code  = virk_scalar(md$nyesteBibranche2$branchekode),
+    bibranche_2_text  = virk_scalar(md$nyesteBibranche2$branchetekst),
+    bibranche_3_code  = virk_scalar(md$nyesteBibranche3$branchekode),
+    bibranche_3_text  = virk_scalar(md$nyesteBibranche3$branchetekst),
+    employee_interval = emp$employee_interval,
+    antal_ansatte     = emp$antal_ansatte,
+    fte_interval      = emp$fte_interval,
+    antal_aarsvaerk   = emp$antal_aarsvaerk,
+    employment_year   = emp$employment_year,
+    employment_source = emp$employment_source,
+    legal_form_code   = virk_scalar(md$nyesteVirksomhedsform$virksomhedsformkode),
+    legal_form_text   = virk_scalar(md$nyesteVirksomhedsform$langBeskrivelse),
+    hq_kommune_code   = hq$kommune_code,
+    hq_kommune_name   = hq$kommune_name,
+    hq_postnummer     = hq$postnummer,
+    hq_city           = hq$city,
+    hq_street         = hq$street,
+    hq_country        = hq$country
+  )
+}
+
 extract_virk_main_names <- function(firm) {
   if (is.null(firm$navne) || length(firm$navne) == 0) {
     return(empty_virk_name_table("name"))
   }
 
   lifecycle <- extract_virk_lifecycle_summary(firm)
+  meta <- extract_virk_metadata(firm)   # firm-level, replicated across the firm's name rows
 
   bind_virk_name_tables(
     lapply(firm$navne, function(name_record) {
-      data.table::data.table(
-        cvr = format_virk_cvr(firm$cvrNummer),
-        name = virk_scalar(name_record$navn),
-        gyldigfra = extract_virk_period(name_record, "gyldigFra"),
-        gyldigtil = extract_virk_period(name_record, "gyldigTil"),
-        registration_date = lifecycle$registration_date,
-        lifecycle_start = lifecycle$lifecycle_start,
-        lifecycle_end = lifecycle$lifecycle_end
-      )
+      do.call(data.table::data.table, c(
+        list(
+          cvr = format_virk_cvr(firm$cvrNummer),
+          name = virk_scalar(name_record$navn),
+          gyldigfra = extract_virk_period(name_record, "gyldigFra"),
+          gyldigtil = extract_virk_period(name_record, "gyldigTil"),
+          registration_date = lifecycle$registration_date,
+          lifecycle_start = lifecycle$lifecycle_start,
+          lifecycle_end = lifecycle$lifecycle_end
+        ),
+        meta
+      ))
     }),
     "name"
   )
@@ -1246,18 +1342,22 @@ extract_virk_binavne <- function(firm) {
   }
 
   lifecycle <- extract_virk_lifecycle_summary(firm)
+  meta <- extract_virk_metadata(firm)   # firm-level, replicated across the firm's binavn rows
 
   bind_virk_name_tables(
     lapply(firm$binavne, function(name_record) {
-      data.table::data.table(
-        cvr = format_virk_cvr(firm$cvrNummer),
-        binavn = virk_scalar(name_record$navn),
-        gyldigfra = extract_virk_period(name_record, "gyldigFra"),
-        gyldigtil = extract_virk_period(name_record, "gyldigTil"),
-        registration_date = lifecycle$registration_date,
-        lifecycle_start = lifecycle$lifecycle_start,
-        lifecycle_end = lifecycle$lifecycle_end
-      )
+      do.call(data.table::data.table, c(
+        list(
+          cvr = format_virk_cvr(firm$cvrNummer),
+          binavn = virk_scalar(name_record$navn),
+          gyldigfra = extract_virk_period(name_record, "gyldigFra"),
+          gyldigtil = extract_virk_period(name_record, "gyldigTil"),
+          registration_date = lifecycle$registration_date,
+          lifecycle_start = lifecycle$lifecycle_start,
+          lifecycle_end = lifecycle$lifecycle_end
+        ),
+        meta
+      ))
     }),
     "binavn"
   )
@@ -1285,7 +1385,9 @@ virk_lookup_source_fields <- function() {
     "Vrvirksomhed.navne",
     "Vrvirksomhed.binavne",
     "Vrvirksomhed.stiftelsesDato",
-    "Vrvirksomhed.livsforloeb"
+    "Vrvirksomhed.livsforloeb",
+    # current-snapshot firm metadata for the registry key (sector, employee band, legal form, HQ address, status)
+    "Vrvirksomhed.virksomhedMetadata"
   )
 }
 
