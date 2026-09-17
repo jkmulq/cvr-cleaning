@@ -342,28 +342,9 @@ data <- data %>%
     lot_amount_dkk    = lot_amount    * dkk_per_eur
   )
 
-## Annualised framework amounts
-# A framework agreement's amount covers its whole (multi-year) duration, so the
-# headline total is not comparable to a single-year contract. Annualise it:
-# amount per day (amount / framework_duration_days) scaled to a 365-day year.
-# framework_duration_days is the same duration used for framework_end_date above.
-# Framework agreements only, and only where the amount and a positive duration
-# are both present (the > 0 guard avoids divide-by-zero).
-data <- data %>%
-  mutate(
-    annualised_tender_amount = if_else(
-      contract_type == "Framework agreement" &
-        !is.na(framework_duration_days) & framework_duration_days > 0,
-      tender_amount / framework_duration_days * 365,
-      NA_real_
-    ),
-    annualised_lot_amount = if_else(
-      contract_type == "Framework agreement" &
-        !is.na(framework_duration_days) & framework_duration_days > 0,
-      lot_amount / framework_duration_days * 365,
-      NA_real_
-    )
-  )
+## Annualised amounts are computed centrally in 4_combine for all sources and all
+## contract types, standardised on contract_duration_months (amount / months * 12).
+## framework_duration_days is retained above only for framework_end_date.
 
 ## TED notice id (tender-level join key linking OpenTender to KFST + the TED extract).
 ## See derive_ted_notice_id() in functions.R.
