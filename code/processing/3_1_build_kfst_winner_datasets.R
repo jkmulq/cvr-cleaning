@@ -8,9 +8,11 @@
 # CVR collapse to one row (branch names are not needed downstream -- only the tender-lot-CVR triplet is).
 #
 # OUTPUT (data/clean/kfst_winner_datasets_stacked.rds):
-#   dataset     : "production" | "extraction" -- the method that produced the surviving row.
-#   cvr_method  : method(s) that produced the CVR -- "production", "extraction", or "production; extraction".
-#     Rebuild each sample EXACTLY: production = grepl("production", cvr_method); extraction = grepl("extraction", cvr_method).
+#   dataset     : "production" | "extraction" | "name_match" -- the method that produced the surviving row.
+#   cvr_method  : method(s) that produced the CVR, ";"-joined (e.g. "production", "production; extraction",
+#                 "production; name_match", "production; extraction; name_match").
+#     Rebuild each sample EXACTLY via grepl: production/extraction/name_match = grepl(<m>, cvr_method).
+#     name_match = re-run name-match-only CVRs (field CVR ignored); generated inline (section 2c).
 
 # 0 Prelims
 rm(list = ls()); source("config.R")
@@ -28,7 +30,7 @@ production[, dataset := "production"]
 # Lot-level context (shared-schema columns constant within a tender-lot) to attach to the extraction
 # rows. Built from base_raw so every lot has context, even lots whose production winners were all dropped.
 ctx_cols <- intersect(c(
-  "tender_id","lot_id","contract_type","lot_number","n_lots","n_bids_received","n_bidders",
+  "tender_id","lot_id","contract_type","contract_nature","lot_number","n_lots","n_bids_received","n_bidders",
   "award_date","submit_date","divided_tender","joint_tender","consortium_winner","tender_cancelled",
   "flag_awarded","tender_amount","tender_amount_eur","tender_amount_dkk","lot_amount","lot_amount_eur",
   "lot_amount_dkk","lot_amount_orig","flag_all_orig_lot_amt_missing","annualised_tender_amount",
@@ -37,7 +39,7 @@ ctx_cols <- intersect(c(
   "planning_tender_deadline_date","competition_dispatch_date","competition_publication_date",
   "competition_tender_deadline_date","award_dispatch_date","award_publication_date",
   "award_tender_deadline_date","award_contract_date",
-  "procedure_type","procedure_group","procedure_group_h","award_criteria","award_criteria_h",
+  "procedure_type","procedure_group","procedure_group_h","direct_award","award_criteria","award_criteria_h",
   "contract_duration_months","contract_duration_months_min","contract_duration_months_max",
   "is_framework","is_dps","eu_funded","subcontracted","n_award_criteria","price_weight"),
   names(base_raw))
@@ -54,6 +56,87 @@ extraction[, `:=`(winner_cvr_final = cvr, winner_cvr_clean = cvr, valid_cvr = TR
 extraction[, cvr := NULL][, dataset := "extraction"]
 extraction <- merge(extraction, lot_ctx, by = c("tender_id","lot_id"), all.x = TRUE)
 
+# 2c Name-match-only: re-run the exact+fuzzy matcher on EVERY DK winner name, IGNORING the field CVR, so
+#   winner_cvr_final = the name-matched CVR alone (the mirror image of extraction). Same primitives +
+#   thresholds (85/85/86/89) as 2_1; runs at script scope because keep_step_matches() uses <<-. The
+#   name-match CVR is surfaced ONLY via winner_cvr_final (winner_cvr_clean := NA) so no new CVR column is
+#   introduced. DK-gated; match_date = pub_date (same publication window 2_1 uses).
+nmo <- copy(base_raw)[, .(tender_id, lot_id, winner_number, winner_name, winner_country, pub_date)]
+.prep <- as.data.table(prepare_cvr_name(nmo$winner_name))
+nmo[, `:=`(winner_name_basic = .prep$name_basic, winner_name_no_spaces = .prep$name_no_spaces,
+           winner_name_broad = .prep$name_broad, winner_name_match = .prep$name_clean,
+           winner_firm_type = .prep$firm_type)]
+nmo[, `:=`(match_row_id = .I, winner_name_in_data = winner_name, match_date = as.IDate(pub_date))]
+name_key   <- as.data.table(readRDS(file.path(clean_data_dir, "clean_cvr_name_key.rds")))
+biname_key <- as.data.table(readRDS(file.path(clean_data_dir, "clean_cvr_biname_key.rds")))
+setnames(name_key, "name", "registered_name"); setnames(biname_key, "binavn", "registered_name")
+name_key[, name_source := "name"]; biname_key[, name_source := "biname"]
+name_key[, cvr := sprintf("%08d", as.integer(cvr))]; biname_key[, cvr := sprintf("%08d", as.integer(cvr))]
+name_key[, broad_first_letter := substr(name_broad, 1, 1)]; biname_key[, broad_first_letter := substr(name_broad, 1, 1)]
+cvr_key <- rbindlist(list(name_key, biname_key), use.names = TRUE)
+cvr_key[, source_order := fifelse(name_source == "name", 1L, 2L)]
+remaining <- nmo[toupper(trimws(winner_country)) == "DK" & !is.na(winner_name_match) & winner_name_match != "",
+  .(match_row_id, tender_id, lot_id, winner_number, winner_name_in_data, winner_name_basic,
+    winner_name_no_spaces, winner_name_broad, winner_name_match, winner_firm_type, match_date)]
+matched <- data.table(match_row_id = integer(0), cvr_name_match = character(0),
+  registered_name_match = character(0), name_match_source = character(0), name_match_step = integer(0),
+  name_match_method = character(0), name_match_score = numeric(0), name_match_n_candidates = integer(0))
+remaining_original <- copy(remaining)   # add_winner_context_to_matches() reads this from the caller
+.run_step <- function(on_cols, step) keep_step_matches(add_winner_context_to_matches(
+  select_preferred_exact_match(cvr_key[remaining, on = on_cols, nomatch = 0, allow.cartesian = TRUE], step = step)))
+.run_step(c(name_basic = "winner_name_basic", firm_type = "winner_firm_type"), 1L)
+.run_step(c(name_no_spaces = "winner_name_no_spaces", firm_type = "winner_firm_type"), 2L)
+.run_step(c(name_no_spaces = "winner_name_no_spaces"), 3L)
+.run_step(c(name_broad = "winner_name_broad"), 4L)
+fuzzy_match_cols <- c("winner_name_match", "winner_name_broad", "winner_firm_type", "match_date")
+remaining[, fuzzy_match_id := .GRP, by = fuzzy_match_cols]
+fuzzy_row_lookup <- remaining[, .(match_row_id, fuzzy_match_id)]
+remaining <- remaining[, .SD[1], by = fuzzy_match_id][, match_row_id := fuzzy_match_id]
+remaining_original <- copy(remaining)
+matched_prefuzzy <- copy(matched)
+.run_fuzzy <- function(key, ecol, kcol, flcol, step, thr) keep_step_matches(add_winner_context_to_matches(
+  accept_fuzzy_match(find_fuzzy_matches(remaining, key, entity_name_column = ecol, key_name_column = kcol,
+    first_letter_column = flcol, firm_type_column = "winner_firm_type", step = step), threshold = thr)))
+.run_fuzzy(name_key,   "winner_name_match", "name_match", "first_letter",       5L, 85)
+.run_fuzzy(biname_key, "winner_name_match", "name_match", "first_letter",       5L, 85)
+.run_fuzzy(name_key,   "winner_name_broad", "name_broad", "broad_first_letter", 6L, 86)
+.run_fuzzy(biname_key, "winner_name_broad", "name_broad", "broad_first_letter", 6L, 89)
+fuzzy_matched <- matched[name_match_method == "fuzzy"]
+if (nrow(fuzzy_matched) > 0)
+  fuzzy_matched <- fuzzy_row_lookup[fuzzy_matched, on = .(fuzzy_match_id = match_row_id),
+                                    allow.cartesian = TRUE][, fuzzy_match_id := NULL]
+matched <- rbindlist(list(matched_prefuzzy, fuzzy_matched), use.names = TRUE, fill = TRUE)
+km <- unique(matched[!is.na(cvr_name_match), .(match_row_id, winner_cvr_final = cvr_name_match,
+  name_match_source, name_match_step, name_match_method, name_match_score)])
+nmo <- merge(nmo, km, by = "match_row_id", all.x = TRUE)   # PURE name match: field CVR ignored
+for (qf in list(c("winner_name_match","name_match","cvr_name_match_quality"),
+                c("winner_name_basic","name_basic","cvr_name_match_quality_basic"),
+                c("winner_name_no_spaces","name_no_spaces","cvr_name_match_quality_nospaces"),
+                c("winner_name_broad","name_broad","cvr_name_match_quality_broad"))) {
+  .wc <- qf[1]; .kc <- qf[2]; .qc <- qf[3]
+  .rl <- unique(data.table(cvr = as.character(cvr_key$cvr), reg_name = cvr_key[[.kc]]))[!is.na(reg_name) & reg_name != ""]
+  .q  <- data.table(match_row_id = nmo$match_row_id, cvr = as.character(nmo$winner_cvr_final), win_name = nmo[[.wc]])
+  .q  <- merge(.q[!is.na(cvr) & cvr != "" & !is.na(win_name) & win_name != ""], .rl, by = "cvr", allow.cartesian = TRUE)
+  .q[, score := levenshtein_ratio(win_name, reg_name, pairwise = TRUE)]
+  setorder(.q, match_row_id, -score); .bq <- .q[, .SD[1L], by = match_row_id]
+  nmo[, (.qc) := NA_real_]; nmo[.bq, on = "match_row_id", (.qc) := i.score]
+  if (.qc == "cvr_name_match_quality") { nmo[, cvr_name_match_quality_name := NA_character_]
+    nmo[.bq, on = "match_row_id", cvr_name_match_quality_name := i.reg_name] }
+}
+nmo[, cvr_name_is_substring := NA]
+nmo[!is.na(cvr_name_match_quality_name) & !is.na(winner_name_match) & winner_name_match != "",
+    cvr_name_is_substring := str_detect(cvr_name_match_quality_name, fixed(winner_name_match))]
+name_match <- nmo[!is.na(winner_cvr_final) & winner_cvr_final != "",
+  .(tender_id, lot_id, winner_number, winner_name, winner_country, winner_cvr_final,
+    winner_cvr_clean = NA_character_, valid_cvr = TRUE, name_match_method, name_match_step,
+    cvr_number_source = "CVR from name matching only (field CVR ignored)", matching_candidate_type = NA_character_,
+    name_match_score, flag_name_match_found = TRUE, cvr_name_match_quality, cvr_name_match_quality_basic,
+    cvr_name_match_quality_nospaces, cvr_name_match_quality_broad, cvr_name_match_quality_name, cvr_name_is_substring)]
+name_match[, dataset := "name_match"]
+name_match <- unique(name_match, by = c("tender_id","lot_id","winner_cvr_final"))
+name_match <- merge(name_match, lot_ctx, by = c("tender_id","lot_id"), all.x = TRUE)
+rm(nmo, cvr_key, name_key, biname_key, remaining, matched); invisible(gc())
+
 # 2b Pre-dedup reference for 98_ (does the cross-method dedup destroy data?): per-lot sorted CVR lists
 #    of the production + extraction samples as built here, BEFORE the stack/dedup below. 98 compares
 #    these to the final combined's cvr_method reconstruction. No-CVR rows dropped to match
@@ -62,14 +145,16 @@ ref_prod <- production[!is.na(winner_cvr_final) & winner_cvr_final != "",
                        .(data_source = "KFST", entity = "winner", method = "production", tender_id, lot_id, cvr_final = winner_cvr_final)]
 ref_extr <- extraction[!is.na(winner_cvr_final) & winner_cvr_final != "",
                        .(data_source = "KFST", entity = "winner", method = "extraction", tender_id, lot_id, cvr_final = winner_cvr_final)]
-predup_ref <- rbind(ref_prod, ref_extr)[, .(cvr_list = paste(sort(cvr_final), collapse = ";")),
+ref_nm   <- name_match[!is.na(winner_cvr_final) & winner_cvr_final != "",
+                       .(data_source = "KFST", entity = "winner", method = "name_match", tender_id, lot_id, cvr_final = winner_cvr_final)]
+predup_ref <- rbind(ref_prod, ref_extr, ref_nm)[, .(cvr_list = paste(sort(cvr_final), collapse = ";")),
                                         by = .(data_source, entity, method, tender_id, lot_id)]
 chk_dir <- file.path(clean_data_dir, "checks"); dir.create(chk_dir, showWarnings = FALSE, recursive = TRUE)
 saveRDS(predup_ref, file.path(chk_dir, "predup_cvr_lists_kfst_winner.rds"))
 
 # 3 Stack the two methods; extraction rows get NA for the production-only columns via fill = TRUE.
-stacked <- rbindlist(list(production, extraction), use.names = TRUE, fill = TRUE)
-stacked[, dataset := factor(dataset, levels = c("production","extraction"))]
+stacked <- rbindlist(list(production, extraction, name_match), use.names = TRUE, fill = TRUE)
+stacked[, dataset := factor(dataset, levels = c("production","extraction","name_match"))]
 stacked[, is_awarded_winner := awarded_winner(stacked)]   # flag_awarded (stacks carry no is_winner)
 
 # 4 CVR-level dedup -> ONE row per distinct (tender_id, lot_id, winner_cvr_final). `cvr_method` lists the
@@ -96,20 +181,26 @@ setcolorder(stacked_deduped, c(lead, setdiff(names(stacked_deduped), lead)))
 #   Per tender-lot, compare the sorted CVR list of each original sample against its rebuilt version; halt if off.
 .prod_orig  <- production[,     .(l = paste(sort(winner_cvr_final), collapse = ";")), by = .(tender_id, lot_id)]
 .extr_orig  <- extraction[,     .(l = paste(sort(winner_cvr_final), collapse = ";")), by = .(tender_id, lot_id)]
+.nm_orig    <- name_match[,      .(l = paste(sort(winner_cvr_final), collapse = ";")), by = .(tender_id, lot_id)]
 .prod_built <- stacked_deduped[grepl("production", cvr_method), .(l = paste(sort(winner_cvr_final), collapse = ";")), by = .(tender_id, lot_id)]
 .extr_built <- stacked_deduped[grepl("extraction", cvr_method), .(l = paste(sort(winner_cvr_final), collapse = ";")), by = .(tender_id, lot_id)]
+.nm_built   <- stacked_deduped[grepl("name_match", cvr_method), .(l = paste(sort(winner_cvr_final), collapse = ";")), by = .(tender_id, lot_id)]
 .pm <- merge(.prod_orig, .prod_built, by = c("tender_id","lot_id"), all = TRUE, suffixes = c("_orig","_built"))
 .em <- merge(.extr_orig, .extr_built, by = c("tender_id","lot_id"), all = TRUE, suffixes = c("_orig","_built"))
+.nmm <- merge(.nm_orig, .nm_built, by = c("tender_id","lot_id"), all = TRUE, suffixes = c("_orig","_built"))
 if (anyNA(.pm$l_orig) || anyNA(.pm$l_built) || !all(.pm$l_orig == .pm$l_built))
   stop("cvr_method does not reproduce the production sample (tender-lot CVR-list mismatch).", call. = FALSE)
 if (anyNA(.em$l_orig) || anyNA(.em$l_built) || !all(.em$l_orig == .em$l_built))
   stop("cvr_method does not reproduce the extraction sample (tender-lot CVR-list mismatch).", call. = FALSE)
-cat("  self-check passed: cvr_method rebuilds production and extraction exactly.\n")
+if (anyNA(.nmm$l_orig) || anyNA(.nmm$l_built) || !all(.nmm$l_orig == .nmm$l_built))
+  stop("cvr_method does not reproduce the name_match sample (tender-lot CVR-list mismatch).", call. = FALSE)
+cat("  self-check passed: cvr_method rebuilds production, extraction and name_match exactly.\n")
 
 out_path <- Sys.getenv("KFST_STACK_OUT", unset = file.path(clean_data_dir, "kfst_winner_datasets_stacked.rds"))
 save_dataset(stacked_deduped, out_path)   # .rds (canonical) + .csv + .parquet
 cat(sprintf("kfst_winner_datasets_stacked.rds: %d rows, %d cols\n", nrow(stacked_deduped), ncol(stacked_deduped)))
 print(stacked_deduped[, .N, by = dataset][order(dataset)])
-cat(sprintf("  rebuild: production=%d | extraction=%d\n",
+cat(sprintf("  rebuild: production=%d | extraction=%d | name_match=%d\n",
             sum(grepl("production", stacked_deduped$cvr_method)),
-            sum(grepl("extraction", stacked_deduped$cvr_method))))
+            sum(grepl("extraction", stacked_deduped$cvr_method)),
+            sum(grepl("name_match", stacked_deduped$cvr_method))))
