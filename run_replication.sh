@@ -12,8 +12,13 @@ BUILD_CVR_LOOKUP="${BUILD_CVR_LOOKUP:-false}"
 # credentials, so it runs after matching and is off by default. (The TED/XML dataset
 # chain is now a standard step -- see below -- not an optional flag.)
 BUILD_EMPLOYMENT_HISTORY="${BUILD_EMPLOYMENT_HISTORY:-false}"
+# Rebuild the TED notice-date panels (KFST + OpenTender) inside 1_1 on every pipeline run, so
+# changes to the notice universe (e.g. the KFST 2.1 profylakse/direct-award notices) are picked up
+# without a manual cache delete. The underlying fetch is cache-first (only new notice XML is pulled),
+# so this is cheap on reruns. Set REBUILD_TED_DATES=false to reuse the cached panels for speed.
+REBUILD_TED_DATES="${REBUILD_TED_DATES:-true}"
 
-export PROJECT_DIR
+export PROJECT_DIR REBUILD_TED_DATES
 
 cd "$PROJECT_DIR"
 
@@ -81,6 +86,7 @@ echo "Rscript: $RSCRIPT"
 echo "Run matching: $RUN_MATCHING"
 echo "Build CVR lookup from Virk API: $BUILD_CVR_LOOKUP"
 echo "Build employment history from Virk API: $BUILD_EMPLOYMENT_HISTORY"
+echo "Rebuild TED notice-date panels: $REBUILD_TED_DATES"
 echo "Log file: $LOG_FILE"
 
 if ! command -v "$RSCRIPT" > /dev/null 2>&1; then
