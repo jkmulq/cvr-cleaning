@@ -278,10 +278,9 @@ keep_cols <- c(keep_cols, "procedure_group_h", "award_criteria_h",
 # Alternative-CVR candidates from fuzzy name-matching (top 5) plus their 0-100 match scores. The CVRs
 # are kept because they are CVRs (the authorised key); the scores make each candidate interpretable.
 # The parallel fuzzy_candidate_name_* (firm names) stay dropped for de-identification.
-keep_cols <- c(keep_cols, "fuzzy_candidate_cvr_1", "fuzzy_candidate_cvr_2", "fuzzy_candidate_cvr_3",
-               "fuzzy_candidate_cvr_4", "fuzzy_candidate_cvr_5",
-               "fuzzy_candidate_score_1", "fuzzy_candidate_score_2", "fuzzy_candidate_score_3",
-               "fuzzy_candidate_score_4", "fuzzy_candidate_score_5")
+# Keep only the NEXT-BEST alternative candidate (rank 2) + its score. Rank 1 is ~99% identical to the chosen
+# match (already delivered as cvr_name_match / cvr_final), so it is redundant; ranks 3-5 are rarely useful.
+keep_cols <- c(keep_cols, "fuzzy_candidate_cvr_2", "fuzzy_candidate_score_2")
 round2_drop <- c(
   "n_tenders_received", "n_winners_extracted", "n_buyers_extracted", "n_buyers_listed_original",
   "buyer_amount", "amount_awarded", "amount_estimated", "lot_estimated_value", "lot_awarded_value",
