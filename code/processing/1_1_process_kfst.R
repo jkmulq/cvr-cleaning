@@ -258,41 +258,17 @@ data <- data %>%
     as.Date(NA)
   ))
 
-## Annualised framework amounts
-# A framework agreement's amount covers its whole (multi-year) duration, so the
-# headline total is not comparable to a single-year contract. Annualise it:
-# amount per month (amount / duration in months) scaled to 12 months. KFST
-# records duration in months, so annualising by month avoids any day
-# approximation. Uses the base ("min") duration, falling back to "max", matching
-# award_end_date. Framework agreements only, and only where the amount and a
-# positive duration are both present (the > 0 guard avoids divide-by-zero).
+## Harmonised contract duration (months)
+# Midpoint of min and max (mean where both are present, else whichever is
+# available). This is the cross-source months variable that drives annualisation
+# in 4_combine (amount / contract_duration_months * 12, all contract types).
 data <- data %>%
   mutate(
-    # Base ("min") duration drives annualisation + award_end_date (min excludes
-    # options -> the documented base contract length), unchanged from before.
-    dur_months_base = coalesce(
-      as.numeric(contract_duration_months_min),
-      as.numeric(contract_duration_months_max)
-    ),
-    # Harmonised reporting duration: midpoint of min and max (mean where both are
-    # present, else whichever is available). This is the cross-source months variable.
     contract_duration_months = rowMeans(
       cbind(as.numeric(contract_duration_months_min),
             as.numeric(contract_duration_months_max)), na.rm = TRUE
     ),
-    contract_duration_months = if_else(is.nan(contract_duration_months), NA_real_, contract_duration_months),
-    annualised_tender_amount = if_else(
-      contract_type == "Framework agreement" &
-        !is.na(dur_months_base) & dur_months_base > 0,
-      tender_amount / dur_months_base * 12,
-      NA_real_
-    ),
-    annualised_lot_amount = if_else(
-      contract_type == "Framework agreement" &
-        !is.na(dur_months_base) & dur_months_base > 0,
-      lot_amount / dur_months_base * 12,
-      NA_real_
-    )
+    contract_duration_months = if_else(is.nan(contract_duration_months), NA_real_, contract_duration_months)
   )
 
 ## CPV code
