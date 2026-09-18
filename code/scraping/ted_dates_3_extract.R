@@ -16,10 +16,41 @@
 # Optional env var: NOTICE_LINEAGE_SAMPLE_SIZE  (limit award universe; for testing)
 
 source("code/scraping/ted_dates_utils.R")
-suppressWarnings(suppressPackageStartupMessages(library(parallel)))
+suppressWarnings(suppressPackageStartupMessages({library(parallel); library(xml2)}))
 `%||%` <- function(a, b) if (is.null(a) || length(a) == 0 || is.na(a)) b else a
 
 if (!file.exists(links_rds)) stop("notice_links.rds not found; run ted_dates_2_lineage.R first.", call. = FALSE)
+
+# ── eForms date extraction (schema-exact XPaths from the eForms SDK fields.json) ────────────────
+# The legacy extractor below matches uppercase TED tags (DS_DATE_DISPATCH, DATE_PUB, ...) which eForms
+# notices (2024+) do NOT contain, so every eForms notice came out date-less. eForms uses namespaced,
+# context-dependent tags; the SAME lexical tag (cbc:IssueDate) means different things by parent element, so
+# we use the official BT->XPath mappings (validated ~100% against the TED API at award/competition/planning
+# levels). We emit the SAME canonical date_field names the panel (ted_dates_5_panel) already maps, so no
+# downstream change is needed. Values are cleaned to YYYY-MM-DD (to_iso handles them) and the 2000-01-01
+# "no award date" placeholder is dropped.
+.EF_NS <- c(cbc  = "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2",
+            cac  = "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2",
+            efbc = "http://data.europa.eu/p27/eforms-ubl-extension-basic-components/1",
+            efac = "http://data.europa.eu/p27/eforms-ubl-extension-aggregate-components/1")
+.ef_clean <- function(s) { s <- s[!is.na(s)]; s <- sub("([0-9]{4}-[0-9]{2}-[0-9]{2}).*", "\\1", s); unique(s[nzchar(s) & s != "2000-01-01"]) }
+extract_eforms_dates <- function(txt) {
+  empty <- data.table(date_field = character(), date_value = character())
+  # Parse from raw BYTES (charToRaw), not the R string: read_txt() reads with useBytes=TRUE, so txt holds
+  # the file's UTF-8 bytes under an unknown encoding. Handing that string to read_xml() makes libxml2
+  # mis-read multi-byte chars (Danish ø/å/æ) and throw a tag-mismatch, which silently dropped every eForms
+  # notice with non-ASCII content (i.e. almost all of them). charToRaw lets libxml2 honour the XML declaration.
+  x <- tryCatch(read_xml(charToRaw(txt)), error = function(e) NULL); if (is.null(x)) return(empty)
+  vals <- function(xp) { n <- xml_find_all(x, xp, .EF_NS); if (!length(n)) character(0) else .ef_clean(xml_text(n)) }
+  add  <- function(field, xp) { v <- vals(xp); if (length(v)) data.table(date_field = field, date_value = v) else NULL }
+  out <- rbindlist(list(
+    add("DS_DATE_DISPATCH",     "/*/cbc:IssueDate"),                                         # BT-05  notice dispatch
+    add("DATE_PUB",             "//efac:Publication/efbc:PublicationDate"),                  # TED publication date
+    add("DATE_RECEIPT_TENDERS", "//cac:TenderSubmissionDeadlinePeriod/cbc:EndDate"),         # BT-131 tender deadline (competition/planning)
+    add("CONTRACT_AWARD_DATE",  "//efac:NoticeResult/efac:SettledContract/cbc:IssueDate")    # BT-145 contract conclusion (award)
+  ), use.names = TRUE)
+  if (is.null(out) || !nrow(out)) empty else out
+}
 
 # ── Every date in one notice's XML: data.table(date_field, date_value) ─────────
 # Handles both flat text (YYYYMMDD[ HH:MM]) and nested <YEAR>/<MONTH>/<DAY>, and
@@ -27,6 +58,9 @@ if (!file.exists(links_rds)) stop("notice_links.rds not found; run ted_dates_2_l
 extract_all_dates <- function(txt) {
   empty <- data.table(date_field = character(), date_value = character())
   if (!nzchar(txt)) return(empty)
+  # eForms notices carry the UBL namespace; route them to the schema-XPath extractor (the legacy
+  # uppercase-tag regex below finds nothing in eForms XML). Legacy TED_EXPORT notices fall through.
+  if (grepl("urn:oasis:names:specification:ubl:schema:xsd:", txt, fixed = TRUE)) return(extract_eforms_dates(txt))
   tags <- unique(gsub("^<|[ >/]$", "",
                       regmatches(txt, gregexpr("<([A-Z0-9_]*(?:DATE|DEADLINE)[A-Z0-9_]*)[ >/]", txt, perl = TRUE))[[1]]))
   if (!length(tags)) return(empty)
