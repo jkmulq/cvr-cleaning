@@ -492,6 +492,19 @@ notice_ids <- unique(unlist(lapply(notice_url_specs, function(s) {
 })))
 notice_ids <- notice_ids[!is.na(notice_ids)]
 
+# Optional expansion: fold in the API-only DK award notices parked by ted_dates_0_api_universe.R -- award
+# notices neither OpenTender nor KFST references (so nothing was "filtered out"; they were simply never in
+# either source). They become additional TED rows tagged notice_source="api" in 4_combine. Opt out with
+# TED_INCLUDE_API_ONLY=false; no-op if the sweep hasn't been run. Append only ids not already present
+# (leading-zero-insensitive), so the existing OT/KFST universe + its cache/order are untouched.
+api_manifest <- file.path(dirs$intermediates, "ted", "api_only_award_ids.rds")
+if (file.exists(api_manifest) && !tolower(Sys.getenv("TED_INCLUDE_API_ONLY", "true")) %in% c("false", "0", "no")) {
+  api_ids <- unique(readRDS(api_manifest)$publication_number)
+  add     <- api_ids[!sub("^0+", "", api_ids) %in% sub("^0+", "", notice_ids)]
+  notice_ids <- c(notice_ids, add)
+  message(sprintf("TED_INCLUDE_API_ONLY: +%d API-only award notices (universe now %d)", length(add), length(notice_ids)))
+}
+
 # Optional: restrict to notices already in the XML cache, skipping the slow TED fetch
 # for any not yet pulled. Lets the corrected extraction be validated on the cached set
 # immediately; uncached notices are fetched + folded in on a later full run.
