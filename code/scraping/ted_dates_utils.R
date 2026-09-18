@@ -10,7 +10,11 @@
 # The two hops both use the same prior-publication reference in the TED XML:
 #   (1) newer F03/F14:  <NOTICE_NUMBER_OJ>2022/S 036-094091</NOTICE_NUMBER_OJ>
 #   (2) older forms:    <REF_NOTICE> ... <NO_DOC_OJS>2010/S 117-176699</NO_DOC_OJS> ... </REF_NOTICE>
-# eForms notices carry only an internal UUID (no OJS ref) -> no link.
+#   (3) eForms (2024+): cac:TenderingProcess/cac:NoticeDocumentReference/cbc:ID, as either an OJS
+#       publication-number (directly fetchable) or a notice-id-ref UUID. UUIDs are mapped UUID -> OJS via
+#       the TED v3 search API (query by notice-identifier), cached to lineage_id_map.rds. See extract_prior()
+#       + resolve_notice_ids() below. (Before this, eForms notices linked to nothing, so all 2024+ non-winner
+#       rows -- which are ~100% eForms -- had no competition/planning dates.)
 
 source("config.R")
 # SKIP_TED_RUN loads 2_extract's functions + config without running its pipeline:
@@ -21,7 +25,14 @@ source(file.path(PROJECT_DIR, "code", "scraping", "ted_1_extract_notices.R"))
 suppressWarnings(suppressPackageStartupMessages({
   library(data.table)
   library(readxl)
+  library(xml2)       # eForms prior-ref parsing (namespaced UBL)
+  library(jsonlite)   # TED search API (UUID -> OJS resolution)
 }))
+
+# eForms UBL namespaces (2024+ notices). The prior-publication ref lives at a
+# namespaced XPath, not an uppercase TED tag, so the legacy grab1() finds nothing.
+.EF_NS <- c(cbc = "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2",
+            cac = "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2")
 
 # ── Per-level cache dirs + output paths ───────────────────────────────────────
 award_cache_dir    <- cache_dir                              # = ted_dir/raw_xml
@@ -102,6 +113,19 @@ read_txt <- function(nid, cache) {                  # cached notice XML as text 
 }
 extract_prior <- function(txt) {                    # two-tier prior-publication id, or NA
   if (!nzchar(txt)) return(NA_character_)
+  # eForms (2024+): the prior notice is cited at cac:TenderingProcess/cac:NoticeDocumentReference/cbc:ID,
+  # as EITHER an OJS publication-number (nnnn-yyyy, directly fetchable) OR a notice-id-ref UUID (needs the
+  # TED API to map UUID -> publication-number). We return the RAW ref here; resolve_notice_ids() turns it
+  # into a fetchable OJS id (UUIDs resolved via the API, OJS numbers passed through). Legacy TED_EXPORT
+  # notices carry an OJS ref directly and fall through to the uppercase-tag path below.
+  if (grepl("urn:oasis:names:specification:ubl:schema:xsd:", txt, fixed = TRUE)) {
+    x <- tryCatch(read_xml(charToRaw(txt)), error = function(e) NULL)   # charToRaw: honour UTF-8 (Danish chars)
+    if (is.null(x)) return(NA_character_)
+    n <- xml_find_first(x, "//cac:TenderingProcess/cac:NoticeDocumentReference/cbc:ID", .EF_NS)
+    if (is.na(n)) return(NA_character_)
+    ref <- trimws(xml_text(n))
+    return(if (nzchar(ref)) ref else NA_character_)
+  }
   val <- grab1(txt, "NOTICE_NUMBER_OJ")
   if (is.na(val)) {
     rn <- regmatches(txt, regexpr("(?s)<REF_NOTICE[^>]*>.*?</REF_NOTICE>", txt, perl = TRUE))
@@ -148,8 +172,13 @@ PROC_GROUP <- c(
   PT_COMPETITIVE_DIALOGUE = "competitive_dialogue",
   PT_INNOVATION_PARTNERSHIP = "innovation_partnership",
   PT_NEGOTIATED_WITHOUT_PUBLICATION = "without_call", PT_AWARD_CONTRACT_WITHOUT_CALL = "without_call")
+# eForms procurement-procedure-type codes -> the SAME procedure_group vocabulary as PROC_GROUP above.
+# (oth-mult / oth-single = "other", left unmapped -> NA.)
+PROC_GROUP_EF <- c(open = "open", restricted = "restricted",
+                   `neg-w-call` = "negotiated", `neg-wo-call` = "without_call",
+                   `comp-dial` = "competitive_dialogue", innovation = "innovation_partnership")
 procedure_type_of  <- function(txt) { m <- regmatches(txt, regexpr("<PT_[A-Z_]+", txt, perl = TRUE)); if (length(m)) sub("<", "", m[1]) else NA_character_ }
-procedure_group_of <- function(pt)  if (is.na(pt)) NA_character_ else unname(PROC_GROUP[pt])
+procedure_group_of <- function(pt)  if (is.na(pt)) NA_character_ else unname(c(PROC_GROUP, PROC_GROUP_EF)[pt])
 is_dps_notice       <- function(txt) grepl("<DPS[ >/]|<SETTING_UP_DPS[ >/]", txt, perl = TRUE)
 # framework agreement (empty flag; newer <FRAMEWORK> or older ESTABLISHMENT/AGREEMENT
 # form) - deliberately excludes INFORMATION_REGULATORY_FRAMEWORK.
@@ -167,14 +196,51 @@ duration_days_of <- function(txt) {
   days  <- nums * mult
   if (all(is.na(days))) NA_real_ else max(days, na.rm = TRUE)
 }
+# eForms equivalent: longest cac:PlannedPeriod/cbc:DurationMeasure (unitCode), falling back to an explicit
+# StartDate..EndDate span. Takes a parsed xml doc (competition_meta already parsed it once). NA if none.
+ef_duration_days <- function(x) {
+  days <- numeric(0)
+  dm <- xml_find_all(x, "//cac:PlannedPeriod/cbc:DurationMeasure", .EF_NS)
+  if (length(dm)) {
+    units <- xml_attr(dm, "unitCode"); nums <- suppressWarnings(as.numeric(xml_text(dm)))
+    mult  <- fcase(units == "DAY", 1, units == "WEEK", 7, units == "MONTH", 30, units == "YEAR", 365, default = NA_real_)
+    days  <- c(days, nums * mult)
+  }
+  sd <- xml_text(xml_find_all(x, "//cac:PlannedPeriod/cbc:StartDate", .EF_NS))
+  ed <- xml_text(xml_find_all(x, "//cac:PlannedPeriod/cbc:EndDate",   .EF_NS))
+  if (length(sd) && length(ed) && length(sd) == length(ed)) {
+    span <- suppressWarnings(as.numeric(as.Date(sub("([0-9-]{10}).*", "\\1", ed)) -
+                                        as.Date(sub("([0-9-]{10}).*", "\\1", sd))))
+    days <- c(days, span)
+  }
+  days <- days[!is.na(days) & days >= 0]
+  if (length(days)) max(days) else NA_real_
+}
 
 # One read of a competition notice -> its prior (planning) ref + procedure + flags + duration.
 competition_meta <- function(nid, cache) {
   txt <- read_txt(nid, cache)
-  if (!nzchar(txt)) {
-    return(list(planning_notice_id = NA_character_, procedure_type = NA_character_,
-                procedure_group = NA_character_, is_dps = NA, is_framework = NA,
-                framework_duration_days = NA_real_))
+  na_out <- list(planning_notice_id = NA_character_, procedure_type = NA_character_,
+                 procedure_group = NA_character_, is_dps = NA, is_framework = NA,
+                 framework_duration_days = NA_real_)
+  if (!nzchar(txt)) return(na_out)
+  # eForms competition notices: procedure / framework / DPS / duration live in namespaced code elements, not
+  # the uppercase tags the legacy helpers match. Parse the doc ONCE and read them via the eForms codelists.
+  # (planning_notice_id may be a UUID here; map_competition_meta resolves it against the API afterwards.)
+  if (grepl("urn:oasis:names:specification:ubl:schema:xsd:", txt, fixed = TRUE)) {
+    x <- tryCatch(read_xml(charToRaw(txt)), error = function(e) NULL)
+    if (is.null(x)) return(na_out)
+    g1   <- function(xp) { n <- xml_find_first(x, xp, .EF_NS); if (is.na(n)) NA_character_ else trimws(xml_text(n)) }
+    gall <- function(xp) xml_text(xml_find_all(x, xp, .EF_NS))
+    pid <- g1("//cac:TenderingProcess/cac:NoticeDocumentReference/cbc:ID")
+    if (!is.na(pid) && identical(pid, nid)) pid <- NA_character_
+    pt  <- g1("//cbc:ProcedureCode[@listName='procurement-procedure-type']")
+    fa  <- gall("//cbc:ContractingSystemTypeCode[@listName='framework-agreement']")
+    dp  <- gall("//cbc:ContractingSystemTypeCode[@listName='dps-usage']")
+    return(list(planning_notice_id = pid, procedure_type = pt, procedure_group = procedure_group_of(pt),
+                is_dps = any(dp %in% c("dps-list", "dps-nlist")),
+                is_framework = any(grepl("^fa-", fa)),
+                framework_duration_days = ef_duration_days(x)))
   }
   pid <- extract_prior(txt); if (!is.na(pid) && identical(pid, nid)) pid <- NA_character_
   pt  <- procedure_type_of(txt)
@@ -184,7 +250,9 @@ competition_meta <- function(nid, cache) {
 }
 map_competition_meta <- function(ids, cache) {
   if (!length(ids)) return(data.table())
-  rbindlist(lapply(ids, function(id) c(list(competition_notice_id = id), competition_meta(id, cache))))
+  dt <- rbindlist(lapply(ids, function(id) c(list(competition_notice_id = id), competition_meta(id, cache))))
+  dt[, planning_notice_id := resolve_notice_ids(planning_notice_id)]   # eForms UUID planning refs -> OJS
+  dt[]
 }
 
 detail_url <- function(id) fifelse(is.na(id), NA_character_, sprintf("https://ted.europa.eu/en/notice/-/detail/%s", id))
