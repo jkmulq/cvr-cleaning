@@ -147,6 +147,20 @@ combined[data_source == "TED" & is.na(award_date) & !is.na(award_contract_date),
          award_date := award_contract_date]
 cat(sprintf("TED award_date fill: %d rows dated from award_contract_date (winners + non-winners)\n", .ted_filled))
 
+# ---- Harmonise divided_tender to a clean logical across sources ----
+# KFST/OpenTender arrive as the strings "TRUE"/"FALSE" while TED arrives as "yes"/"no", so the raw column
+# mixes all four. Recode to a proper logical (TRUE = split into lots) so the variable is usable cross-source;
+# anything unrecognised (incl. blanks) becomes NA.
+if ("divided_tender" %in% names(combined)) {
+  .dt <- tolower(trimws(as.character(combined$divided_tender)))
+  combined[, divided_tender := fcase(.dt %in% c("true", "yes"), TRUE,
+                                     .dt %in% c("false", "no"), FALSE,
+                                     default = NA)]
+  cat(sprintf("divided_tender harmonised to logical: %d TRUE / %d FALSE / %d NA\n",
+              sum(combined$divided_tender %in% TRUE), sum(combined$divided_tender %in% FALSE),
+              sum(is.na(combined$divided_tender))))
+}
+
 # Rename for clarity: n_lots_contracted (KFST-only) actually holds the count of lots in the tender
 # NOTICE -- `Antal delkontrakter i udbudsbekendtgoerelsen`, i.e. *announced*, not "contracted".
 if ("n_lots_contracted" %in% names(combined)) setnames(combined, "n_lots_contracted", "n_lots_announced")
