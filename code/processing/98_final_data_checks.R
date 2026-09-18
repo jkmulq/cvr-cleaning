@@ -1,7 +1,7 @@
 # =============================================================================
 # code/processing/98_final_data_checks.R
 # Post-combine sanity checks on clean_all_samples_combined:
-#   (1) its columns match the variable-key "Final key (preview)" sheet exactly;
+#   (1) its columns match the variable_key.xlsx "Variable key" sheet exactly;
 #   (2) missingness of every variable, per (data_source, entity) pair;
 #   (3) tender/lot-level columns agree across entities within each (data_source, tender_id, lot_id);
 #   (4) the sample-selection rule (cvr_method) reproduces the PRE-DEDUP production / extraction
@@ -20,8 +20,8 @@ suppressWarnings(suppressPackageStartupMessages(library(data.table)))
 # result is a data.table -- unlike read.csv(), which returns a data.frame and would break the
 # data.table syntax below and coerce CVRs to numbers.
 final_data <- read_clean(file.path(dirs$clean_data, "clean_all_samples_combined"))
-var_key <- readxl::read_excel(file.path(dirs$data, "variable_key_expanded.xlsx"),
-                              sheet = "Final key (preview)")
+var_key <- readxl::read_excel(file.path(dirs$data, "variable_key.xlsx"),
+                              sheet = "Variable key")
 
 # Run all checks, collecting any failures, then stop at the end if there were any -- so one run
 # reports every check rather than aborting at the first failure.
@@ -76,7 +76,7 @@ avail_wide_for <- function(dt) {
               variable ~ data_source + entity, value.var = "v")
   rbindlist(list(nw, aw), use.names = TRUE, fill = TRUE)
 }
-vk_path <- file.path(dirs$data, "variable_key_expanded.xlsx")
+vk_path <- file.path(dirs$data, "variable_key.xlsx")
 tryCatch({
   wb <- openxlsx::loadWorkbook(vk_path)
   if ("Availability" %in% openxlsx::sheets(wb)) openxlsx::removeWorksheet(wb, "Availability")  # drop old combined sheet
