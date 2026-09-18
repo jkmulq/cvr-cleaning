@@ -77,6 +77,10 @@ kfst_award_map <- function() {
 # Used by BOTH ted_dates_1_fetch and ted_dates_2_lineage so they agree on the set (and on
 # NOTICE_LINEAGE_SAMPLE_SIZE). Notices shared by the two sources are deduped by award_notice_id, so
 # each is fetched/linked once (no double-pull; fetch_notices() is cache-first on top of that).
+# Whether to fold the API-only award notices (parked by ted_dates_0_api_universe.R) into the TED notice
+# universe + date lineage. Same gate/default as ted_1_extract_notices.R. Opt out with TED_INCLUDE_API_ONLY=false.
+include_api_only <- function() !tolower(Sys.getenv("TED_INCLUDE_API_ONLY", "true")) %in% c("false", "0", "no")
+
 award_universe <- function() {
   raw_dir <- file.path(dirs$raw_data, "OpenTender")
   files   <- list.files(raw_dir, pattern = "[.]csv$", full.names = TRUE)
@@ -89,6 +93,18 @@ award_universe <- function() {
   # Union in the KFST award notices (they overlap OT heavily; dedup keeps each notice once).
   u <- unique(rbindlist(list(u, kfst_award_map()[, .(award_url, award_notice_id)])),
               by = "award_notice_id")
+  # Optionally union in the API-only award notices parked by ted_dates_0_api_universe.R, so the lineage chain
+  # fetches + links THEIR competition/planning notices too (giving the API-only set the same lineage dates as
+  # every other notice). award_url is a placeholder /xml URL (award_notice_id is what the chain uses).
+  if (include_api_only()) {
+    apf <- file.path(ted_dir, "api_only_award_ids.rds")
+    if (file.exists(apf)) {
+      ap <- as.data.table(readRDS(apf))
+      u  <- unique(rbindlist(list(u, data.table(award_url = xml_url(ap$publication_number),
+                                                award_notice_id = ap$publication_number))),
+                   by = "award_notice_id")
+    }
+  }
   sample_n <- suppressWarnings(as.integer(Sys.getenv("NOTICE_LINEAGE_SAMPLE_SIZE", "")))
   if (!is.na(sample_n) && sample_n > 0L) {
     u <- head(u, sample_n)
@@ -111,7 +127,7 @@ read_txt <- function(nid, cache) {                  # cached notice XML as text 
   if (!file.exists(f) || file.info(f)$size == 0) return("")
   tryCatch(readChar(f, file.info(f)$size, useBytes = TRUE), error = function(e) "")
 }
-extract_prior <- function(txt) {                    # two-tier prior-publication id, or NA
+extract_prior <- function(txt) {                    # prior-publication REF (raw), or NA
   if (!nzchar(txt)) return(NA_character_)
   # eForms (2024+): the prior notice is cited at cac:TenderingProcess/cac:NoticeDocumentReference/cbc:ID,
   # as EITHER an OJS publication-number (nnnn-yyyy, directly fetchable) OR a notice-id-ref UUID (needs the
@@ -133,6 +149,92 @@ extract_prior <- function(txt) {                    # two-tier prior-publication
   }
   if (is.na(val)) NA_character_ else ojs_to_id(val)
 }
+
+# ── eForms lineage refs -> fetchable OJS publication numbers ───────────────────
+# extract_prior() returns a RAW ref that may be a notice-id-ref UUID (eForms). The TED XML endpoint is
+# keyed by OJS publication-number, not UUID, so UUID refs must be mapped UUID -> publication-number via the
+# TED v3 search API (query BY notice-identifier, so the returned id round-trips the queried UUID exactly).
+# Resolutions are cached to disk so the API is hit once per distinct UUID across the whole chain and across
+# re-runs. OJS-format refs (nnnn-yyyy, or "yyyy/S ...") need no network and pass straight through.
+lineage_map_rds <- file.path(ted_dir, "lineage_id_map.rds")
+.is_uuid_ref <- function(x) grepl("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", x, ignore.case = TRUE)
+.is_ojs_num  <- function(x) grepl("^[0-9]{1,8}-[0-9]{4}$", x)
+.uuid_base   <- function(x) sub("-[0-9]{1,3}$", "", x)              # drop the -NN part/version suffix
+
+# One POST to the TED v3 search API, WITH retries/backoff. fields must be a JSON ARRAY -> I() stops jsonlite
+# auto_unbox collapsing a length-1 vector to a scalar (API rejects that). Return value distinguishes:
+#   list()  = call SUCCEEDED, zero results (genuine "not found")
+#   <list>  = call succeeded with results
+#   NULL    = call FAILED after all retries (transient: rate-limit/timeout) -> caller must NOT treat as "not found"
+# (The TED search API rate-limits when the XML fetcher is hammering it concurrently; a single non-retried 429
+# previously got mis-cached as a permanent NA miss for all 40 UUIDs in the batch.)
+ted_api_search <- function(query, fields, limit = 250L, max_tries = 5L) {
+  body <- jsonlite::toJSON(list(query = query, fields = I(fields), limit = limit,
+                                paginationMode = "PAGE_NUMBER"), auto_unbox = TRUE)
+  for (try in seq_len(max_tries)) {
+    r <- tryCatch(httr::POST("https://api.ted.europa.eu/v3/notices/search",
+                             httr::content_type_json(), httr::user_agent("Mozilla/5.0"),
+                             body = body, encode = "raw", httr::timeout(90)),
+                  error = function(e) NULL)
+    if (!is.null(r) && httr::status_code(r) == 200) {
+      j <- tryCatch(jsonlite::fromJSON(rawToChar(r$content), simplifyVector = FALSE), error = function(e) NULL)
+      if (!is.null(j)) return(if (is.null(j$notices)) list() else j$notices)   # success (possibly empty)
+    }
+    Sys.sleep(min(2^(try - 1), 20) + runif(1, 0, 1))                            # backoff before retry
+  }
+  NULL                                                                          # FAILED after retries
+}
+
+# Map UUID bases -> publication-number via the API, batched, cache-first. Only bases from a SUCCESSFUL batch
+# are cached: a resolved base gets its pub, a base the API definitively didn't return gets NA (genuine "not
+# found", so it isn't re-queried every run). Bases from a FAILED batch (transient rate-limit/timeout) are left
+# UNCACHED so the next run retries them -- this is the fix for the ~2.4k false NA misses seen when the resolver
+# ran concurrently with the XML fetcher.
+.resolve_uuids <- function(bases) {
+  bases <- unique(bases[!is.na(bases) & nzchar(bases)])
+  cache <- if (file.exists(lineage_map_rds)) readRDS(lineage_map_rds) else data.table(base = character(), pub = character())
+  todo  <- setdiff(bases, cache$base)
+  if (length(todo)) {
+    message(sprintf("  resolving %d new eForms UUID refs via TED API...", length(todo)))
+    got_list <- list(); done_bases <- character(0); n_fail <- 0L
+    for (bb in split(todo, ceiling(seq_along(todo) / 40))) {
+      notices <- ted_api_search(sprintf("notice-identifier IN (%s)", paste0('"', bb, '"', collapse = " ")),
+                                c("publication-number", "notice-identifier"))
+      if (is.null(notices)) { n_fail <- n_fail + 1L; next }           # batch FAILED -> leave uncached (retry next run)
+      done_bases <- c(done_bases, bb)                                 # batch OK -> its non-returned bases = genuine miss
+      if (length(notices)) got_list[[length(got_list) + 1L]] <- rbindlist(lapply(notices, function(nn) {
+        ident <- nn[["notice-identifier"]]; pub <- nn[["publication-number"]]
+        ident <- if (is.list(ident)) unlist(ident)[1] else ident
+        pub   <- if (is.list(pub))   unlist(pub)[1]   else pub
+        if (is.null(ident) || is.null(pub)) NULL else data.table(base = as.character(ident), pub = as.character(pub))
+      }), fill = TRUE)
+    }
+    got  <- if (length(got_list)) unique(rbindlist(got_list, fill = TRUE), by = "base") else data.table(base = character(), pub = character())
+    miss <- setdiff(done_bases, got$base)                             # genuine not-found: ONLY from successful batches
+    if (n_fail) message(sprintf("  (%d batch(es) failed after retries; those UUIDs left uncached to retry next run)", n_fail))
+    add  <- rbind(got, if (length(miss)) data.table(base = miss, pub = NA_character_) else NULL, fill = TRUE)
+    if (nrow(add)) { cache <- unique(rbind(cache, add, fill = TRUE), by = "base"); saveRDS(cache, lineage_map_rds) }
+  }
+  setNames(cache$pub, cache$base)
+}
+
+# Vector of raw refs -> vector of fetchable OJS ids (same length; NA where unresolvable).
+resolve_notice_ids <- function(refs) {
+  out <- rep(NA_character_, length(refs))
+  if (!length(refs)) return(out)
+  ok  <- !is.na(refs) & nzchar(refs)
+  isu <- ok & .is_uuid_ref(refs)
+  iso <- ok & !isu & .is_ojs_num(refs)
+  isl <- ok & !isu & !iso & grepl("[0-9]{4}/S", refs)                 # "yyyy/S ddd-nnnnnn"
+  out[iso] <- refs[iso]
+  if (any(isl)) out[isl] <- vapply(refs[isl], ojs_to_id, character(1))
+  if (any(isu)) {
+    bases <- .uuid_base(refs[isu])
+    map   <- .resolve_uuids(bases)
+    out[isu] <- unname(map[bases])
+  }
+  out
+}
 is_direct_award <- function(txt) {                  # awarded without a call for competition
   grepl("PT_AWARD_CONTRACT_WITHOUT_CALL|PT_NEGOTIATED_WITHOUT_PUBLICATION|AWARD_WITHOUT_PRIOR_PUBLICATION|neg-wo-call", txt)
 }
@@ -140,9 +242,10 @@ prior_ref_id <- function(nid, cache) {              # prior id for one cached no
   pid <- extract_prior(read_txt(nid, cache))
   if (!is.na(pid) && identical(pid, nid)) NA_character_ else pid
 }
-map_priors <- function(ids, cache) {                # prior id for each of `ids`
+map_priors <- function(ids, cache) {                # prior id for each of `ids` (eForms UUIDs resolved)
   if (!length(ids)) return(character(0))
-  vapply(ids, prior_ref_id, character(1), cache = cache, USE.NAMES = FALSE)
+  refs <- vapply(ids, prior_ref_id, character(1), cache = cache, USE.NAMES = FALSE)
+  resolve_notice_ids(refs)
 }
 # Award level parse -> competition id (NA for direct awards) + direct_award flag.
 parse_award_level <- function(award_ids, cache) {
@@ -153,6 +256,7 @@ parse_award_level <- function(award_ids, cache) {
     comp[i]   <- extract_prior(txt)
     if (i %% 5000 == 0) message(sprintf("  ...parsed %d / %d award XMLs", i, n))
   }
+  comp <- resolve_notice_ids(comp)                  # eForms UUID refs -> fetchable OJS ids (cache-first)
   data.table(award_notice_id       = award_ids,
              competition_notice_id = fifelse(direct, NA_character_, comp),
              direct_award          = direct)

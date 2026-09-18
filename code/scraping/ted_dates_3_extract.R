@@ -130,6 +130,21 @@ map_kfst <- kfst_award_map()[, .(tender_id, lot_id, award_url, award_notice_id)]
 map_kfst[, source := "kfst"]
 map <- rbindlist(list(map, map_kfst), use.names = TRUE)
 
+# API-only award notices (parked by ted_dates_0_api_universe.R): notice-keyed only, no OT/KFST tender/lot.
+# Include them so their dates land in notice_dates and build_ted_notice_panel() (which keys by notice_id) gives
+# them the same lineage dates as every other notice. source="api", tender_id = notice id, lot_id = NA -> the
+# OT/KFST panels (built from source=="ot"/"kfst") ignore them; only the TED notice-keyed panel picks them up.
+if (include_api_only()) {
+  .apf <- file.path(ted_dir, "api_only_award_ids.rds")
+  if (file.exists(.apf)) {
+    .ap <- as.data.table(readRDS(.apf))
+    map <- rbindlist(list(map, data.table(tender_id = .ap$publication_number, lot_id = NA_character_,
+                                          award_url = xml_url(.ap$publication_number),
+                                          award_notice_id = .ap$publication_number, source = "api")),
+                     use.names = TRUE)
+  }
+}
+
 sample_n <- suppressWarnings(as.integer(Sys.getenv("NOTICE_LINEAGE_SAMPLE_SIZE", "")))
 if (!is.na(sample_n) && sample_n > 0L) {
   keep <- head(unique(map$award_notice_id), sample_n)
