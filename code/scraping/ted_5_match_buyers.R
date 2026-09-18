@@ -19,11 +19,32 @@ source(file.path(PROJECT_DIR, "code", "functions.R"))
 clean_data_dir <- dirs$clean_data
 ted_dir        <- file.path(dirs$intermediates, "ted")
 
-# 1 Load the TED buyers and the CVR-name keys
+# 1 Load the TED buyers
 buyer_data <- readRDS(file.path(ted_dir, "ted_buyer_data.rds"))
+setDT(buyer_data)
+
+# ── Whole-result match cache (see match_cache_read/write in functions.R). Version includes the
+# ted_notice_dates panel's CONTENT hash (folded into the output post-match). refresh_cols empty: an
+# unchanged input+panel is an exact skip, any change re-matches. Disable with MATCH_CACHE=false.
+.panel_f <- file.path(ted_dir, "ted_notice_dates.rds")
+.panel_h <- if (file.exists(.panel_f)) substr(rlang::hash(readRDS(.panel_f)), 1, 12) else "nopanel"
+match_cache_ver    <- paste0("p1-", key_sig(clean_data_dir), "-", .panel_h)
+match_cache_file   <- file.path(dirs$intermediates, "match_cache", "whole__ted_buyer.rds")
+match_refresh_cols <- character(0)
+match_grain        <- character(0)
+match_input        <- copy(buyer_data)
+.hit <- match_cache_read(match_input, match_refresh_cols, match_grain, match_cache_file, match_cache_ver)
+if (!is.null(.hit)) {
+  cat("Whole-result match cache HIT -> skipping TED buyer matching\n")
+  save_dataset(.hit$output, file.path(clean_data_dir, "clean_buyer_data_ted_name_matched"))
+  saveRDS(.hit$extra, file.path(ted_dir, "manual_name_review_ted_buyer.rds"))
+  quit(save = "no")
+}
+cat("Whole-result match cache MISS -> running full TED buyer matching\n")
+
 name_key   <- readRDS(file.path(clean_data_dir, "clean_cvr_name_key.rds"))
 biname_key <- readRDS(file.path(clean_data_dir, "clean_cvr_biname_key.rds"))
-setDT(buyer_data); setDT(name_key); setDT(biname_key)
+setDT(name_key); setDT(biname_key)
 
 setnames(name_key, "name", "registered_name")
 setnames(biname_key, "binavn", "registered_name")
@@ -59,6 +80,8 @@ buyer_data[, buyer_name_in_data := buyer_name]
 remaining <- buyer_data[
   flag_matching_candidate & grepl("DK|DNK", toupper(trimws(buyer_country)))]
 cat("Number observations to fuzzy match:", nrow(remaining), "\n")
+# Matching date = contract-award date: TED's most-available award date. Used ONLY for the +/-2y CVR
+# registry-validity window in matching (see KFST note in 2_1 on the pub-vs-award gap).
 remaining[, match_date := as.IDate(date_contract_award)]
 remaining_original <- remaining
 
@@ -448,6 +471,10 @@ buyer_data <- rbind(.bone, buyer_data[!.bhas], use.names = TRUE)
 
 save_dataset(buyer_data, file.path(clean_data_dir, "clean_buyer_data_ted_name_matched"))  # .rds + .csv + .parquet
 saveRDS(manual_name_review, file.path(ted_dir, "manual_name_review_ted_buyer.rds"))
+
+# Persist the whole matched result so an unchanged-input rerun can skip this matcher entirely.
+match_cache_write(match_input, buyer_data, match_refresh_cols, match_cache_file, match_cache_ver,
+                  extra = manual_name_review)
 
 cat(sprintf("\nTED buyers: %d rows | buyer_cvr_final on %.0f%% | name-matched %d | quality graded %d\n",
             nrow(buyer_data), 100 * mean(!is.na(buyer_data$buyer_cvr_final)),

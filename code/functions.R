@@ -845,12 +845,83 @@ levenshtein_ratio <- function(value, candidates, pairwise = FALSE) {
   100 * (total_length - distance) / total_length
 }
 
+# Content-based fingerprint of the CVR key files, for cache versioning. Uses file SIZE (content-derived,
+# stable) rather than mtime -- mtime flaps on Box CloudStorage re-syncs, which silently changed the cache
+# version between runs and caused spurious misses. A key rebuild changes the size -> the cache invalidates.
+key_sig <- function(clean_data_dir) {
+  paste(file.size(file.path(clean_data_dir, c("clean_cvr_name_key.rds", "clean_cvr_biname_key.rds"))),
+        collapse = "-")
+}
+
+# ── Whole-match-result cache ──────────────────────────────────────────────────
+# Skip an entire matcher when no MATCH-RELEVANT input changed. A matched dataset is a
+# deterministic function of the matcher inputs; most columns of the *input* feed the match,
+# but a few are pure passthrough context the matcher never reads and never transforms (e.g.
+# award_date). We therefore hash the input MINUS those `refresh_cols` (+ a version tying the
+# cache to the CVR keys / matcher logic). On a hit we reuse the previously matched output and
+# only refresh `refresh_cols` from the fresh input (joined by `grain`), so downstream context
+# stays current while the expensive exact+fuzzy+quality work is skipped entirely.
+#
+# Correctness is gated by the caller's own archive diff: a full (cache-off) run must reproduce
+# the cached-skip output bit-for-bit. If a "passthrough" column turns out to be read/transformed
+# by the matcher, that diff fails -- move the column out of refresh_cols (into the signature).
+.match_cache_sig <- function(input, refresh_cols, version) {
+  # Hash the match-relevant columns in a locale-independent, deterministic way. Columns are ordered by
+  # name with method="radix" (C locale, not the session locale) and hashed in the input's own row order --
+  # which is stable across reads of the same .rds, so no row reordering is needed. (An earlier version
+  # reordered rows with order(), whose default collation is locale-sensitive on Danish characters and so
+  # gave different signatures across R sessions -> spurious cache misses.)
+  cols <- sort(setdiff(names(input), refresh_cols), method = "radix")
+  rlang::hash(list(version, cols, lapply(cols, function(c) input[[c]])))
+}
+
+# Returns the ready-to-save output on a cache hit, or NULL (caller must run matching then call
+# match_cache_write()). Disabled (returns NULL) unless a version is set and MATCH_CACHE != false.
+match_cache_read <- function(input, refresh_cols, grain, cache_file, version) {
+  if (!nzchar(version) || tolower(Sys.getenv("MATCH_CACHE", "true")) == "false") return(NULL)
+  if (!file.exists(cache_file)) return(NULL)
+  cached <- readRDS(cache_file)
+  if (!identical(cached$sig, .match_cache_sig(input, refresh_cols, version))) return(NULL)
+  out <- copy(cached$output)
+  col_order <- copy(names(out))   # copy: `out[, := NULL]` below mutates the names vector by reference
+  refresh_cols <- intersect(refresh_cols, names(out))
+  if (length(refresh_cols)) {                         # pull fresh passthrough context by grain
+    fresh <- unique(input[, c(grain, refresh_cols), with = FALSE], by = grain)
+    out[, (refresh_cols) := NULL]
+    out <- merge(out, fresh, by = grain, all.x = TRUE, sort = FALSE)
+    setcolorder(out, col_order)                       # merge appends refreshed cols; restore order
+  }
+  setattr(out, "index", NULL)                 # drop any data.table secondary index (internal, not data)
+  list(output = out[], extra = cached$extra)  # extra = secondary artefacts (e.g. manual-review table)
+}
+
+match_cache_write <- function(input, output, refresh_cols, cache_file, version, extra = NULL) {
+  if (!nzchar(version) || tolower(Sys.getenv("MATCH_CACHE", "true")) == "false") return(invisible())
+  if (!dir.exists(dirname(cache_file))) dir.create(dirname(cache_file), recursive = TRUE, showWarnings = FALSE)
+  saveRDS(list(sig = .match_cache_sig(input, refresh_cols, version), output = output, extra = extra), cache_file)
+}
+
 # Fuzzy matching happens only after the exact steps. For each remaining entity:
 #   1. keep CVR names with the same firm type and first letter;
 #   2. remove names outside the two-year date allowance;
 #   3. calculate similarity scores;
 #   4. return the five highest-scoring CVRs.
-find_fuzzy_matches <- function(
+# Typed empty fuzzy-candidate result so callers that rbind/join on the output keep
+# working even when no rows are supplied or every candidate is skipped.
+.fuzzy_empty_result <- function() data.table(
+  match_row_id = integer(0),
+  fuzzy_candidate_cvr = character(0),
+  fuzzy_candidate_name = character(0),
+  fuzzy_candidate_source = character(0),
+  fuzzy_candidate_step = integer(0),
+  fuzzy_candidate_score = numeric(0),
+  fuzzy_candidate_rank = integer(0),
+  n_top_score_candidates = integer(0)
+)
+
+# The actual per-row fuzzy search. Kept verbatim from the original find_fuzzy_matches
+# loop so cached and uncached paths are bit-for-bit identical for a given row.
+.fuzzy_core <- function(
     rows,
     key,
     entity_name_column,
@@ -859,38 +930,10 @@ find_fuzzy_matches <- function(
     firm_type_column,
     step
 ) {
-  # Typed empty result so callers that rbind/join on the output keep working
-  # even when no rows are supplied, or when every candidate row is skipped in
-  # the loop below (a bare data.table() would have no columns to join on).
-  empty_result <- data.table(
-    match_row_id = integer(0),
-    fuzzy_candidate_cvr = character(0),
-    fuzzy_candidate_name = character(0),
-    fuzzy_candidate_source = character(0),
-    fuzzy_candidate_step = integer(0),
-    fuzzy_candidate_score = numeric(0),
-    fuzzy_candidate_rank = integer(0),
-    n_top_score_candidates = integer(0)
-  )
+  empty_result <- .fuzzy_empty_result()
   if (nrow(rows) == 0) return(empty_result)
-
-  required_row_columns <- c(
-    "match_row_id",
-    "match_date",
-    entity_name_column,
-    firm_type_column
-  )
-  missing_row_columns <- setdiff(required_row_columns, names(rows))
-
-  if (length(missing_row_columns) > 0) {
-    stop(
-      "find_fuzzy_matches(): rows is missing required columns: ",
-      paste(missing_row_columns, collapse = ", ")
-    )
-  }
-
   found <- vector("list", nrow(rows))
-  
+
   for (row_number in seq_len(nrow(rows))) {
     row <- rows[row_number]
     row_name <- row[[entity_name_column]]
@@ -974,6 +1017,92 @@ find_fuzzy_matches <- function(
   result <- rbindlist(found, use.names = TRUE, fill = TRUE)
   if (nrow(result) == 0) return(empty_result)
   result
+}
+
+# Public fuzzy matcher. Behaviour is identical to the original per-row search, plus an
+# OPTIONAL cross-run memoisation layer: a row's fuzzy result depends only on its name
+# (entity_name_column), firm type and match_date, so we cache the candidate set per
+# distinct (name, firm_type, match_date) problem and reuse it on later runs. This makes
+# a pipeline rerun that did not change any matching input (e.g. only dates downstream of
+# pub_date changed) skip the expensive adist search entirely.
+#
+# Caching is engaged only when a caller passes key_id AND both options are set:
+#   options(cvr.fuzzy_cache_dir = <dir>, cvr.fuzzy_cache_version = <string>)
+# The version string MUST change whenever the CVR key or the matcher logic changes, so a
+# stale cache is never served. With caching off the call is bit-for-bit the original.
+find_fuzzy_matches <- function(
+    rows,
+    key,
+    entity_name_column,
+    key_name_column,
+    first_letter_column,
+    firm_type_column,
+    step,
+    key_id = NULL,
+    cache_dir = getOption("cvr.fuzzy_cache_dir", ""),
+    cache_version = getOption("cvr.fuzzy_cache_version", "")
+) {
+  empty_result <- .fuzzy_empty_result()
+  if (nrow(rows) == 0) return(empty_result)
+
+  required_row_columns <- c("match_row_id", "match_date", entity_name_column, firm_type_column)
+  missing_row_columns <- setdiff(required_row_columns, names(rows))
+  if (length(missing_row_columns) > 0) {
+    stop("find_fuzzy_matches(): rows is missing required columns: ",
+         paste(missing_row_columns, collapse = ", "))
+  }
+
+  core_args <- list(key = key, entity_name_column = entity_name_column,
+                    key_name_column = key_name_column, first_letter_column = first_letter_column,
+                    firm_type_column = firm_type_column, step = step)
+
+  # ---- caching disabled: exact original behaviour ----
+  if (is.null(key_id) || !nzchar(cache_dir) || !nzchar(cache_version)) {
+    return(do.call(.fuzzy_core, c(list(rows = rows), core_args)))
+  }
+
+  # ---- caching enabled ----
+  rows <- copy(rows)
+  # A row's fuzzy result is fully determined by (name, firm_type, match_date) for this call
+  # (first_letter is derived from name; key_name_column/first_letter_column/step/key_id are
+  # baked into the cache file name below).
+  rows[, .__pk := paste(as.character(get(entity_name_column)),
+                        as.character(get(firm_type_column)),
+                        as.character(match_date), sep = "")]
+
+  if (!dir.exists(cache_dir)) dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+  safe_ver <- gsub("[^A-Za-z0-9_.-]", "_", cache_version)
+  cache_file <- file.path(cache_dir, paste0(
+    "fuzzy__", key_id, "__", entity_name_column, "__", first_letter_column,
+    "__step", step, "__", safe_ver, ".rds"))
+
+  results_skeleton <- cbind(data.table(.__pk = character(0)),
+                            .fuzzy_empty_result()[, !"match_row_id"])
+  cache <- if (file.exists(cache_file)) readRDS(cache_file) else list(pks = character(0), results = results_skeleton)
+
+  upk <- unique(rows$.__pk)
+  miss <- setdiff(upk, cache$pks)
+
+  if (length(miss) > 0) {
+    rep_rows <- rows[.__pk %in% miss][, .SD[1L], by = .__pk]
+    rep_rows[, .__tmpid := .I]
+    core_in <- copy(rep_rows)[, match_row_id := .__tmpid]
+    new_res <- do.call(.fuzzy_core, c(list(rows = core_in), core_args))
+    # attach the problem key, drop the temporary id
+    new_res <- merge(new_res, rep_rows[, .(.__tmpid, .__pk)],
+                     by.x = "match_row_id", by.y = ".__tmpid", all.x = TRUE)
+    new_res[, match_row_id := NULL]
+    cache$results <- rbind(cache$results, new_res, use.names = TRUE, fill = TRUE)
+    cache$pks <- c(cache$pks, miss)   # record ALL computed problems, incl. those with no candidates
+    saveRDS(cache, cache_file)
+  }
+
+  # expand cached candidates back onto every input row (one cached problem -> many rows)
+  out <- merge(rows[, .(match_row_id, .__pk)], cache$results, by = ".__pk", allow.cartesian = TRUE)
+  out[, .__pk := NULL]
+  if (nrow(out) == 0) return(empty_result)
+  setcolorder(out, names(empty_result))
+  out[]
 }
 
 # Accept candidate 1 only when it exceeds the threshold and no other CVR has

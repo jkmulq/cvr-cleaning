@@ -23,11 +23,33 @@ source(file.path(PROJECT_DIR, "code", "functions.R"))
 clean_data_dir <- dirs$clean_data
 ted_dir        <- file.path(dirs$intermediates, "ted")
 
-# 1 Load the TED winners and the CVR-name keys (as in 2_3 section 1)
+# 1 Load the TED winners
 winner_data <- readRDS(file.path(ted_dir, "ted_winner_data.rds"))
+setDT(winner_data)
+
+# ── Whole-result match cache (see match_cache_read/write in functions.R). The TED output also folds the
+# ted_notice_dates panel, so the version includes the panel's CONTENT hash (its mtime changes on every
+# rebuild even when content is identical). refresh_cols empty: an unchanged input+panel is an exact skip,
+# any change re-matches. Disable with MATCH_CACHE=false. Correctness gated by the archive diff.
+.panel_f <- file.path(ted_dir, "ted_notice_dates.rds")
+.panel_h <- if (file.exists(.panel_f)) substr(rlang::hash(readRDS(.panel_f)), 1, 12) else "nopanel"
+match_cache_ver    <- paste0("p1-", key_sig(clean_data_dir), "-", .panel_h)
+match_cache_file   <- file.path(dirs$intermediates, "match_cache", "whole__ted_winner.rds")
+match_refresh_cols <- character(0)
+match_grain        <- character(0)
+match_input        <- copy(winner_data)
+.hit <- match_cache_read(match_input, match_refresh_cols, match_grain, match_cache_file, match_cache_ver)
+if (!is.null(.hit)) {
+  cat("Whole-result match cache HIT -> skipping TED winner matching\n")
+  save_dataset(.hit$output, file.path(clean_data_dir, "clean_winner_data_ted_name_matched"))
+  saveRDS(.hit$extra, file.path(ted_dir, "manual_name_review_ted_winner.rds"))
+  quit(save = "no")
+}
+cat("Whole-result match cache MISS -> running full TED winner matching\n")
+
 name_key    <- readRDS(file.path(clean_data_dir, "clean_cvr_name_key.rds"))
 biname_key  <- readRDS(file.path(clean_data_dir, "clean_cvr_biname_key.rds"))
-setDT(winner_data); setDT(name_key); setDT(biname_key)
+setDT(name_key); setDT(biname_key)
 
 setnames(name_key, "name", "registered_name")
 setnames(biname_key, "binavn", "registered_name")
@@ -68,6 +90,8 @@ winner_data[, winner_name_in_data := winner_name]
 remaining <- winner_data[
   flag_matching_candidate & grepl("DK|DNK", toupper(trimws(winner_country)))]
 cat("Number observations to fuzzy match:", nrow(remaining), "\n")
+# Matching date = contract-award date: TED's most-available award date. Used ONLY for the +/-2y CVR
+# registry-validity window in matching (see KFST note in 2_1 on the pub-vs-award gap).
 remaining[, match_date := as.IDate(date_contract_award)]
 remaining_original <- remaining
 
@@ -497,6 +521,10 @@ winner_data  <- rbind(.one, .untouched, use.names = TRUE)
 
 save_dataset(winner_data, file.path(clean_data_dir, "clean_winner_data_ted_name_matched"))  # .rds + .csv + .parquet
 saveRDS(manual_name_review, file.path(ted_dir, "manual_name_review_ted_winner.rds"))
+
+# Persist the whole matched result so an unchanged-input rerun can skip this matcher entirely.
+match_cache_write(match_input, winner_data, match_refresh_cols, match_cache_file, match_cache_ver,
+                  extra = manual_name_review)
 
 # Diagnostics
 cat(sprintf("\nTED winners: %d rows | winner_cvr_final on %.0f%% | name-matched %d | quality graded %d\n",

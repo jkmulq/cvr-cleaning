@@ -19,10 +19,30 @@ source(file.path(PROJECT_DIR, "code", "functions.R"))
 # Directories
 clean_data_dir <- dirs$clean_data
 
-# 1 Load the KFST winners and the CVR-name keys
+# 1 Load the KFST buyers
 buyer_data <- readRDS(
   file.path(clean_data_dir, "clean_buyer_data_kfst.rds")
 )
+setDT(buyer_data)
+
+# ── Whole-result match cache: skip the whole matcher ONLY when the input is byte-for-byte unchanged ──
+# (see match_cache_read/write in functions.R). CONSERVATIVE: refresh_cols empty -> signature covers EVERY
+# input column, so any change to the clean data forces a full re-match. Disable with MATCH_CACHE=false.
+match_cache_ver    <- paste0("p1-", key_sig(clean_data_dir))
+match_cache_file   <- file.path(dirs$intermediates, "match_cache", "whole__kfst_buyer.rds")
+match_refresh_cols <- character(0)
+match_grain        <- character(0)
+match_input        <- copy(buyer_data)
+.hit <- match_cache_read(match_input, match_refresh_cols, match_grain, match_cache_file, match_cache_ver)
+if (!is.null(.hit)) {
+  cat("Whole-result match cache HIT -> skipping KFST buyer matching (input unchanged)\n")
+  save_dataset(.hit$output, file.path(clean_data_dir, "clean_buyer_data_kfst_name_matched"))
+  saveRDS(.hit$extra, file.path(clean_data_dir, "manual_buyer_name_review_kfst.rds"))
+  quit(save = "no")
+}
+cat("Whole-result match cache MISS -> running full KFST buyer matching\n")
+
+# CVR-name keys (only needed on a cache miss)
 name_key <- readRDS(
   file.path(clean_data_dir, "clean_cvr_name_key.rds")
 )
@@ -30,7 +50,6 @@ biname_key <- readRDS(
   file.path(clean_data_dir, "clean_cvr_biname_key.rds")
 )
 
-setDT(buyer_data)
 setDT(name_key)
 setDT(biname_key)
 
@@ -76,6 +95,8 @@ cat("No. observations to match:", nrow(remaining), "\n")
 
 # The CVR key records when a name was valid. 
 # We will use tender publication dates to filter potential matches. 
+# Matching date = pub_date: KFST's most-available date (93% vs award_date 84%). Used ONLY for the
+# +/-2y CVR registry-validity window in matching, so pub-vs-award (~3wk median gap) is immaterial to matches.
 remaining[, match_date := as.IDate(pub_date)]
 remaining_original <- remaining
 
@@ -529,3 +550,7 @@ buyer_data[, match_row_id := NULL]
 # 7 Save
 save_dataset(buyer_data, file.path(clean_data_dir, "clean_buyer_data_kfst_name_matched"))  # .rds + .csv + .parquet
 saveRDS(manual_buyer_name_review,  file.path(clean_data_dir, "manual_buyer_name_review_kfst.rds"))
+
+# Persist the whole matched result so an unchanged-input rerun can skip this matcher entirely.
+match_cache_write(match_input, buyer_data, match_refresh_cols, match_cache_file, match_cache_ver,
+                  extra = manual_buyer_name_review)

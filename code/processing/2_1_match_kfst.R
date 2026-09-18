@@ -24,6 +24,28 @@ clean_data_dir <- dirs$clean_data
 winner_data <- readRDS(
   file.path(clean_data_dir, "clean_winner_data_kfst.rds")
 )
+setDT(winner_data)
+
+# ── Whole-result match cache: skip the entire matcher ONLY when the input is byte-for-byte unchanged ──
+# (see match_cache_read/write in functions.R). CONSERVATIVE by design: refresh_cols is empty, so the
+# signature covers EVERY input column -> any change to the clean data whatsoever forces a full re-match.
+# The version also ties the cache to the CVR keys (by size). Disable with MATCH_CACHE=false. Correctness
+# is gated by the archive diff (a cache-off run must reproduce the cached output bit-for-bit).
+match_cache_ver    <- paste0("p1-", key_sig(clean_data_dir))
+match_cache_file   <- file.path(dirs$intermediates, "match_cache", "whole__kfst_winner.rds")
+match_refresh_cols <- character(0)
+match_grain        <- character(0)
+match_input        <- copy(winner_data)
+.hit <- match_cache_read(match_input, match_refresh_cols, match_grain, match_cache_file, match_cache_ver)
+if (!is.null(.hit)) {
+  cat("Whole-result match cache HIT -> skipping KFST winner matching (input unchanged)\n")
+  save_dataset(.hit$output, file.path(clean_data_dir, "clean_winner_data_kfst_name_matched"))
+  saveRDS(.hit$extra, file.path(clean_data_dir, "manual_name_review_kfst.rds"))
+  quit(save = "no")
+}
+cat("Whole-result match cache MISS -> running full KFST winner matching\n")
+
+# CVR-name keys (only needed on a cache miss)
 name_key <- readRDS(
   file.path(clean_data_dir, "clean_cvr_name_key.rds")
 )
@@ -31,7 +53,6 @@ biname_key <- readRDS(
   file.path(clean_data_dir, "clean_cvr_biname_key.rds")
 )
 
-setDT(winner_data)
 setDT(name_key)
 setDT(biname_key)
 
@@ -51,6 +72,22 @@ biname_key[, cvr := sprintf("%08d", as.integer(cvr))]
 # Extract first letter of the broadly generalized name.
 name_key[, broad_first_letter := substr(name_broad, 1, 1)]
 biname_key[, broad_first_letter := substr(name_broad, 1, 1)]
+
+# Optional cross-run memoisation of the fuzzy matcher (see find_fuzzy_matches in functions.R).
+# Engaged unless MATCH_CACHE=false. The version string ties the cache to the CVR name/biname keys
+# (their mtime) plus a manual param tag -- rebuild the keys or bump the tag and the cache is
+# invalidated automatically, so a stale result is never served. A rerun that changed no matching
+# input (names / firm type / match_date) is then a full cache hit and skips the adist search.
+if (tolower(Sys.getenv("MATCH_CACHE", "true")) != "false") {
+  .key_files <- file.path(clean_data_dir, c("clean_cvr_name_key.rds", "clean_cvr_biname_key.rds"))
+  .cache_ver <- paste0("p1-", as.integer(max(file.mtime(.key_files))))
+  options(cvr.fuzzy_cache_dir = file.path(dirs$intermediates, "match_cache"),
+          cvr.fuzzy_cache_version = .cache_ver)
+  cat("Fuzzy match cache: ON  dir=", getOption("cvr.fuzzy_cache_dir"),
+      " version=", .cache_ver, "\n", sep = "")
+} else {
+  cat("Fuzzy match cache: OFF (MATCH_CACHE=false)\n")
+}
 
 # Combine keys for exact matching. 
 cvr_key <- rbindlist(
@@ -167,6 +204,8 @@ cat("No. observations to fuzzy match:", nrow(remaining), "\n")
 
 # The CVR key records when a name was valid. 
 # We will use tender publication dates to filter potential matches. 
+# Matching date = pub_date: KFST's most-available date (93% vs award_date 84%). Used ONLY for the
+# +/-2y CVR registry-validity window in matching, so pub-vs-award (~3wk median gap) is immaterial to matches.
 remaining[, match_date := as.IDate(pub_date)]
 remaining_original <- remaining
 
@@ -289,7 +328,8 @@ step_candidates <- find_fuzzy_matches(
   key_name_column = "name_match",
   first_letter_column = "first_letter",
   step = 5L,
-  firm_type_column = "winner_firm_type"
+  firm_type_column = "winner_firm_type",
+  key_id = "name_key"
 )
 
 # Append new match candidates the fuzzy_candidates
@@ -313,7 +353,8 @@ step_candidates <- find_fuzzy_matches(
   key_name_column = "name_match",
   first_letter_column = "first_letter",
   step = 5L,
-  firm_type_column = "winner_firm_type"
+  firm_type_column = "winner_firm_type",
+  key_id = "biname_key"
 )
 
 # Append new match candidates the fuzzy_candidates
@@ -338,7 +379,8 @@ step_candidates <- find_fuzzy_matches(
   key_name_column = "name_broad",
   first_letter_column = "broad_first_letter",
   step = 6L,
-  firm_type_column = "winner_firm_type"
+  firm_type_column = "winner_firm_type",
+  key_id = "name_key"
 )
 
 # Append new match candidates the fuzzy_candidates
@@ -362,7 +404,8 @@ step_candidates <- find_fuzzy_matches(
   key_name_column = "name_broad",
   first_letter_column = "broad_first_letter",
   step = 6L,
-  firm_type_column = "winner_firm_type"
+  firm_type_column = "winner_firm_type",
+  key_id = "biname_key"
 )
 
 # Append new match candidates to fuzzy_candidates
@@ -699,5 +742,9 @@ winner_data[, is_awarded_winner := awarded_winner(winner_data)]
 # 7 Save
 save_dataset(winner_data,
              file.path(clean_data_dir, "clean_winner_data_kfst_name_matched"))  # .rds + .csv + .parquet
-saveRDS(manual_name_review, 
+saveRDS(manual_name_review,
         file.path(clean_data_dir, "manual_name_review_kfst.rds"))
+
+# Persist the whole matched result so an unchanged-input rerun can skip this matcher entirely.
+match_cache_write(match_input, winner_data, match_refresh_cols, match_cache_file, match_cache_ver,
+                  extra = manual_name_review)

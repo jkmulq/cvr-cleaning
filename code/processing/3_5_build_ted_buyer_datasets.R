@@ -16,6 +16,25 @@ clean_data_dir <- dirs$clean_data
 
 base_raw <- as.data.table(readRDS(file.path(clean_data_dir, "clean_buyer_data_ted_name_matched.rds")))
 
+# ── Whole-result stack cache: skip the build when inputs are unchanged (see functions.R). This builder also
+# reads the raw ted_buyer_data (for the name-match pass), so the version folds its CONTENT hash alongside
+# the CVR keys' mtime. Empty refresh -> exact skip on identical input, full rebuild on any change.
+.nmo_f <- file.path(dirs$intermediates, "ted", "ted_buyer_data.rds")
+.nmo_h <- if (file.exists(.nmo_f)) substr(rlang::hash(readRDS(.nmo_f)), 1, 12) else "nonmo"
+match_cache_ver  <- paste0("p1-", key_sig(clean_data_dir), "-", .nmo_h)
+match_cache_file <- file.path(dirs$intermediates, "match_cache", "stack__ted_buyer.rds")
+match_input      <- copy(base_raw)
+.hit <- match_cache_read(match_input, character(0), character(0), match_cache_file, match_cache_ver)
+if (!is.null(.hit)) {
+  cat("Stack cache HIT -> skipping TED buyer stack build\n")
+  .chk <- file.path(clean_data_dir, "checks"); dir.create(.chk, showWarnings = FALSE, recursive = TRUE)
+  saveRDS(.hit$extra, file.path(.chk, "predup_cvr_lists_ted_buyer.rds"))
+  save_dataset(.hit$output, Sys.getenv("TED_BUYER_STACK_OUT",
+    unset = file.path(clean_data_dir, "ted_buyer_datasets_stacked.rds")))
+  quit(save = "no")
+}
+cat("Stack cache MISS -> building TED buyer stack\n")
+
 # 1 Production: the XML-resolved TED buyers from ted_5, dropped to rows with a resolved CVR and collapsed
 #   to distinct (tender_id, lot_id, buyer_cvr_final).
 production <- unique(base_raw[!is.na(buyer_cvr_final) & buyer_cvr_final != ""],
@@ -56,7 +75,9 @@ extraction <- merge(extraction, lot_ctx, by = c("tender_id","lot_id"), all.x = T
 #   Reads ted_buyer_data.rds (ted_3); lot context comes from lot_ctx. Surfaced ONLY via buyer_cvr_final.
 ted_dir <- file.path(dirs$intermediates, "ted")
 nmo <- as.data.table(readRDS(file.path(ted_dir, "ted_buyer_data.rds")))
-nmo[, `:=`(tender_id = as.character(notice_id), lot_id = as.character(lot),
+# lot_id must be the CANONICAL lot id (1..N, as in ted_3/ted_4/base_raw), NOT the raw TED lot code `lot` --
+# else the lot_ctx merge (dates/amounts/cpv/procedure) misses and name_match buyer rows come out context-less.
+nmo[, `:=`(tender_id = as.character(notice_id), lot_id = as.character(lot_id),
            buyer_number = rowid(notice_id, lot))]
 bp <- prepare_cvr_name(nmo$buyer_name)
 nmo[, `:=`(buyer_name_basic = bp$name_basic, buyer_name_match = bp$name_clean,
@@ -74,6 +95,8 @@ name_key[, broad_first_letter := substr(name_broad, 1, 1)]; biname_key[, broad_f
 cvr_key <- rbindlist(list(name_key, biname_key), use.names = TRUE)
 cvr_key[, source_order := fifelse(name_source == "name", 1L, 2L)]
 remaining <- nmo[flag_matching_candidate & grepl("DK|DNK", toupper(trimws(buyer_country)))]
+# Matching date = contract-award date: TED's most-available award date. Used ONLY for the +/-2y CVR
+# registry-validity window in matching (see KFST note in 2_1 on the pub-vs-award gap).
 remaining[, match_date := as.IDate(date_contract_award)]
 remaining_original <- remaining
 matched <- data.table(match_row_id = integer(0), cvr_name_match = character(0),
@@ -91,9 +114,15 @@ remaining[, fuzzy_match_id := .GRP, by = fuzzy_match_cols]
 fuzzy_row_lookup <- remaining[, .(match_row_id, fuzzy_match_id)]
 remaining <- remaining[, .SD[1], by = fuzzy_match_id][, match_row_id := fuzzy_match_id]
 matched_prefuzzy <- copy(matched)
+# Fuzzy match cache (see find_fuzzy_matches): caches the name-match-only fuzzy pass, shared with the 2_*
+# matchers where the (name, firm_type, match_date) problem is identical. Disable with MATCH_CACHE=false.
+if (tolower(Sys.getenv("MATCH_CACHE", "true")) != "false")
+  options(cvr.fuzzy_cache_dir = file.path(dirs$intermediates, "match_cache"),
+          cvr.fuzzy_cache_version = paste0("p1-", key_sig(clean_data_dir)))
 .run_fuzzy <- function(key, ecol, kcol, flcol, step, thr) keep_step_matches(add_buyer_context_to_matches(
   accept_fuzzy_match(find_fuzzy_matches(remaining, key, entity_name_column = ecol, key_name_column = kcol,
-    first_letter_column = flcol, firm_type_column = "buyer_firm_type", step = step), threshold = thr)))
+    first_letter_column = flcol, firm_type_column = "buyer_firm_type", step = step,
+    key_id = if (key$name_source[1] == "name") "name_key" else "biname_key"), threshold = thr)))
 .run_fuzzy(name_key,   "buyer_name_match", "name_match", "first_letter",       5L, 85)
 .run_fuzzy(biname_key, "buyer_name_match", "name_match", "first_letter",       5L, 85)
 .run_fuzzy(name_key,   "buyer_name_broad", "name_broad", "broad_first_letter", 6L, 86)
@@ -200,6 +229,10 @@ cat("  self-check passed: cvr_method rebuilds production, extraction and name_ma
 out_path <- Sys.getenv("TED_BUYER_STACK_OUT", unset = file.path(clean_data_dir, "ted_buyer_datasets_stacked.rds"))
 save_dataset(stacked_deduped, out_path)   # .rds (canonical) + .csv + .parquet
 cat(sprintf("ted_buyer_datasets_stacked.rds: %d rows, %d cols\n", nrow(stacked_deduped), ncol(stacked_deduped)))
+
+# Persist the whole stack so an unchanged-input rerun can skip this build entirely.
+match_cache_write(match_input, stacked_deduped, character(0), match_cache_file, match_cache_ver,
+                  extra = predup_ref)
 print(stacked_deduped[, .N, by = dataset][order(dataset)])
 cat(sprintf("  rebuild: production=%d | extraction=%d | name_match=%d\n",
             sum(grepl("production", stacked_deduped$cvr_method)),

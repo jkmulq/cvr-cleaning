@@ -21,6 +21,24 @@ source(file.path(PROJECT_DIR, "code", "functions.R"))
 clean_data_dir <- dirs$clean_data
 base_raw <- as.data.table(readRDS(file.path(clean_data_dir, "clean_winner_data_kfst_name_matched.rds")))
 
+# ── Whole-result stack cache: skip the build when the matched input + keys are unchanged ──
+# (see match_cache_read/write in functions.R). Empty refresh -> exact skip on identical input, full
+# rebuild on any change. Version ties to the CVR keys' mtime. Disable with MATCH_CACHE=false. Correctness
+# gated by the archive diff (a cache-off run must reproduce the cached output bit-for-bit).
+match_cache_ver  <- paste0("p1-", key_sig(clean_data_dir))
+match_cache_file <- file.path(dirs$intermediates, "match_cache", "stack__kfst_winner.rds")
+match_input      <- copy(base_raw)
+.hit <- match_cache_read(match_input, character(0), character(0), match_cache_file, match_cache_ver)
+if (!is.null(.hit)) {
+  cat("Stack cache HIT -> skipping KFST winner stack build\n")
+  .chk <- file.path(clean_data_dir, "checks"); dir.create(.chk, showWarnings = FALSE, recursive = TRUE)
+  saveRDS(.hit$extra, file.path(.chk, "predup_cvr_lists_kfst_winner.rds"))
+  save_dataset(.hit$output, Sys.getenv("KFST_STACK_OUT",
+    unset = file.path(clean_data_dir, "kfst_winner_datasets_stacked.rds")))
+  quit(save = "no")
+}
+cat("Stack cache MISS -> building KFST winner stack\n")
+
 # 1 Production: the consortium/name-matched KFST winners from 2_1, dropped to rows with a resolved CVR
 #   and collapsed to distinct (tender_id, lot_id, winner_cvr_final) -- keeps one representative member row.
 production <- unique(copy(base_raw)[!is.na(winner_cvr_final) & winner_cvr_final != ""],
@@ -66,6 +84,8 @@ nmo <- copy(base_raw)[, .(tender_id, lot_id, winner_number, winner_name, winner_
 nmo[, `:=`(winner_name_basic = .prep$name_basic, winner_name_no_spaces = .prep$name_no_spaces,
            winner_name_broad = .prep$name_broad, winner_name_match = .prep$name_clean,
            winner_firm_type = .prep$firm_type)]
+# Matching date = pub_date: KFST's most-available date (93% vs award_date 84%). Used ONLY for the
+# +/-2y CVR registry-validity window in matching, so pub-vs-award (~3wk median gap) is immaterial to matches.
 nmo[, `:=`(match_row_id = .I, winner_name_in_data = winner_name, match_date = as.IDate(pub_date))]
 name_key   <- as.data.table(readRDS(file.path(clean_data_dir, "clean_cvr_name_key.rds")))
 biname_key <- as.data.table(readRDS(file.path(clean_data_dir, "clean_cvr_biname_key.rds")))
@@ -94,9 +114,15 @@ fuzzy_row_lookup <- remaining[, .(match_row_id, fuzzy_match_id)]
 remaining <- remaining[, .SD[1], by = fuzzy_match_id][, match_row_id := fuzzy_match_id]
 remaining_original <- copy(remaining)
 matched_prefuzzy <- copy(matched)
+# Fuzzy match cache (see find_fuzzy_matches): caches the name-match-only fuzzy pass, shared with the 2_*
+# matchers where the (name, firm_type, match_date) problem is identical. Disable with MATCH_CACHE=false.
+if (tolower(Sys.getenv("MATCH_CACHE", "true")) != "false")
+  options(cvr.fuzzy_cache_dir = file.path(dirs$intermediates, "match_cache"),
+          cvr.fuzzy_cache_version = paste0("p1-", key_sig(clean_data_dir)))
 .run_fuzzy <- function(key, ecol, kcol, flcol, step, thr) keep_step_matches(add_winner_context_to_matches(
   accept_fuzzy_match(find_fuzzy_matches(remaining, key, entity_name_column = ecol, key_name_column = kcol,
-    first_letter_column = flcol, firm_type_column = "winner_firm_type", step = step), threshold = thr)))
+    first_letter_column = flcol, firm_type_column = "winner_firm_type", step = step,
+    key_id = if (key$name_source[1] == "name") "name_key" else "biname_key"), threshold = thr)))
 .run_fuzzy(name_key,   "winner_name_match", "name_match", "first_letter",       5L, 85)
 .run_fuzzy(biname_key, "winner_name_match", "name_match", "first_letter",       5L, 85)
 .run_fuzzy(name_key,   "winner_name_broad", "name_broad", "broad_first_letter", 6L, 86)
@@ -199,6 +225,10 @@ cat("  self-check passed: cvr_method rebuilds production, extraction and name_ma
 out_path <- Sys.getenv("KFST_STACK_OUT", unset = file.path(clean_data_dir, "kfst_winner_datasets_stacked.rds"))
 save_dataset(stacked_deduped, out_path)   # .rds (canonical) + .csv + .parquet
 cat(sprintf("kfst_winner_datasets_stacked.rds: %d rows, %d cols\n", nrow(stacked_deduped), ncol(stacked_deduped)))
+
+# Persist the whole stack so an unchanged-input rerun can skip this build entirely.
+match_cache_write(match_input, stacked_deduped, character(0), match_cache_file, match_cache_ver,
+                  extra = predup_ref)
 print(stacked_deduped[, .N, by = dataset][order(dataset)])
 cat(sprintf("  rebuild: production=%d | extraction=%d | name_match=%d\n",
             sum(grepl("production", stacked_deduped$cvr_method)),

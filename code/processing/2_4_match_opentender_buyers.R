@@ -17,12 +17,32 @@ source(file.path(PROJECT_DIR, "code", "functions.R"))
 # Directories
 clean_data_dir <- dirs$clean_data
 
-# 1 Load the OpenTender buyers and the CVR-name keys
+# 1 Load the OpenTender buyers
 buyer_data <- readRDS(file.path(clean_data_dir, "clean_buyer_data_ot.rds"))
+setDT(buyer_data)
+
+# ── Whole-result match cache: skip the whole matcher when no match-relevant input changed ──
+# (see match_cache_read/write in functions.R). OT is untouched by the KFST date fix, so refresh_cols is
+# empty: an unchanged input is an exact skip, any change forces a full re-match. Disable with MATCH_CACHE=false.
+match_cache_ver    <- paste0("p1-", key_sig(clean_data_dir))
+match_cache_file   <- file.path(dirs$intermediates, "match_cache", "whole__ot_buyer.rds")
+match_refresh_cols <- character(0)
+match_grain        <- character(0)
+match_input        <- copy(buyer_data)
+.hit <- match_cache_read(match_input, match_refresh_cols, match_grain, match_cache_file, match_cache_ver)
+if (!is.null(.hit)) {
+  cat("Whole-result match cache HIT -> skipping OT buyer matching\n")
+  save_dataset(.hit$output, file.path(clean_data_dir, "clean_buyer_data_ot_name_matched"))
+  saveRDS(.hit$extra$manual_buyer_name_review, file.path(clean_data_dir, "manual_buyer_name_review_ot.rds"))
+  saveRDS(.hit$extra$name_partition_segments, file.path(clean_data_dir, "buyer_name_partition_diagnostics_ot.rds"))
+  quit(save = "no")
+}
+cat("Whole-result match cache MISS -> running full OT buyer matching\n")
+
+# CVR-name keys (only needed on a cache miss)
 name_key <- readRDS(file.path(clean_data_dir, "clean_cvr_name_key.rds"))
 biname_key <- readRDS(file.path(clean_data_dir, "clean_cvr_biname_key.rds"))
 
-setDT(buyer_data)
 setDT(name_key)
 setDT(biname_key)
 
@@ -76,6 +96,8 @@ cat("Number observations to fuzzy match:", nrow(remaining), "\n")
 
 # The CVR key records when a name was valid. 
 # We will use tender publication dates to filter potential matches. 
+# Matching date = contract-award date: OpenTender's most-available date (100%; OT has no pub_date). Used
+# ONLY for the +/-2y CVR registry-validity window in matching (see KFST note in 2_1 on the pub-vs-award gap).
 remaining[, match_date := as.IDate(tender_publications_firstdContractAwardDate)]
 remaining_original <- remaining
 
@@ -1193,3 +1215,8 @@ buyer_data[, match_row_id := NULL]
 save_dataset(buyer_data, file.path(clean_data_dir, "clean_buyer_data_ot_name_matched"))  # .rds + .csv + .parquet
 saveRDS(manual_buyer_name_review, file.path(clean_data_dir, "manual_buyer_name_review_ot.rds"))
 saveRDS(name_partition_segments, file.path(clean_data_dir, "buyer_name_partition_diagnostics_ot.rds"))
+
+# Persist the whole matched result so an unchanged-input rerun can skip this matcher entirely.
+match_cache_write(match_input, buyer_data, match_refresh_cols, match_cache_file, match_cache_ver,
+                  extra = list(manual_buyer_name_review = manual_buyer_name_review,
+                               name_partition_segments = name_partition_segments))
