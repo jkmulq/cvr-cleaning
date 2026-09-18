@@ -250,18 +250,34 @@ data <- data %>%
   mutate(n_bidders = as.numeric(n_bids_received))
 
 ## Award date
+# KFST records the award date ("Dato for tildeling af kontrakten", variabel 45) as the contract-award
+# notice's section V.2.1 conclusion date. Single dates arrive as Excel serials (or occasionally ISO).
+# Framework agreements with several winners carry ONE date per winner, ';'-separated and DD-MM-YYYY (per
+# the KFST variable description). We keep the raw string (`award_date_raw`) so each winner can be given
+# its own date below, and collapse the lot-level `award_date` to the EARLIEST conclusion (min) for use by
+# buyers and as the per-winner fallback. The non-';' path is byte-identical to the original parse.
 data <- data %>%
   mutate(
-    award_date = coalesce(
-      as.Date(
-        if_else(
-          str_detect(as.character(award_date), "^[0-9]+$"),
-          suppressWarnings(as.numeric(award_date)),
-          NA_real_
+    award_date_raw = as.character(award_date),
+    award_date = if_else(
+      str_detect(award_date_raw, ";"),
+      # multi-winner framework lot: earliest of the ';'-separated DD-MM-YYYY tokens
+      as.Date(vapply(str_split(award_date_raw, "\\s*;\\s*"), function(x) {
+        d <- suppressWarnings(lubridate::dmy(x, quiet = TRUE)); d <- d[!is.na(d)]
+        if (length(d)) as.character(min(d)) else NA_character_
+      }, character(1))),
+      # unchanged original path for single-date cells (Excel serial, else ISO)
+      coalesce(
+        as.Date(
+          if_else(
+            str_detect(award_date_raw, "^[0-9]+$"),
+            suppressWarnings(as.numeric(award_date_raw)),
+            NA_real_
+          ),
+          origin = "1899-12-30"
         ),
-        origin = "1899-12-30"
-      ),
-      lubridate::ymd(as.character(award_date), quiet = TRUE)
+        lubridate::ymd(award_date_raw, quiet = TRUE)
+      )
     )
   )
 
@@ -479,7 +495,31 @@ kfst_notice_dates <- kfst_notice_dates %>%
 tender_lot_data <- left_join(tender_lot_data, kfst_notice_dates, by = c("tender_id", "lot_id"))
 
 
-# 2 Winners 
+# Per-winner framework award dates (variabel 45; ';'-separated, DD-MM-YYYY). KFST lists winners and their
+# conclusion dates in the same positional order, so where the date-token count matches BOTH the winner-name
+# and winner-CVR token counts we give each winner (by positional winner_number) its own date. Where the
+# counts disagree (~12 lots) the positions can't be trusted, so those winners keep the lot-level earliest
+# date (award_date); the per-winner error introduced there is bounded to at most ~49 days (median 5),
+# because every wide-spread lot has matching counts and is dated exactly. Single-winner / non-framework
+# lots have no ';' and are unaffected. Joined onto the exploded winner rows by winner_number below.
+winner_award_dates <- data %>%
+  filter(str_detect(award_date_raw, ";"),
+         n_pieces(award_date_raw) == n_pieces(winner_name),
+         n_pieces(award_date_raw) == n_pieces(winner_cvr)) %>%
+  select(tender_id, lot_id, award_date_tok = award_date_raw) %>%
+  separate_longer_delim(award_date_tok, delim = ";") %>%
+  group_by(tender_id, lot_id) %>%
+  mutate(winner_number = row_number(),
+         award_date_winner = suppressWarnings(lubridate::dmy(str_trim(award_date_tok), quiet = TRUE))) %>%
+  ungroup() %>%
+  select(tender_id, lot_id, winner_number, award_date_winner)
+
+# `award_date_raw` has served its purpose (lot-level min + the per-winner map); drop it so nothing
+# downstream can pick it up and it never reaches the saved output.
+data <- data %>% select(-award_date_raw)
+
+
+# 2 Winners
 ## (CONSORTIUM extraction: ';' = winners via tiers, ',' = consortium members)
 original_winner_data <- data %>%
   transmute(tender_id, lot_id, winner_cvr_original = winner_cvr,
@@ -733,6 +773,22 @@ clean_winner_data <- clean_winner_data %>%
 clean_winner_data <- clean_winner_data %>%
   left_join(tender_lot_data, by = c("tender_id", "lot_id")) %>%
   left_join(original_winner_data, by = c("tender_id", "lot_id"))
+
+# Give each winner its own positional framework award date where alignment is trustworthy; winners on
+# mismatched-count lots keep the lot-level earliest date joined above. Re-derive award_end_date from the
+# winner's date only where it was individualised (consortium members share a winner_number, so they share
+# the winner's date, which is correct -- the date is a property of the winner, not the member).
+clean_winner_data <- clean_winner_data %>%
+  left_join(winner_award_dates, by = c("tender_id", "lot_id", "winner_number")) %>%
+  mutate(
+    award_date = coalesce(award_date_winner, award_date),
+    award_end_date = if_else(
+      flag_awarded & !is.na(award_date_winner),
+      award_date + coalesce(as.numeric(contract_duration_months_min),
+                            as.numeric(contract_duration_months_max)) * 30,
+      award_end_date)
+  ) %>%
+  select(-award_date_winner)
 
 # Number the consortia within each lot: members of the same consortium share a
 # consortium_number (1, 2, ...); non-consortium rows get NA.
