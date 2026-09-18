@@ -134,6 +134,19 @@ combined[!is.na(is_winner) & is_winner == FALSE, entity := "non-winner"]
 cat(sprintf("entity relabel: %d TED non-winning bidder rows -> entity = 'non-winner'\n",
             combined[entity == "non-winner", .N]))
 
+# ---- Harmonise TED award_date: fill gaps from award_contract_date (the same contract-award event) ----
+# TED only (KFST/OT left as-is, by design). For TED, `award_date` and `award_contract_date` are the SAME
+# event -- the contract-conclusion date -- but `award_date` comes from the LEGACY uppercase-tag parser, which
+# does not read eForms (2024+) notices, so it is NA on every eForms lot (all non-winners + the winners of
+# competitive eForms lots). `award_contract_date` is the eForms-aware BT-145 date. Coalescing fills those
+# gaps without overwriting any present award_date, so: non-winners get a date (was 0%), competitive-lot
+# winners get a date, and a winner and its non-winners in the same (tender_id, lot_id) carry the SAME date
+# (the within-notice tie; group a matched analysis on tender_id == ted_notice_id). eForms 0% -> ~83%.
+.ted_filled <- combined[data_source == "TED" & is.na(award_date) & !is.na(award_contract_date), .N]
+combined[data_source == "TED" & is.na(award_date) & !is.na(award_contract_date),
+         award_date := award_contract_date]
+cat(sprintf("TED award_date fill: %d rows dated from award_contract_date (winners + non-winners)\n", .ted_filled))
+
 # Rename for clarity: n_lots_contracted (KFST-only) actually holds the count of lots in the tender
 # NOTICE -- `Antal delkontrakter i udbudsbekendtgoerelsen`, i.e. *announced*, not "contracted".
 if ("n_lots_contracted" %in% names(combined)) setnames(combined, "n_lots_contracted", "n_lots_announced")
@@ -188,6 +201,16 @@ combined[data_source == "KFST" & entity == "buyer", cvr_method := "production; n
 combined[, build_prod       := grepl("production", cvr_method)]
 combined[, build_extr       := grepl("extraction", cvr_method)]
 combined[, build_name_match := grepl("name_match", cvr_method)]
+
+# notice_source: TED-only provenance flag -- did the notice enter via an OpenTender/KFST award URL ("url") or
+# was it discovered only by the TED API sweep (ted_dates_0_api_universe.R) and folded into the TED universe
+# ("api")? Non-TED rows are NA. TED tender_id IS the notice id, so we match it against the API-only manifest
+# (leading-zero-insensitive). No manifest / no API rows -> every TED row is "url".
+combined[, notice_source := NA_character_]
+.api_manifest <- file.path(dirs$intermediates, "ted", "api_only_award_ids.rds")
+.api_only_ids <- if (file.exists(.api_manifest)) unique(sub("^0+", "", readRDS(.api_manifest)$publication_number)) else character(0)
+combined[data_source == "TED",
+         notice_source := fifelse(sub("^0+", "", tender_id) %chin% .api_only_ids, "api", "url")]
 
 # Currency label: TED carries its native (multi-)currency; KFST amounts are always DKK and OpenTender
 # always EUR, but those two sources leave the `currency` string blank. Fill it so the column is complete
@@ -259,7 +282,7 @@ keep_cols <- c(
   "cpv_code", "cpv_code_first", "cpv_division", "cpv_division_name", "cpv_sector", "cpv_category",
   "tender_cancelled", "tender_status", "flag_awarded", "flag_nature_cpv_mismatch",
   "contract_duration_months_min", "contract_duration_months_max", "award_end_date", "annualised_tender_amount",
-  "annualised_lot_amount", "n_lot_id", "ted_notice_id", "planning_dispatch_date",
+  "annualised_lot_amount", "n_lot_id", "ted_notice_id", "notice_source", "planning_dispatch_date",
   "planning_publication_date", "planning_tender_deadline_date", "competition_dispatch_date", "competition_publication_date",
   "competition_tender_deadline_date", "award_dispatch_date", "award_publication_date", "award_tender_deadline_date",
   "award_contract_date", "flag_cvr_ws", "flag_cvr_alphabet", "flag_cvr_punct",
@@ -339,7 +362,7 @@ combined <- combined[, ..keep_present]
 # sample-selection -> tender/lot information -> match-quality measures -> flags -> everything else.
 # Rule-based: `ord_flags` sweeps up every remaining flag_* and `ord_rest` everything still unplaced,
 # and a setequal() guard guarantees no column is dropped or duplicated by the reorder.
-ord_core   <- c("data_source", "tender_id", "lot_id", "ted_notice_id", "entity")
+ord_core   <- c("data_source", "tender_id", "lot_id", "ted_notice_id", "notice_source", "entity")
 ord_cvr    <- c("cvr_final", "cvr_name_match", "cvr_recovered_from_formatting")   # final -> less final
 ord_prov   <- c("cvr_number_source")
 ord_select <- c("cvr_method", "build_prod", "build_extr", "build_name_match", "is_winner", "is_awarded_winner")
