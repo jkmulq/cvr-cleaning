@@ -134,6 +134,63 @@ if (nrow(disagree) == 0L) {
   failures <- c(failures, sprintf("3: %d tender-level column(s) disagree within a lot", nrow(disagree)))
 }
 
+# 3b Method agreement (NA-STRICT): within (data_source, entity, tender_id, lot_id), every tender/lot-level
+#    column must be IDENTICAL across all rows -- i.e. across cvr_method (production/extraction/name_match), so
+#    e.g. KFST-winner extraction rows agree with KFST-winner production rows on their shared tender-lots.
+#    uniqueN() counts NA as a level, so a method that is THIN (NA where another has a value) is flagged --
+#    this catches context that failed to attach to one method (e.g. the name_match lot_id mismatch). Stricter
+#    and more granular than check 3 (NA-lenient, cross-entity). INFORMATIONAL for now (reported, not gating);
+#    promote to gating once confirmed clean post-fix.
+key3b <- c("data_source", "entity", "tender_id", "lot_id")
+disagree_m <- rbindlist(lapply(tl_present, function(col) {
+  g <- final_data[, .(nd = uniqueN(get(col))), by = key3b][nd > 1L]   # NA counts as a level -> NA-strict
+  if (nrow(g)) data.table(column = col, n_groups_disagree = nrow(g)) else NULL
+}), fill = TRUE)
+if (nrow(disagree_m) == 0L) {
+  message(sprintf("Passed (3b): tender/lot columns agree across methods within every (data_source, entity, tender_id, lot_id) [%d cols].",
+                  length(tl_present)))
+} else {
+  setorder(disagree_m, -n_groups_disagree)
+  message("INFO (3b): tender/lot columns differing across methods within a (source, entity, tender, lot) [NA-strict]:")
+  print(disagree_m)
+  bad <- disagree_m$column[1]
+  fb  <- final_data[, .(nd = uniqueN(get(bad))), by = key3b][nd > 1L][1]
+  ex  <- merge(final_data, fb[, ..key3b], by = key3b)[, c(key3b, "cvr_method", bad), with = FALSE]
+  cat(sprintf("Example for `%s`:\n", bad)); print(head(ex, 8))
+}
+
+# 3c TED winner/non-winner DATE alignment. A losing bidder and the winner of the same TED lot share the
+#    notice's lineage dates (attached by notice_id), so on any (tender_id, lot_id) that carries BOTH a winner
+#    and a non-winner row, the notice-level date columns must be IDENTICAL across them (NA-strict). Flags a
+#    non-winner that didn't inherit the same dates as its winner. INFORMATIONAL.
+ted_date_cols <- intersect(c(
+  "award_dispatch_date", "award_publication_date", "award_tender_deadline_date", "award_contract_date",
+  "competition_dispatch_date", "competition_publication_date", "competition_tender_deadline_date",
+  "planning_dispatch_date", "planning_publication_date", "planning_tender_deadline_date"), names(final_data))
+tedwn   <- final_data[data_source == "TED" & entity %chin% c("winner", "non-winner")]
+lots_wn <- tedwn[, .(hw = any(entity == "winner"), hn = any(entity == "non-winner")), by = .(tender_id, lot_id)][hw & hn, .(tender_id, lot_id)]
+if (nrow(lots_wn) == 0L) {
+  message("Check 3c skipped: no TED lots carry both a winner and a non-winner row.")
+} else {
+  tw <- merge(tedwn, lots_wn, by = c("tender_id", "lot_id"))
+  disagree_wn <- rbindlist(lapply(ted_date_cols, function(col) {
+    g <- tw[, .(nd = uniqueN(get(col))), by = .(tender_id, lot_id)][nd > 1L]   # NA-strict across winner + non-winner
+    if (nrow(g)) data.table(column = col, n_lots_misaligned = nrow(g)) else NULL
+  }), fill = TRUE)
+  if (nrow(disagree_wn) == 0L) {
+    message(sprintf("Passed (3c): TED winner/non-winner dates align on all %d lots with both [%d date cols].",
+                    nrow(lots_wn), length(ted_date_cols)))
+  } else {
+    setorder(disagree_wn, -n_lots_misaligned)
+    message(sprintf("INFO (3c): TED lots (of %d with winner+non-winner) where winner/non-winner dates DIFFER [NA-strict]:", nrow(lots_wn)))
+    print(disagree_wn)
+    bad <- disagree_wn$column[1]
+    fb  <- tw[, .(nd = uniqueN(get(bad))), by = .(tender_id, lot_id)][nd > 1L][1]
+    ex  <- merge(tw, fb[, .(tender_id, lot_id)], by = c("tender_id", "lot_id"))[, .(tender_id, lot_id, entity, cvr_method, val = get(bad))]
+    cat(sprintf("Example for `%s`:\n", bad)); print(head(ex, 8))
+  }
+}
+
 # 4 The sample-selection rule (cvr_method) reproduces the PRE-DEDUP production / extraction datasets.
 #   Load the pre-dedup references saved by 3_1/3_2/3_3 (per-lot CVR lists captured BEFORE the
 #   cross-method dedup) and rebuild the equivalent from the delivered combined's cvr_method
