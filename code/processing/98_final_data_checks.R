@@ -350,6 +350,42 @@ tryCatch({
                     fd[!is.na(contract_duration_months) & contract_duration_months > 600, .N]))
 }, error = function(e) message("7: informational metrics errored (non-fatal): ", conditionMessage(e)))
 
+# ---- 8 Analysis-readiness: build each planned analysis sample and require it is non-empty ----
+# Gates the pipeline so the delivered clean data can actually feed the server-side analyses. Each block
+# constructs the sample an analysis needs (resolved CVR + the required date + entity) and FAILS if it is
+# empty. Employment series are pulled server-side, so these check the clean-data INPUTS only:
+#   1 winner event study            -> winner CVR + award_date
+#   4 non-winner event study        -> non-winner CVR + award_date (filled from award_contract_date in 4_combine)
+#   3 winner vs non-winner control  -> (tender_id, lot_id) lots holding BOTH a dated winner and a dated non-winner
+tryCatch({
+  fd <- final_data
+  if (!("award_date" %in% names(fd))) stop("award_date column missing from combined")
+  areq <- function(name, dt) {
+    n <- nrow(dt); message(sprintf("  analysis-readiness [%s]: %d rows", name, n))
+    if (n == 0) failures <<- c(failures, sprintf("analysis sample '%s' is EMPTY", name))
+    invisible(n)
+  }
+  dated <- function(ent) fd[entity == ent & !is.na(cvr_final) & cvr_final != "" & !is.na(award_date)]
+  areq("1 winner event study (winner CVR + award_date)",      dated("winner"))
+  areq("4 non-winner event study (non-winner CVR + award_date)", dated("non-winner"))
+  kw  <- unique(fd[entity == "winner"     & !is.na(award_date), .(tender_id, lot_id)])
+  knw <- unique(fd[entity == "non-winner" & !is.na(award_date), .(tender_id, lot_id)])
+  shared <- merge(kw, knw, by = c("tender_id", "lot_id"))
+  areq("3 winner-vs-non-winner control (lots with both, dated)", shared)
+  # Do winner and non-winner carry the SAME award date on those shared lots? (the within-notice tie) -- report only.
+  if (nrow(shared)) {
+    both <- merge(fd[entity %in% c("winner","non-winner") & !is.na(award_date), .(tender_id, lot_id, award_date)],
+                  shared, by = c("tender_id", "lot_id"))
+    disagree <- both[, .(nd = uniqueN(award_date)), by = .(tender_id, lot_id)][nd > 1, .N]
+    message(sprintf("  analysis-readiness [within-lot date tie]: %d of %d shared lots have winner/non-winner award_date disagreement (framework lots can differ)", disagree, nrow(shared)))
+  }
+  # Can we size the tender for the dated-winner universe? (amount present) -- report only.
+  au <- fd[entity == "winner" & !is.na(award_date)]
+  amt_ok <- au[!is.na(lot_amount) | !is.na(tender_amount), .N]
+  message(sprintf("  analysis-readiness [winner tender size]: %d of %d dated-winner rows have a lot/tender amount (%.1f%%)",
+                  amt_ok, nrow(au), 100 * amt_ok / max(1, nrow(au))))
+}, error = function(e) failures <<- c(failures, paste("analysis-readiness errored:", conditionMessage(e))))
+
 # ---- Summary: stop if any check failed, so 98_ can gate the pipeline ----
 if (length(failures)) {
   stop("Final data checks FAILED:\n  - ", paste(failures, collapse = "\n  - "), call. = FALSE)
