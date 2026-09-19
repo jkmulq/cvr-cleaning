@@ -161,6 +161,16 @@ if ("divided_tender" %in% names(combined)) {
               sum(is.na(combined$divided_tender))))
 }
 
+# ---- Coerce contract_duration_months_max to numeric ----
+# KFST's raw "Varighed ... (max)" field reaches here as character (its sibling _min is already numeric);
+# the only non-numeric value is "Ubegraenset" (Danish for "unlimited"), which correctly becomes NA.
+if ("contract_duration_months_max" %in% names(combined) && !is.numeric(combined$contract_duration_months_max)) {
+  .n_unlimited <- combined[!is.na(contract_duration_months_max) &
+                           is.na(suppressWarnings(as.numeric(contract_duration_months_max))), .N]
+  combined[, contract_duration_months_max := suppressWarnings(as.numeric(contract_duration_months_max))]
+  cat(sprintf("contract_duration_months_max coerced to numeric (%d non-numeric -> NA)\n", .n_unlimited))
+}
+
 # Rename for clarity: n_lots_contracted (KFST-only) actually holds the count of lots in the tender
 # NOTICE -- `Antal delkontrakter i udbudsbekendtgoerelsen`, i.e. *announced*, not "contracted".
 if ("n_lots_contracted" %in% names(combined)) setnames(combined, "n_lots_contracted", "n_lots_announced")
@@ -296,7 +306,7 @@ keep_cols <- c(
   "cpv_code", "cpv_code_first", "cpv_division", "cpv_division_name", "cpv_sector", "cpv_category",
   "tender_cancelled", "tender_status", "flag_awarded", "flag_nature_cpv_mismatch",
   "contract_duration_months_min", "contract_duration_months_max", "award_end_date", "annualised_tender_amount",
-  "annualised_lot_amount", "n_lot_id", "ted_notice_id", "notice_source", "planning_dispatch_date",
+  "annualised_lot_amount", "ted_notice_id", "notice_source", "planning_dispatch_date",
   "planning_publication_date", "planning_tender_deadline_date", "competition_dispatch_date", "competition_publication_date",
   "competition_tender_deadline_date", "award_dispatch_date", "award_publication_date", "award_tender_deadline_date",
   "award_contract_date", "flag_cvr_ws", "flag_cvr_alphabet", "flag_cvr_punct",
@@ -381,7 +391,7 @@ ord_cvr    <- c("cvr_final", "cvr_name_match", "cvr_recovered_from_formatting") 
 ord_prov   <- c("cvr_number_source")
 ord_select <- c("cvr_method", "build_prod", "build_extr", "build_name_match", "is_winner", "is_awarded_winner")
 ord_tender <- c(
-  "contract_type", "contract_nature", "n_lots", "n_lots_announced", "n_lot_winners", "n_lot_id",
+  "contract_type", "contract_nature", "n_lots", "n_lots_announced", "n_lot_winners",
   "n_bidders", "n_tenders_received", "n_tenders_sme", "n_winners_extracted", "n_buyers_extracted", "n_buyers_listed_original",
   "tender_amount", "lot_amount", "tender_amount_eur", "tender_amount_dkk", "lot_amount_eur", "lot_amount_dkk",
   "lot_amount_orig", "tender_amount_orig",
