@@ -99,9 +99,11 @@ build <- function(roles, prefix, keep_is_winner = FALSE) {
 # DUAL-ROLE NOTE: a firm can legitimately appear as BOTH a winner and a non-winner on the same
 # (notice, lot) -- it submitted multiple tenders (won one, lost another) or eForms lists it in both the
 # winner and tenderer sets. This is faithful to the source (verified against the notice PDFs) and is KEPT in
-# the delivered data (no row dropped, no extra flag column). A dual-role firm is recoverable downstream as a
-# non-winner row whose (data_source, tender_id, lot_id, cvr_final) also has a winner row -- exclude such
-# firms from a winner-vs-non-winner control sample via that self-join.
+# the delivered data (no row dropped, no extra flag column). WHY keep and not flag: it keeps the delivered
+# data faithful to the source notices -- we neither discard genuine rows nor overwrite what the notice states
+# -- while avoiding an extra column, because the dual role is already fully recoverable from the existing
+# keys: a dual-role firm is a non-winner row whose (data_source, tender_id, lot_id, cvr_final) also has a
+# winner row. Exclude such firms from a winner-vs-non-winner control sample via that self-join (server-side).
 ted_winner_data <- build(c("winner", "bidder"), "winner", keep_is_winner = TRUE)
 ted_buyer_data  <- build("buyer", "buyer")
 
