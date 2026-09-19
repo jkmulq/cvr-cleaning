@@ -106,7 +106,7 @@ tender_level_cols <- c(
   "procedure_type", "procedure_group", "procedure_group_h", "award_criteria", "award_criteria_h",
   "n_award_criteria", "price_weight",
   "cpv_code", "cpv_code_first", "cpv_division", "cpv_division_name", "cpv_sector", "cpv_category", "cpv_main",
-  "n_lots", "n_lots_announced", "n_lots_awarded", "n_lot_winners", "n_lot_id", "divided_tender", "joint_tender",
+  "n_lots", "n_lots_announced", "n_lots_awarded", "n_lot_winners", "divided_tender", "joint_tender",
   "tender_cancelled", "tender_status", "flag_awarded",
   "pub_date", "award_date", "submit_date", "award_end_date", "award_contract_date",
   "contract_duration_months", "contract_duration_months_min", "contract_duration_months_max", "contract_duration_days",
