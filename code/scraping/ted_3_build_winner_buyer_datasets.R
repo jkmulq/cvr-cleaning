@@ -94,7 +94,14 @@ build <- function(roles, prefix, keep_is_winner = FALSE) {
   p[]
 }
 
-# Winner side carries BOTH winners and non-winning bidders, flagged by is_winner.
+# Winner side carries BOTH winners and non-winning bidders, flagged by is_winner (TRUE = winner, FALSE =
+# non-winning bidder). Non-winners exist ONLY here (KFST/OT do not name losers), and ONLY for eForms notices.
+# DUAL-ROLE NOTE: a firm can legitimately appear as BOTH a winner and a non-winner on the same
+# (notice, lot) -- it submitted multiple tenders (won one, lost another) or eForms lists it in both the
+# winner and tenderer sets. This is faithful to the source (verified against the notice PDFs) and is KEPT in
+# the delivered data (no row dropped, no extra flag column). A dual-role firm is recoverable downstream as a
+# non-winner row whose (data_source, tender_id, lot_id, cvr_final) also has a winner row -- exclude such
+# firms from a winner-vs-non-winner control sample via that self-join.
 ted_winner_data <- build(c("winner", "bidder"), "winner", keep_is_winner = TRUE)
 ted_buyer_data  <- build("buyer", "buyer")
 
