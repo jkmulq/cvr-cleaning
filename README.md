@@ -98,12 +98,12 @@ The datasets are not publicly distributed — see
 
 The workflow is staged. Scripts beginning with `1_` clean inputs and prepare
 lookup keys; scripts beginning with `2_` perform name matching and build the
-winner datasets; scripts beginning with `3_` concatenate the production and extraction CVR methods into deduped per-source stacks.
+winner datasets; scripts beginning with `3_` concatenate the production, extraction, and name_match CVR methods into deduped per-source stacks (including `3_4`/`3_5` for the TED winner/buyer stacks).
 The TED/XML chain (`ted_*` in [code/scraping/](code/scraping)) builds a third
 source alongside KFST and OpenTender, and `4_combine_all_datasets.R` combines all
 six samples (KFST/OpenTender/TED × winner/buyer) into one long table. KFST
 winners are consortium-expanded (one row per member), and each source ships a
-concat-and-dedup stack pooling the production and extraction CVR methods (see [Main outputs](#main-outputs)).
+concat-and-dedup stack pooling the production, extraction, and name_match CVR methods (see [Main outputs](#main-outputs)).
 Analysis notebooks and the quality report are generated separately (listed below
 the pipeline table).
 
@@ -118,10 +118,12 @@ the pipeline table).
 | [code/processing/2_2_match_kfst_buyers.R](code/processing/2_2_match_kfst_buyers.R) | Matches KFST buyer names to CVRs, since KFST buyer CVRs are not supplied in the raw source. | `clean_buyer_data_kfst_name_matched.rds`, `manual_buyer_name_review_kfst.rds`. |
 | [code/processing/2_3_match_opentender.R](code/processing/2_3_match_opentender.R) | Matches missing OpenTender winner CVRs, records ambiguous/fuzzy cases for review, and writes winner-name partition diagnostics. Also **scores CVR-name quality inline** — the same quality columns + `flag_cvr_recovered_from_invalid` as KFST `2_1` (this scoring used to be a separate step). | `clean_winner_data_ot_name_matched.rds`, `manual_name_review_ot.rds`, `winner_name_partition_diagnostics_ot.rds`. |
 | [code/processing/2_4_match_opentender_buyers.R](code/processing/2_4_match_opentender_buyers.R) | Matches missing OpenTender buyer CVRs and records ambiguous or fuzzy cases for review. Also writes buyer-name partition diagnostics. | `clean_buyer_data_ot_name_matched.rds`, `manual_buyer_name_review_ot.rds`, `buyer_name_partition_diagnostics_ot.rds`. |
-| [code/processing/3_1_build_kfst_winner_datasets.R](code/processing/3_1_build_kfst_winner_datasets.R) | Concatenates the KFST winners from the two CVR-resolution methods — `production` (consortium/name-matched, from `2_1`) and `extraction` (raw 8-digit CVRs from the winner field, no matching) — into one **deduplicated** table (one row per distinct tender-lot-CVR; no-CVR rows dropped) with `build_prod` / `build_extr` flags that rebuild each sample by a simple filter. | `kfst_winner_datasets_stacked.rds`. |
-| [code/processing/3_2_build_ot_winner_datasets.R](code/processing/3_2_build_ot_winner_datasets.R) | OpenTender winner mirror of `3_1` (`production` from `2_3` + `extraction` from the bidder field), same dedup and `build_prod` / `build_extr` flags. | `ot_winner_datasets_stacked.rds`. |
-| [code/processing/3_3_build_ot_buyer_datasets.R](code/processing/3_3_build_ot_buyer_datasets.R) | Buyer analogue of `3_2`, **OpenTender only** (KFST buyers carry no source CVR field, so there is nothing to extract): `production` (from `2_4`) + `extraction` (raw CVRs from the buyer field), deduped, with `build_prod` / `build_extr` flags. | `ot_buyer_datasets_stacked.rds`. |
-| [code/processing/4_combine_all_datasets.R](code/processing/4_combine_all_datasets.R) | Combines all six matched samples (KFST/OpenTender/TED × winner/buyer — the concat-and-dedup stacks where they exist, the matched files otherwise) into one long table. Adds sample-selection columns (`data_source`, `entity`, `dataset`, `build_prod`, `build_extr`), standardises CVR columns to `cvr_*`, harmonises country, drops no-CVR rows, and self-checks that each sample round-trips. | `clean_all_samples_combined.{rds,csv}`. |
+| [code/processing/3_1_build_kfst_winner_datasets.R](code/processing/3_1_build_kfst_winner_datasets.R) | Concatenates the KFST winners from the two CVR-resolution methods — `production` (consortium/name-matched, from `2_1`) and `extraction` (raw 8-digit CVRs from the winner field, no matching) — into one **deduplicated** table (one row per distinct tender-lot-CVR; no-CVR rows dropped) with `build_prod` / `build_extr` flags that rebuild each sample by a simple filter. | `kfst_winner_datasets_stacked.{rds,csv,parquet}`. |
+| [code/processing/3_2_build_ot_winner_datasets.R](code/processing/3_2_build_ot_winner_datasets.R) | OpenTender winner mirror of `3_1` (`production` from `2_3` + `extraction` from the bidder field), same dedup and `build_prod` / `build_extr` flags. | `ot_winner_datasets_stacked.{rds,csv,parquet}`. |
+| [code/processing/3_3_build_ot_buyer_datasets.R](code/processing/3_3_build_ot_buyer_datasets.R) | Buyer analogue of `3_2`, **OpenTender only** (KFST buyers carry no source CVR field, so there is nothing to extract): `production` (from `2_4`) + `extraction` (raw CVRs from the buyer field), deduped, with `build_prod` / `build_extr` flags. | `ot_buyer_datasets_stacked.{rds,csv,parquet}`. |
+| [code/processing/3_4_build_ted_winner_datasets.R](code/processing/3_4_build_ted_winner_datasets.R) | TED winner (and non-winner) mirror of `3_1`, pooling all three CVR methods — `production` (from `ted_4`), `extraction` (raw field CVRs), and `name_match` (name→registry, field CVR ignored) — deduped one row per tender-lot-CVR. | `ted_winner_datasets_stacked.{rds,csv,parquet}`. |
+| [code/processing/3_5_build_ted_buyer_datasets.R](code/processing/3_5_build_ted_buyer_datasets.R) | TED buyer analogue of `3_4` (production + extraction + name_match), same dedup. | `ted_buyer_datasets_stacked.{rds,csv,parquet}`. |
+| [code/processing/4_combine_all_datasets.R](code/processing/4_combine_all_datasets.R) | Combines all source samples (KFST/OpenTender/TED × winner/buyer, plus TED non-winners — the concat-and-dedup stacks where they exist, the matched files otherwise) into one long table, **unique on (data_source, entity, tender_id, lot_id, cvr_final)**. Adds a single sample-selection column `cvr_method` (a "; "-joined combination of `production` / `extraction` / `name_match`), standardises CVR columns to `cvr_*`, harmonises country, drops no-CVR rows, and self-checks that each sample round-trips. | `clean_all_samples_combined.{rds,csv,parquet}`. |
 | [code/processing/99_augment_matched_variables.R](code/processing/99_augment_matched_variables.R) | **Maintenance utility — not part of the pipeline** (numbered 99 to signal this). Additive tender/lot-level updates: re-attaches newly created variables from the clean datasets onto the existing `*_name_matched.rds` files without re-running the slow name-matching scripts. Use only when the cleaning changes are add-only and do not alter names, CVRs, or row expansion. | refreshed `*_name_matched.rds` files in place. |
 
 The [code/analysis/](code/analysis) notebooks and helpers run **manually, after matching**:
@@ -157,8 +159,8 @@ and `ted_dates_*` (the TED notice-date panel sub-pipeline, sourced inline by
 | [code/scraping/ted_1_extract_notices.R](code/scraping/ted_1_extract_notices.R) | Fetches TED notice XML for the award notices and flags whether non-winning tenderers are listed (needs internet on the first run; cache-first afterwards). Also the shared TED fetch/parse library the other `ted_*` scripts source. | `data/intermediates/ted/` (cached XML + per-notice indicators). |
 | [code/scraping/ted_2_extract_party_cvrs.R](code/scraping/ted_2_extract_party_cvrs.R) | Extracts, from the cached notice XML, a standalone reference dataset keyed by TED `notice_id`: party CVRs (buyers, winners, non-winning bidders), amounts, lot metadata, procedure/framework/DPS flags, and lineage dates. Independent of OpenTender/DIGIWHIST's extraction, so it doubles as a cross-check. | `ted_extracted_parties.{rds,csv}`, `ted_extracted_lots.{rds,csv}`, `ted_extracted_cvrs.{rds,csv}` (in `data/intermediates/ted/`). |
 | [code/scraping/ted_3_build_winner_buyer_datasets.R](code/scraping/ted_3_build_winner_buyer_datasets.R) | Builds tender-lot-grain winner and buyer datasets from the TED extraction, mirroring the `clean_winner_data` / `clean_buyer_data` shape used for KFST and OpenTender (the notice_id plays the tender role, `lot` the lot_id role). Winners include non-winning bidders, flagged by `is_winner`. | `ted_winner_data.{rds,csv}`, `ted_buyer_data.{rds,csv}` (in `data/intermediates/ted/`). |
-| [code/scraping/ted_4_match_winners.R](code/scraping/ted_4_match_winners.R) | Matches missing TED winner CVRs against the registered CVR-name keys and scores CVR-name quality, mirroring `2_3_match_opentender.R` (minus consortium/name-partition splitting — TED rows are one org each), so TED winners are comparable to KFST/OpenTender. | `clean_winner_data_ted_name_matched.{rds,csv}` (in `data/clean/`), `manual_name_review_ted_winner.rds`. |
-| [code/scraping/ted_5_match_buyers.R](code/scraping/ted_5_match_buyers.R) | Matches missing TED buyer CVRs and scores buyer-name quality — the buyer analog of `ted_4`, mirroring `2_4_match_opentender_buyers.R`. | `clean_buyer_data_ted_name_matched.{rds,csv}` (in `data/clean/`), `manual_name_review_ted_buyer.rds`. |
+| [code/scraping/ted_4_match_winners.R](code/scraping/ted_4_match_winners.R) | Matches missing TED winner CVRs against the registered CVR-name keys and scores CVR-name quality, mirroring `2_3_match_opentender.R` (minus consortium/name-partition splitting — TED rows are one org each), so TED winners are comparable to KFST/OpenTender. | `clean_winner_data_ted_name_matched.{rds,csv,parquet}` (in `data/clean/`), `manual_name_review_ted_winner.rds`. |
+| [code/scraping/ted_5_match_buyers.R](code/scraping/ted_5_match_buyers.R) | Matches missing TED buyer CVRs and scores buyer-name quality — the buyer analog of `ted_4`, mirroring `2_4_match_opentender_buyers.R`. | `clean_buyer_data_ted_name_matched.{rds,csv,parquet}` (in `data/clean/`), `manual_name_review_ted_buyer.rds`. |
 | [code/scraping/ted_dates_utils.R](code/scraping/ted_dates_utils.R) | Shared helpers for the TED date-panel chain (`ted_dates_1`–`3`); its `award_universe()` unions the OpenTender **and** KFST award notices so the chain covers both sources. | No direct output. |
 | [code/scraping/ted_dates_1_fetch.R](code/scraping/ted_dates_1_fetch.R) | TED date panel, stage 1: fetches award/competition/planning notice XML in dependency order (requires internet; cached). | cached TED notice XML. |
 | [code/scraping/ted_dates_2_lineage.R](code/scraping/ted_dates_2_lineage.R) | TED date panel, stage 2: assembles the notice-links lineage from the cached XML (parsing only, no network). | `notice_links` lineage table. |
@@ -289,6 +291,12 @@ RESTORE_RENV=true ./run_replication.sh
 When using the `RESTORE_RENV=true` option, the script still checks that the
 local input data are present before restoring packages.
 
+Writing the `.parquet` copies of the delivery datasets requires the `arrow`
+package (captured in `renv.lock`, so `renv::restore()` installs it). If you run the
+processing scripts outside `renv`, install it once with
+`install.packages("arrow")`; without it, `save_dataset()` errors when it reaches the
+Parquet step.
+
 ### 3. Optional: rebuild the CVR lookup from Virk
 
 The matching workflow uses CVR lookup files built from the Virk
@@ -366,9 +374,9 @@ maintenance utility for cases where `1_1_process_kfst.R` or
 to refresh existing matched datasets without re-running the buyer-matching
 steps. It is only valid when those processing changes are additive.
 
-Outputs are written to `data/clean/` (the final matched datasets, including the
-TED matched files and the combined `*_all_name_matched.*` files) with TED
-intermediates under `data/intermediates/ted/`.
+Outputs are written to `data/clean/` (the final matched datasets, the
+concat-and-dedup stacks, and the all-in-one `clean_all_samples_combined.*`
+master table) with TED intermediates under `data/intermediates/ted/`.
 
 Expected run time depends on the machine. The figures below are a complete
 per-script breakdown from the 2026-09-07 reference run, with the `3_x` builders
@@ -491,12 +499,17 @@ Matched data (one winner + one buyer file per source — KFST, OpenTender, TED):
 
 ```text
 clean_winner_data_kfst_name_matched.rds
-clean_buyer_data_kfst_name_matched.rds
+clean_buyer_data_kfst_name_matched.{rds,csv,parquet}
 clean_winner_data_ot_name_matched.rds
 clean_buyer_data_ot_name_matched.rds
-clean_winner_data_ted_name_matched.{rds,csv}
-clean_buyer_data_ted_name_matched.{rds,csv}
+clean_winner_data_ted_name_matched.{rds,csv,parquet}
+clean_buyer_data_ted_name_matched.{rds,csv,parquet}
 ```
+
+The three matched files carried in `.csv`/`.parquet` as well as `.rds` are the ones
+`4_combine_all_datasets.R` consumes directly (KFST buyer, TED winner, TED buyer); the
+other three feed the combine via their concat-and-dedup stacks, so the stack carries the
+extra formats instead.
 
 The KFST winner table (`clean_winner_data_kfst_name_matched.rds`) is now
 **consortium-expanded** — one row per consortium member, tagged `semi_tier`,
@@ -512,58 +525,114 @@ definitions.
 All-in-one combined data (all six samples, built by `4_combine_all_datasets.R`):
 
 ```text
-clean_all_samples_combined.{rds,csv}
+clean_all_samples_combined.{rds,csv,parquet}
 ```
 
 One long table row-binding the six matched samples (KFST/OpenTender/TED ×
-winner/buyer). Sample-selection columns — `data_source`, `entity`, `dataset`,
-`build_prod`, `build_extr` — let you filter out any sample (e.g. OpenTender winner
-extraction = `data_source == "OpenTender" & entity == "winner" & build_extr`); the
+winner/buyer), **unique on (data_source, entity, tender_id, lot_id, cvr_final)** — one
+row per resolved CVR. A single sample-selection column `cvr_method` (plus `data_source`,
+`entity`) lets you filter out any sample (e.g. OpenTender winner extraction =
+`data_source == "OpenTender" & entity == "winner" & grepl("extraction", cvr_method)`); the
 CVR columns are unified to `cvr_*`, country is harmonised, and rows with no
 resolved CVR are dropped. The script self-checks that every sample round-trips from
-its selection columns.
+its selection column.
+
+**Formats.** The combined table and its six inputs are each written in `.rds`, `.csv`,
+and `.parquet` (via `save_dataset()` in `code/functions.R`), so the server-delivery
+format can be chosen at ship time. `.rds` stays the canonical copy the pipeline reads
+back (fastest); Parquet is written with `zstd` and is the most compact (e.g. the combined
+is ~33 MB Parquet vs ~48 MB `.rds` vs ~452 MB `.csv`) — and, because Parquet
+dictionary-encodes low-cardinality strings internally, it makes a separate integer-code
+dictionary unnecessary. Writing Parquet requires the `arrow` package.
+
+Reads default to Parquet going forward: the analysis reports load datasets via
+`read_clean()` (in `code/functions.R`), which prefers `.parquet`, falls back to `.rds`
+if a Parquet copy is absent, and always returns a `data.table`. The reports were
+re-knit from Parquet and verified table-for-table identical to the `.rds` knit.
 
 #### The samples and how to reconstruct each
 
-`clean_all_samples_combined` is the master table; every row is one resolved-CVR record from one sample.
-Samples **overlap** (a CVR found by both the production and extraction methods on a lot is a single row
-flagged for both), so selection uses the separate flags below rather than one category. `build_prod` /
-`build_extr` mark the production (name/consortium-matched) vs extraction (raw 8-digit field CVRs, no
-matching) samples; `is_winner` marks TED's awarded winners vs its non-winning bidders (TED is the only
-source that records losing bidders; `is_winner` is `NA` for the other sources and for buyers).
+`clean_all_samples_combined` is the master table; every row is one resolved-CVR record, **unique on
+(data_source, entity, tender_id, lot_id, cvr_final)**. `entity` is one of `winner`, `buyer`, or
+`non-winner` (TED losing bidders). `is_winner` marks TED's awarded winners (`TRUE`) vs its non-winning
+bidders (`FALSE`); it is `NA` for KFST/OpenTender and for all buyers.
 
-| Sample | Filter on `clean_all_samples_combined` |
-|---|---|
-| KFST winners — production | `data_source == "KFST" & entity == "winner" & build_prod` |
-| KFST winners — extraction | `data_source == "KFST" & entity == "winner" & build_extr` |
-| KFST buyers | `data_source == "KFST" & entity == "buyer"` |
-| OpenTender winners — production | `data_source == "OpenTender" & entity == "winner" & build_prod` |
-| OpenTender winners — extraction | `data_source == "OpenTender" & entity == "winner" & build_extr` |
-| OpenTender buyers — production | `data_source == "OpenTender" & entity == "buyer" & build_prod` |
-| OpenTender buyers — extraction | `data_source == "OpenTender" & entity == "buyer" & build_extr` |
-| TED winners (awarded) | `data_source == "TED" & entity == "winner" & is_winner == TRUE` |
-| TED non-winning bidders | `data_source == "TED" & entity == "winner" & is_winner == FALSE` |
-| TED buyers | `data_source == "TED" & entity == "buyer"` |
+##### CVR-resolution methods (`cvr_method`)
 
-- KFST buyers and TED (winners + buyers) have no raw-extraction variant, so they are all
-  `build_prod == TRUE, build_extr == FALSE`.
-- Cross-source pools combine naturally: all production winner CVRs = `entity == "winner" & build_prod`;
-  all resolved buyer CVRs = `entity == "buyer"`.
-- Only resolved CVRs are present (`cvr_final` is always populated; no-CVR rows were dropped), so TED
-  non-winning bidders whose CVR could not be resolved are not carried. Each CVR's provenance is in
-  `cvr_number_source`, and registry membership in `flag_cvr_final_in_registry`.
-- Every sample equally lives in its own source file — the winner/buyer stacks
-  (`kfst_winner_datasets_stacked.rds`, `ot_winner_datasets_stacked.rds`, `ot_buyer_datasets_stacked.rds`)
-  and the matched files (`clean_winner_data_ted_name_matched.rds`, `clean_buyer_data_ted_name_matched.rds`,
-  `clean_buyer_data_kfst_name_matched.rds`); the combined table is their union.
+Each CVR is resolved by up to **three independent methods**, recorded in the categorical `cvr_method`
+("; "-joined when more than one method produced the same CVR on a lot, e.g. `production; name_match`):
+
+- **`production`** — the canonical pipeline CVR: the source's field/XML CVR reconciled with
+  name/consortium matching. This is the value the main analyses use.
+- **`extraction`** — every standalone 8-digit CVR run pulled straight from the raw field, with **no
+  matching** (the naive floor). Absent where the source carries no CVR field (KFST buyers).
+- **`name_match`** — the CVR obtained by matching the entity's **name** to the CVR registry and ignoring
+  the field CVR (the mirror image of `extraction`). It can resolve a **different** CVR than the other two
+  and, being name-based, is the **lowest-confidence** method (false-positive risk) — treat
+  `name_match`-only rows accordingly.
+
+Reconstruct any sample by filtering on `data_source`, `entity`, and `grepl("<method>", cvr_method)`
+(e.g. OpenTender winner extraction = `data_source == "OpenTender" & entity == "winner" &
+grepl("extraction", cvr_method)`). A CVR agreed by several methods is **one row** whose `cvr_method` lists
+them all, so the per-method counts below overlap and sum to more than the total. Each sample is proven to
+rebuild from `cvr_method` — both row-for-row and at the per-lot CVR-list level — by check 4 in
+[98_final_data_checks.R](code/processing/98_final_data_checks.R).
+
+| data_source · entity | `production` | `extraction` | `name_match` | rows (total) |
+|---|--:|--:|--:|--:|
+| KFST · winner       | 26,734 | 25,436 | 24,851 | 31,190 |
+| KFST · buyer        | 38,183 | —      | 38,183 | 38,183 |
+| OpenTender · winner | 65,802 | 42,759 | 63,133 | 71,312 |
+| OpenTender · buyer  | 69,645 | 58,720 | 62,635 | 73,107 |
+| TED · winner        | 80,054 | 39,269 | 77,374 | 85,451 |
+| TED · non-winner    |  3,024 |  2,965 |  2,905 |  3,595 |
+| TED · buyer         | 89,809 | 66,530 | 83,065 | 100,177 |
+
+Counts are the current build (**403,015 rows total**); regenerate live with
+[11_winner_cvr_provenance_counts](code/analysis/11_winner_cvr_provenance_counts.Rmd). KFST buyers carry no
+source CVR field, so they are **name-only** (`production` equals `name_match`; no `extraction` variant).
+Only resolved CVRs are present (`cvr_final` is always populated; no-CVR rows dropped), so TED non-winning
+bidders whose CVR could not be resolved are not carried. Each CVR's provenance is in `cvr_number_source`,
+registry membership in `flag_cvr_final_in_registry`.
+
+> **⚠ Dual-role firms (TED).** A firm can legitimately appear as BOTH a `winner` and a `non-winner` on the
+> **same** TED lot (it won some lots of a multi-lot notice and lost others, or the notice lists it in both
+> roles). These rows are kept **faithfully — no row dropped and no extra flag column** (keeps the delivered
+> data true to the source notices without adding a column). The trade-off: when you build a
+> winner-vs-non-winner sample, a naive union **double-counts** such a firm. Exclude it by **self-joining on
+> `(data_source, tender_id, lot_id, cvr_final)`** and dropping the `non-winner` row wherever that same CVR
+> also appears as a `winner` on the same lot (~148 firm-lots). See
+> [estudy_winner_vs_nonwinner_matched.R](code/analysis/estudy_winner_vs_nonwinner_matched.R) for a worked
+> exclusion.
+
+##### Core fields and their coverage
+
+The three fields the analyses depend on are the load-bearing parts of the dataset, and their coverage
+**differs** (values are % non-missing on the current build):
+
+- **`cvr_final` — 100%** everywhere. Rows with no resolvable CVR are dropped, so every row carries a CVR.
+  This is the strongest field. (Confidence still varies by `cvr_method`; see above.)
+- **`award_date` — ~75–100%.** High for winners (KFST 99.3%, OpenTender 100%, TED 97.4%) and TED
+  non-winners (97.3%); lower for **buyer** rows (KFST buyer 74.5%, TED buyer 81.8%), which inherit the
+  notice date where the notice records one. Winner/non-winner dates align on every shared TED lot
+  (98 check 3c).
+- **amounts — ~56–92% (weakest field).** `tender_amount` ranges 61% (TED buyer) to 92% (TED non-winner);
+  `lot_amount` 56%–91%. Amounts are **native-currency** (DKK for KFST/TED, EUR for OpenTender — use the
+  `*_dkk` / `*_eur` twins for cross-source work), and OpenTender's `lot_amount` is a **per-firm demand-shock
+  value, not a contract price**. Treat amounts as **lower-trust** than CVRs and dates.
+
+- Every sample also lives in its own source file — the winner/buyer stacks
+  (`kfst_winner_datasets_stacked.rds`, `ot_winner_datasets_stacked.rds`, `ot_buyer_datasets_stacked.rds`,
+  `ted_winner_datasets_stacked.rds`, `ted_buyer_datasets_stacked.rds`) and the matched file
+  (`clean_buyer_data_kfst_name_matched.rds`); the combined table is their union.
 
 Concat-and-dedup stacks (per source, pooling the two CVR-resolution methods for
 robustness comparison):
 
 ```text
-kfst_winner_datasets_stacked.rds
-ot_winner_datasets_stacked.rds
-ot_buyer_datasets_stacked.rds
+kfst_winner_datasets_stacked.{rds,csv,parquet}
+ot_winner_datasets_stacked.{rds,csv,parquet}
+ot_buyer_datasets_stacked.{rds,csv,parquet}
 ```
 
 Each row is a distinct `(tender_id, lot_id, CVR)`: the two methods — `production`
@@ -573,7 +642,9 @@ found by both keeps its production row, members sharing a CVR collapse to one, a
 rows with no resolved CVR are dropped (they remain in the `*_name_matched.rds`
 files). Two logical flags `build_prod` / `build_extr` rebuild each sample
 **exactly** by a filter (`build_prod == TRUE` for production, `build_extr == TRUE`
-for extraction). Columns are the **union** of the sources' analytical + provenance
+for extraction). These per-source stacks are intermediates; the delivered
+`clean_all_samples_combined` collapses the two booleans into the single `cvr_method`
+categorical (a "; "-joined combination of `production` / `extraction` / `name_match`). Columns are the **union** of the sources' analytical + provenance
 fields (raw source dumps dropped); the two winner stacks share one schema, and
 `ot_source_file` carries OpenTender's renamed source-CSV column. The buyer stack is
 OpenTender-only (KFST buyers have no source CVR field) and omits the `winner_*`
