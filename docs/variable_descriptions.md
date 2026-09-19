@@ -50,8 +50,8 @@ standardised, the delivery name is used here too (e.g. `valid_cvr_before_match`,
 
 | Variable | Origin | Created in | Depends on | Description & example |
 |---|---|---|---|---|
-| `tender_id` | raw | 1_1 / 1_2 | — | Source tender identifier. KFST `Løbenummer` (e.g. `2`); OpenTender tender UUID (e.g. `00003a63-32cd-…`). |
-| `lot_id` | raw | 1_1 / 1_2 | — | Source lot identifier within a tender. KFST `Nummerplade` (e.g. `2-1`); OpenTender `lot_lotId`. |
+| `tender_id` | raw | 1_1 / 1_2 | — | Source tender identifier (character). KFST `Løbenummer` (e.g. `2`); OpenTender tender UUID (e.g. `00003a63-32cd-…`). **KFST direct awards (from the `2.1 Profylaksebekendtgørelser` sheet) are `"P"`-prefixed (e.g. `P2`)** because that sheet numbers its tenders independently from 1 — the prefix keeps the two KFST id spaces disjoint after they are stacked. |
+| `lot_id` | raw | 1_1 / 1_2 | — | Source lot identifier within a tender. KFST `Nummerplade` (e.g. `2-1`); OpenTender `lot_lotId`. KFST direct-award lots are likewise `"P"`-prefixed (e.g. `P2-1`). |
 | `lot_number` | raw | 1_1 / 1_2 | — | Ordinal lot number (KFST `Delkontraktnr.`), e.g. `1`; often blank in OpenTender. |
 | `winner_number` | derived | 1_1 / 1_2 | winner-field split | Winner index within the lot from splitting the winner field (`;` winners, `,` consortium members); consortium members of one winner share it. **Not a within-lot key in OpenTender:** OT delivers one winner per source row, so the split almost always yields `winner_number = 1` (~99.8% of OT rows) — multiple winners on an OT lot arrive as *separate rows all numbered `1`*, distinguished by `row_id`, not by `winner_number`. KFST packs multiple winners/consortium members into one field and so does increment `1..N` (down to ~1% of rows at 8+). e.g. `1`. |
 | `n_lots` | raw | 1_1 / 1_2 | — | Number of lots mapped for the tender. e.g. `1`. |
@@ -75,9 +75,10 @@ standardised, the delivery name is used here too (e.g. `valid_cvr_before_match`,
 | `award_criteria` | raw→clean | 1_1 / ted_3 | source award-criteria field | Award criterion in human-readable form: KFST translated to English (`Lowest price` / `Best price-quality ratio` / `Cost`); TED legacy label read from the XML (`Lowest price` / `Most economically advantageous tender` / `Mixed`) or its eForms `price;quality;cost` text. OpenTender records only a count (see `n_award_criteria`) → `NA`. |
 | `award_criteria_h` | derived | 1_1 / ted_3 | `award_criteria` | **Harmonised** award criterion: `lowest_price` / `price_and_quality` (most economically advantageous) / `cost`; `NA` where unspecified. KFST and TED mapped (the TED code meaning is read from the XML label, not asserted); OpenTender `NA`. |
 | `n_award_criteria` | raw→clean | 1_2 | OT `tender_awardCriteria_count` | Number of award criteria (OpenTender only). KFST and TED have no such count → `NA`. |
-| `contract_duration_months` | derived | 1_1 / 1_2 / ted_3 | source duration fields | **Harmonised** contract duration in months: KFST = midpoint of the min/max month fields; OpenTender = estimated months (else days/30.44, else years×12); TED = duration days / 30.44. |
+| `contract_duration_months` | derived | 1_1 / 1_2 / ted_3 | source duration fields | **Harmonised** contract duration in months: KFST = midpoint of the min/max month fields; OpenTender = estimated months (else days/30.44, else years×12); TED = duration days / 30.44. **Note:** a handful of source rows carry implausibly long durations (a few TED rows exceed 600 months, max ~9,854 ≈ 821 years — source data-entry errors). These are **left as-is in the delivered data**; cap/winsorize them at analysis time on the server if needed. |
 | `is_framework` | derived | 1_1 / 1_2 / ted lineage | `contract_type` | Logical framework-agreement indicator. KFST/OpenTender derived from `contract_type` (`Framework agreement`→`TRUE`, `Public contract`→`FALSE`); TED native. |
-| `is_dps` | raw→clean | 1_2 / ted lineage | OT `tender_isDps` | Logical dynamic-purchasing-system flag. OpenTender from its yes/no; TED native; KFST does not record it → `NA`. |
+| `is_dps` | raw→clean | 1_2 / ted lineage | OT `tender_isDps` | Logical dynamic-purchasing-system flag. OpenTender from its yes/no; TED native (eForms `cbc:ContractingSystemTypeCode[@listName='dps-usage']`: `dps-list`/`dps-nlist`→TRUE). **KFST excludes DPS procurements by construction** (per the KFST codebook: "Datasættet indeholder ikke … dynamiske indkøbssystemer"), so `is_dps` is `NA` for all KFST rows — treat as **out of scope, not missing**. |
+| `direct_award` | derived | 1_1 / 1_2 / ted lineage | `procedure_group_h` (KFST/OT); TED native | Logical: contract awarded **without a call for competition** (direct / negotiated-without-prior-publication). Derived cross-source from `procedure_group_h == "without_call"`. KFST direct awards come from the separate `2.1 Profylaksebekendtgørelser` sheet (see note below) → `TRUE`; its ordinary `2.0` tenders → `FALSE`; TED carries its native lineage flag. `NA` where the procedure is unspecified. |
 | `eu_funded` | raw→clean | 1_2 / ted_2 | OT `tender_isEUFunded` | Logical EU-funding flag. OpenTender from its yes/no; TED native; KFST does not record it → `NA`. |
 | `subcontracted` | raw→clean | 1_2 / ted_2 | OT `bid_isSubcontracted` | Logical subcontracting flag. OpenTender from its yes/no; TED native; KFST does not record it → `NA`. |
 | `price_weight` | raw→clean | 1_1 / ted_3 | source price-weight field | Weight of price among the award criteria, reconciled to a 0–1 fraction (KFST already 0–1; 0–100 percentages divided by 100; implausible negatives / >100 nulled). OpenTender has no price weight → `NA`. |
@@ -92,7 +93,7 @@ standardised, the delivery name is used here too (e.g. `valid_cvr_before_match`,
 | `flag_all_orig_lot_amt_missing` | derived | 1_1 / 1_2 | `lot_amount_orig` | `TRUE` if every lot value in the tender was missing (so `lot_amount` was imputed by split). |
 | `tender_amount_dkk` / `lot_amount_dkk` | derived | 1_1 / 1_2 | `tender_amount`/`lot_amount` | Value in DKK. KFST is already DKK; OT converted from EUR at the fixed rate. |
 | `tender_amount_eur` / `lot_amount_eur` | derived | 1_1 / 1_2 | `tender_amount`/`lot_amount` | Value in EUR at Denmark's fixed ERM-II rate (7.46038 DKK/EUR). |
-| `annualised_tender_amount` / `annualised_lot_amount` | derived | 1_1 / 1_2 | amount + `contract_duration_months` | For framework agreements only: amount per month × 12 (annualised); else `NA`. |
+| `annualised_tender_amount` / `annualised_lot_amount` | derived | 4_combine | amount + `contract_duration_months` | Per-year value for ALL contract types, standardised across sources: amount / `contract_duration_months` × 12 (each currency variant `_eur`/`_dkk` annualised from its own amount). `NA` where duration is missing/≤0. |
 
 ## 4. CPV (procurement category)
 
@@ -109,7 +110,7 @@ standardised, the delivery name is used here too (e.g. `valid_cvr_before_match`,
 
 | Variable | Origin | Created in | Depends on | Description & example |
 |---|---|---|---|---|
-| `award_date` | raw→clean | 1_1 / 1_2 | source award-date field | Contract award date, parsed to `Date`, e.g. `2017-05-17`. |
+| `award_date` | raw→clean (+ TED harmonisation in 4_combine) | 1_1 / 1_2 / 4_combine | source award-date field, `award_contract_date` for TED gaps | Contract award date, parsed to `Date`, e.g. `2017-05-17`. **TED only:** where `award_date` is missing it is filled from `award_contract_date` — the same contract-conclusion event; `award_date`'s legacy TED parser cannot read eForms (2024+) notices, so it is NA on every eForms lot, and the eForms-aware `award_contract_date` fills them. This dates all TED non-winners and competitive-lot winners and gives a winner + its non-winners in the same `(tender_id, lot_id)` the same date (so non-winners work as within-notice controls). KFST/OpenTender `award_date` is left as the source's own field (coalesce with `award_contract_date` server-side if wanted). |
 | `submit_date` | raw | 1_1 | — | Tender submission deadline (KFST `Frist for aflevering af tilbud`); blank for OT. |
 | `ted_notice_id` | derived | 1_1 / 1_2 | `award_url` (KFST) / `…lastContractAwardUrl` (OT) | TED notice id parsed from the award-notice URL (`derive_ted_notice_id()`), e.g. `304771-2017`. Links a lot to its TED XML. |
 | `planning_dispatch_date` | derived | ted_dates_* → 1_1/1_2 | `ted_notice_id` lineage | Dispatch date of the **planning** (prior-information) notice. |
@@ -221,6 +222,20 @@ standardised, the delivery name is used here too (e.g. `valid_cvr_before_match`,
 ---
 
 ## Notes
+
+### TED dual-role firms (winner *and* non-winner on the same lot)
+
+A firm can legitimately appear as **both** a winner (`entity == "winner"`) and a non-winning bidder
+(`entity == "non-winner"`) on the **same `(tender_id, lot_id)`** — it submitted more than one tender (won
+one, lost another) or the eForms notice lists it in both the winner and tenderer sets. This is **faithful to
+the source** (verified against the notice PDFs) and only occurs for TED eForms notices (KFST/OpenTender name
+no losers). **These rows are kept as-is** — nothing is dropped and **no dedicated flag column is added**.
+
+A dual-role firm is fully recoverable from the delivered columns: it is a `non-winner` row whose
+`(data_source, tender_id, lot_id, cvr_final)` **also** has a `winner` row. To exclude such firms from a
+winner-vs-non-winner control sample, anti-join the non-winner rows against the winner keys on those four
+columns (do this server-side; no stored flag needed). ~174 non-winner rows (≈5% of TED non-winners) are
+dual-role. First assembled in `ted_3_build_winner_buyer_datasets.R`.
 
 ### Post-match `*_final` review flags
 
@@ -373,8 +388,9 @@ columns too (`amount_awarded`, `date_contract_award`, `cpv_main`, `procedure_typ
 differ in how they are produced, because TED is a different source:
 - **Currency** — TED amounts are in the notice's original `currency` (multi-currency), so `*_eur`/`*_dkk`
   are filled only for DKK and EUR rows via the exact EUR↔DKK peg; other currencies are `NA`.
-- **Annualised amounts** — `framework_duration_days` is extracted from the linked **competition** notice
-  (award notices omit it); `annualised_*` are filled for frameworks with a positive duration, else `NA`.
+- **Annualised amounts** — derived centrally in 4_combine for all sources/contract types from
+  `contract_duration_months` (TED: the II.2.7 duration in days ÷ 30.44, built in ted_3); filled wherever a
+  positive duration is present, else `NA`.
 - **Same-name borrow** — TED does not borrow CVRs across rows, so `flag_borrowed_cvr` is always `FALSE`
   and `winner_cvr_valid_from_same_name` is always `NA`.
 - **`consortium_winner` / `joint_tender`** — no TED source field, so `NA` (TED already splits consortia
