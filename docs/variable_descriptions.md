@@ -230,6 +230,9 @@ A firm can legitimately appear as **both** a winner (`entity == "winner"`) and a
 one, lost another) or the eForms notice lists it in both the winner and tenderer sets. This is **faithful to
 the source** (verified against the notice PDFs) and only occurs for TED eForms notices (KFST/OpenTender name
 no losers). **These rows are kept as-is** — nothing is dropped and **no dedicated flag column is added**.
+**Why keep and not flag:** doing so keeps the delivered data faithful to the source notices (we neither
+discard genuine rows nor overwrite what the notice states) while avoiding an extra column, since the dual
+role is already fully recoverable from the existing keys (see below).
 
 A dual-role firm is fully recoverable from the delivered columns: it is a `non-winner` row whose
 `(data_source, tender_id, lot_id, cvr_final)` **also** has a `winner` row. To exclude such firms from a
