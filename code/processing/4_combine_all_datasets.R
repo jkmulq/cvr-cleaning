@@ -140,22 +140,12 @@ cat(sprintf("entity relabel: %d TED non-winning bidder rows -> entity = 'non-win
 # and entity=="non-winner" on the same (tender_id, lot_id, cvr_final). A firm that won is not a "non-winning
 # bidder", so remove ONLY that spurious non-winner row (the winner row is kept). Row-level: genuine non-winners
 # on the same lot are untouched. Applied here (post-combine) rather than in ted_3 so it needs no re-matching.
-# Temp flag: within a TED LOT, a firm (cvr_final) that appears as BOTH a winner and a non-winner is a
-# dual-role firm -- it won that lot, so its non-winner (losing-bidder) row on the same lot is spurious
-# (ted_3 builds the winner set from roles "winner"+"bidder", so a winning firm also listed as a tenderer
-# gets both rows). We key on (tender_id, LOT_id, cvr_final) -- NOT the notice -- because TED non-winners are
-# lot-specific in the data (spread across real lots), so a firm can legitimately WIN one lot and LOSE
-# another lot of the same notice; those cross-lot losses are genuine and must be kept. Keep the WINNER row
-# for the dual firm; drop only the same-lot non-winner row. Genuine non-winners are untouched.
-combined[, .dual_role := FALSE]
-combined[data_source == "TED",
-         .dual_role := any(entity == "winner") & any(entity == "non-winner"),
-         by = .(tender_id, lot_id, cvr_final)]
-.before_nw <- combined[entity == "non-winner", .N]
-combined <- combined[!(entity == "non-winner" & .dual_role == TRUE)]
-combined[, .dual_role := NULL]
-cat(sprintf("dual-role drop: %d TED non-winner rows removed (firm also won the SAME lot); %d non-winners remain\n",
-            .before_nw - combined[entity == "non-winner", .N], combined[entity == "non-winner", .N]))
+# Dual-role firms (TED): a firm can appear as BOTH a winner and a non-winner on the same (tender_id, lot_id)
+# -- confirmed genuine against the source PDFs (a firm that submitted multiple tenders / is listed in both the
+# winner and tenderer sets). We deliberately KEEP both rows: the dual role is fully recoverable from the data
+# with no extra column, since a dual non-winner is exactly a non-winner row whose (data_source, tender_id,
+# lot_id, cvr_final) also has a winner row. Downstream/server-side can flag or exclude these controls via that
+# self-join; we do not drop them here, so the delivered data stays faithful to the source notices.
 
 # ---- Harmonise TED award_date: fill gaps from award_contract_date (the same contract-award event) ----
 # TED only (KFST/OT left as-is, by design). For TED, `award_date` and `award_contract_date` are the SAME
