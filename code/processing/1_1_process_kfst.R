@@ -249,7 +249,10 @@ data <- data %>%
 ## per EUR, +/-2.25% band). Derived after the amount fill so imputed values are
 ## included, and on the tender/lot-level data so the EUR/DKK columns propagate to
 ## the winner and buyer tables through the joins below.
-# KFST amounts are in DKK.
+# KFST amounts are in DKK -- confirmed by the KFST codebook (data/raw/KFST/
+# variabelbeskrivelse-for-kfsts-udbudsdata-a.pdf), the kontraktvaerdi variables 30-33 (pp. 38, 40, 42, 44),
+# each stating under "Metode": "Vaerdien i datasaettet er eksklusive moms. Hvis vaerdien er opgivet med en
+# anden valuta end DKK, er beloebet omregnet til DKK." (values are ex-VAT and any non-DKK is converted to DKK).
 dkk_per_eur <- 7.46038
 data <- data %>%
   mutate(
