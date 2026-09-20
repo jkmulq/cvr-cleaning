@@ -53,14 +53,14 @@ norm_cvr <- function(x) {
 }
 is_valid_cvr <- function(x) !is.na(norm_cvr(x))
 
-# PRIMARY SOURCE = the delivered combined master table `clean_all_samples_combined` -- exactly what the
+# PRIMARY SOURCE = the delivered combined master table `tender_data_2006_2026` -- exactly what the
 # server receives. Every count below is per (data_source, entity, sample), where `sample` is the
 # cvr_method selection: production = grepl("production", cvr_method), extraction = grepl("extraction", cvr_method),
 # name_match = grepl("name_match", cvr_method). A CVR produced by several methods (e.g. cvr_method ==
 # "production; name_match") is ONE row that appears in each of those samples (the intended selection
 # behaviour); the delivery is unique on (data_source, entity, tender_id, lot_id, cvr_final).
 # read_clean() prefers the parquet, preserving types + leading-zero CVRs.
-cmb <- as_tibble(read_clean(file.path(clean_dir, "clean_all_samples_combined.rds")))
+cmb <- as_tibble(read_clean(file.path(clean_dir, "tender_data_2006_2026.rds")))
 smp <- bind_rows(
   cmb %>% filter(grepl("production", cvr_method)) %>% mutate(sample = "production"),
   cmb %>% filter(grepl("extraction", cvr_method)) %>% mutate(sample = "extraction"),
@@ -73,7 +73,7 @@ smp$sample <- factor(smp$sample, levels = c("production", "extraction", "name_ma
 # Combined-based counts (server-reproducible)
 
 Everything in this section is computed directly from the de-identified server-delivery table
-`clean_all_samples_combined`, so a recipient can reproduce it exactly. The raw source-CVR and firm-name
+`tender_data_2006_2026`, so a recipient can reproduce it exactly. The raw source-CVR and firm-name
 columns are removed for de-identification, so the CVR-resolution method is captured by the **sample**
 selection on `cvr_method`, and all three methods are reported side by side:
 
@@ -257,7 +257,7 @@ All three samples are selected from the delivered combined via `cvr_method`: **p
 `cvr_method == "production; name_match"`) is counted in **each** of those samples (the intended behaviour when
 a lot's methods agree). `name_match_only` is the count of keys found by name matching that appear in **neither**
 production nor extraction — the CVRs name-matching contributes on its own. This reproduces the per-source
-stacked-file overlap using only `clean_all_samples_combined`, so a server recipient can reproduce it exactly.
+stacked-file overlap using only `tender_data_2006_2026`, so a server recipient can reproduce it exactly.
 
 ```{r method-overlap}
 cmb %>%
