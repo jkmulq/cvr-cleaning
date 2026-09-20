@@ -29,7 +29,7 @@
 #
 # Rows with no resolved CVR (cvr_final NA/empty) are dropped -- not useful in the server, and it trims size.
 #
-# OUTPUT (data/clean/): clean_all_samples_combined.{rds,csv}  -- union schema, source-specific columns NA-filled.
+# OUTPUT (data/clean/): tender_data_2006_2026.{rds,csv}  -- union schema, source-specific columns NA-filled.
 
 rm(list = ls()); source("config.R")
 suppressWarnings(suppressPackageStartupMessages({library(data.table); library(tidyverse)}))
@@ -388,8 +388,8 @@ missing_keep <- setdiff(keep_cols, names(combined))
 if (length(missing_keep)) warning("keep-list references columns not present: ", paste(missing_keep, collapse = ", "))
 keep_present <- intersect(keep_cols, names(combined))               # original column order, only those present
 dropped_cols <- setdiff(names(combined), keep_present)
-writeLines(sort(dropped_cols), file.path(out_dir, "clean_all_samples_combined_dropped_columns.txt"))
-cat(sprintf("column selection: kept %d of %d columns; dropped %d (list -> clean_all_samples_combined_dropped_columns.txt)\n",
+writeLines(sort(dropped_cols), file.path(out_dir, "tender_data_2006_2026_dropped_columns.txt"))
+cat(sprintf("column selection: kept %d of %d columns; dropped %d (list -> tender_data_2006_2026_dropped_columns.txt)\n",
             length(keep_present), ncol(combined), length(dropped_cols)))
 cat("dropped columns:\n"); print(dropped_cols)
 combined <- combined[, ..keep_present]
@@ -459,9 +459,9 @@ cat(sprintf("standardised missings to NA across %d character + %d numeric column
 
 # Emit .rds (canonical, read back by the pipeline), .csv, and .parquet so the
 # server-delivery format can be chosen at ship time. See save_dataset() in functions.R.
-save_dataset(combined, file.path(out_dir, "clean_all_samples_combined"))
+save_dataset(combined, file.path(out_dir, "tender_data_2006_2026"))
 
-message(sprintf("clean_all_samples_combined: %d rows, %d cols", nrow(combined), ncol(combined)))
+message(sprintf("tender_data_2006_2026: %d rows, %d cols", nrow(combined), ncol(combined)))
 print(combined[, .(rows = .N,
                    production = sum(grepl("production", cvr_method)),
                    extraction = sum(grepl("extraction", cvr_method))),

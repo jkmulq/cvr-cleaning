@@ -19,7 +19,7 @@ suppressWarnings(suppressPackageStartupMessages(library(data.table)))
 # read_clean() prefers the parquet, so column types (and leading-zero CVRs) are preserved and the
 # result is a data.table -- unlike read.csv(), which returns a data.frame and would break the
 # data.table syntax below and coerce CVRs to numbers.
-final_data <- read_clean(file.path(dirs$clean_data, "clean_all_samples_combined"))
+final_data <- read_clean(file.path(dirs$clean_data, "tender_data_2006_2026"))
 var_key <- readxl::read_excel(file.path(dirs$data, "variable_key.xlsx"),
                               sheet = "Variable key")
 
