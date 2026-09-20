@@ -20,7 +20,7 @@ base_raw <- as.data.table(readRDS(file.path(clean_data_dir, "clean_winner_data_o
 
 # ── Whole-result stack cache: skip the build when the matched input + keys are unchanged (see functions.R).
 # Empty refresh -> exact skip on identical input, full rebuild on any change. Disable with MATCH_CACHE=false.
-match_cache_ver  <- paste0("p1-", key_sig(clean_data_dir))
+match_cache_ver  <- paste0("p2-", key_sig(clean_data_dir))  # p2: name_match slice now carries fuzzy_candidate_cvr_2/_score_2
 match_cache_file <- file.path(dirs$intermediates, "match_cache", "stack__ot_winner.rds")
 match_input      <- copy(base_raw)
 .hit <- match_cache_read(match_input, character(0), character(0), match_cache_file, match_cache_ver)
@@ -118,10 +118,16 @@ matched_prefuzzy <- copy(matched)
 if (tolower(Sys.getenv("MATCH_CACHE", "true")) != "false")
   options(cvr.fuzzy_cache_dir = file.path(dirs$intermediates, "match_cache"),
           cvr.fuzzy_cache_version = paste0("p1-", key_sig(clean_data_dir)))
-.run_fuzzy <- function(key, ecol, kcol, flcol, step, thr) keep_step_matches(add_winner_context_to_matches(
-  accept_fuzzy_match(find_fuzzy_matches(remaining, key, entity_name_column = ecol, key_name_column = kcol,
+# Collect fuzzy candidate long-tables (not just the accepted match) so the name_match slice can carry the
+# runner-up (rank-2) -- lets name_match-only fuzzy rows deliver fuzzy_candidate_cvr_2 / _score_2.
+fuzzy_cands <- list()
+.run_fuzzy <- function(key, ecol, kcol, flcol, step, thr) {
+  fc <- find_fuzzy_matches(remaining, key, entity_name_column = ecol, key_name_column = kcol,
     first_letter_column = flcol, firm_type_column = "winner_firm_type", step = step,
-    key_id = if (key$name_source[1] == "name") "name_key" else "biname_key"), threshold = thr)))
+    key_id = if (key$name_source[1] == "name") "name_key" else "biname_key")
+  fuzzy_cands[[length(fuzzy_cands) + 1L]] <<- fc
+  keep_step_matches(add_winner_context_to_matches(accept_fuzzy_match(fc, threshold = thr)))
+}
 .run_fuzzy(name_key,   "winner_name_match", "name_match", "first_letter",       5L, 85)
 .run_fuzzy(biname_key, "winner_name_match", "name_match", "first_letter",       5L, 85)
 .run_fuzzy(name_key,   "winner_name_broad", "name_broad", "broad_first_letter", 6L, 86)
@@ -131,6 +137,28 @@ if (nrow(fuzzy_matched) > 0)
   fuzzy_matched <- fuzzy_row_lookup[fuzzy_matched, on = .(fuzzy_match_id = match_row_id),
                                     allow.cartesian = TRUE][, fuzzy_match_id := NULL]
 matched <- rbindlist(list(matched_prefuzzy, fuzzy_matched), use.names = TRUE, fill = TRUE)
+
+# Runner-up (rank-2) wide candidate columns for the name_match slice (mirrors the production matcher):
+# map fuzzy candidates back to real rows, keep top-5 distinct CVRs by score, attach cvr_2 / score_2.
+fuzzy_candidates <- rbindlist(fuzzy_cands, use.names = TRUE, fill = TRUE)
+if (nrow(fuzzy_candidates) > 0) {
+  setnames(fuzzy_candidates, "match_row_id", "fuzzy_match_id")
+  fuzzy_candidates <- fuzzy_row_lookup[fuzzy_candidates, on = "fuzzy_match_id",
+                                       allow.cartesian = TRUE][, fuzzy_match_id := NULL]
+  fuzzy_candidates[, source_order := fifelse(fuzzy_candidate_source == "name", 1L, 2L)]
+  setorder(fuzzy_candidates, match_row_id, -fuzzy_candidate_score, fuzzy_candidate_step,
+           source_order, fuzzy_candidate_rank)
+  fuzzy_candidates <- unique(fuzzy_candidates, by = c("match_row_id", "fuzzy_candidate_cvr"))
+  fuzzy_candidates <- fuzzy_candidates[, head(.SD, 5), by = match_row_id]
+  fuzzy_candidates[, fuzzy_candidate_rank := seq_len(.N), by = match_row_id]
+  fcw <- dcast(fuzzy_candidates, match_row_id ~ fuzzy_candidate_rank,
+               value.var = c("fuzzy_candidate_cvr", "fuzzy_candidate_score"))
+  keep2 <- intersect(c("match_row_id", "fuzzy_candidate_cvr_2", "fuzzy_candidate_score_2"), names(fcw))
+  nmo <- merge(nmo, fcw[, ..keep2], by = "match_row_id", all.x = TRUE, sort = FALSE)
+}
+for (cc in c("fuzzy_candidate_cvr_2", "fuzzy_candidate_score_2"))
+  if (!cc %in% names(nmo)) nmo[, (cc) := if (cc == "fuzzy_candidate_score_2") NA_real_ else NA_character_]
+
 km <- unique(matched[!is.na(cvr_name_match), .(match_row_id, winner_cvr_final = cvr_name_match,
   name_match_source, name_match_step, name_match_method, name_match_score)])
 nmo <- merge(nmo, km, by = "match_row_id", all.x = TRUE)
@@ -156,7 +184,8 @@ name_match <- nmo[!is.na(winner_cvr_final) & winner_cvr_final != "",
     winner_cvr_clean = NA_character_, valid_cvr = TRUE, name_match_method, name_match_step,
     cvr_number_source = "CVR from name matching only (field CVR ignored)", matching_candidate_type = NA_character_,
     name_match_score, flag_name_match_found = TRUE, cvr_name_match_quality, cvr_name_match_quality_basic,
-    cvr_name_match_quality_nospaces, cvr_name_match_quality_broad, cvr_name_match_quality_name, cvr_name_is_substring)]
+    cvr_name_match_quality_nospaces, cvr_name_match_quality_broad, cvr_name_match_quality_name, cvr_name_is_substring,
+    fuzzy_candidate_cvr_2, fuzzy_candidate_score_2)]
 name_match[, dataset := "name_match"]
 name_match <- unique(name_match, by = c("tender_id","lot_id","winner_cvr_final"))
 name_match <- merge(name_match, lot_ctx, by = c("tender_id","lot_id"), all.x = TRUE)
