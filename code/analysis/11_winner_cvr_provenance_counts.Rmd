@@ -55,25 +55,35 @@ is_valid_cvr <- function(x) !is.na(norm_cvr(x))
 
 # PRIMARY SOURCE = the delivered combined master table `clean_all_samples_combined` -- exactly what the
 # server receives. Every count below is per (data_source, entity, sample), where `sample` is the
-# cvr_method selection: production = grepl("production", cvr_method), extraction = grepl("extraction", cvr_method).
-# A CVR produced by both methods is cvr_method == "production; extraction" -- one row, in both samples (the
-# intended selection behaviour); the delivery is unique on (data_source, entity, tender_id, lot_id, cvr_final).
+# cvr_method selection: production = grepl("production", cvr_method), extraction = grepl("extraction", cvr_method),
+# name_match = grepl("name_match", cvr_method). A CVR produced by several methods (e.g. cvr_method ==
+# "production; name_match") is ONE row that appears in each of those samples (the intended selection
+# behaviour); the delivery is unique on (data_source, entity, tender_id, lot_id, cvr_final).
 # read_clean() prefers the parquet, preserving types + leading-zero CVRs.
 cmb <- as_tibble(read_clean(file.path(clean_dir, "clean_all_samples_combined.rds")))
 smp <- bind_rows(
   cmb %>% filter(grepl("production", cvr_method)) %>% mutate(sample = "production"),
-  cmb %>% filter(grepl("extraction", cvr_method)) %>% mutate(sample = "extraction")
+  cmb %>% filter(grepl("extraction", cvr_method)) %>% mutate(sample = "extraction"),
+  cmb %>% filter(grepl("name_match", cvr_method)) %>% mutate(sample = "name_match")
 )
+# order the sample facet consistently wherever it appears
+smp$sample <- factor(smp$sample, levels = c("production", "extraction", "name_match"))
 ```
 
 # Combined-based counts (server-reproducible)
 
 Everything in this section is computed directly from the de-identified server-delivery table
 `clean_all_samples_combined`, so a recipient can reproduce it exactly. The raw source-CVR and firm-name
-columns are removed for de-identification, so the old "extracted vs name-matched CVR" split is now the
-**sample** (`extraction` = raw field CVRs, `grepl("extraction", cvr_method)`; `production` = the resolved
-final CVR, `grepl("production", cvr_method)`), and per-CVR provenance is the `cvr_number_source` string. `cvr_name_match` is the
-name-matched CVR that is kept in the delivery.
+columns are removed for de-identification, so the CVR-resolution method is captured by the **sample**
+selection on `cvr_method`, and all three methods are reported side by side:
+
+- **`production`** (`grepl("production", cvr_method)`) — the canonical field+matching CVR the analyses use.
+- **`extraction`** (`grepl("extraction", cvr_method)`) — raw 8-digit field CVRs, no matching.
+- **`name_match`** (`grepl("name_match", cvr_method)`) — the name→registry CVR with the field CVR ignored
+  (the mirror image of extraction, and the lowest-confidence method).
+
+Per-CVR provenance is the `cvr_number_source` string; `cvr_name_match` is the name-matched CVR kept in the
+delivery.
 
 ## Headline
 
@@ -105,24 +115,23 @@ smp %>%
 
 ## `matching_candidate_type` and `name_match_status`
 
-Name matching is a **production-method** concept: extraction pulls raw 8-digit CVRs from the winner/buyer
-field with no matching, so pure-extraction rows carry no match info by construction. The `production; extraction`
-rows (a CVR both methods agree on) keep the production copy, so they *do* carry match metadata — which would
-otherwise leak into the extraction sample via `grepl("extraction", cvr_method)`. So all match-related tables
-below are computed on the **production sample only**.
+Name matching underlies **two** of the three methods: `production` (field CVR reconciled with matching) and
+`name_match` (name→registry, field CVR ignored). `extraction` pulls raw 8-digit field CVRs with no matching,
+so it carries no match info by construction and is excluded here. All match-related tables below are therefore
+computed on the **production and name_match samples**, shown side by side per `sample`.
 
 ```{r cand-type}
-prod <- smp %>% filter(sample == "production")
+matched <- smp %>% filter(sample %in% c("production", "name_match"))
 
-prod %>%
-  count(data_source, entity, matching_candidate_type) %>%
-  arrange(data_source, entity, desc(n)) %>%
-  kable(caption = "matching_candidate_type row counts (production sample only)")
+matched %>%
+  count(data_source, entity, sample, matching_candidate_type) %>%
+  arrange(data_source, entity, sample, desc(n)) %>%
+  kable(caption = "matching_candidate_type row counts (production & name_match samples)")
 
-prod %>%
-  count(data_source, entity, name_match_status) %>%
-  arrange(data_source, entity, desc(n)) %>%
-  kable(caption = "name_match_status row counts (production sample only)")
+matched %>%
+  count(data_source, entity, sample, name_match_status) %>%
+  arrange(data_source, entity, sample, desc(n)) %>%
+  kable(caption = "name_match_status row counts (production & name_match samples)")
 ```
 
 ## Provenance flags (count of TRUE)
@@ -133,36 +142,36 @@ prod %>%
 prov_flags <- c("flag_name_match_found", "flag_name_match_ambiguous", "flag_review_name_match",
                 "flag_manual_name_review", "flag_cvr_recovered_from_invalid", "flag_valid_cvr_in_registry")
 smp %>%
-  filter(sample == "production") %>%
-  group_by(data_source, entity) %>%
+  filter(sample %in% c("production", "name_match")) %>%
+  group_by(data_source, entity, sample) %>%
   summarise(across(all_of(prov_flags), ~ sum(.x %in% TRUE)), .groups = "drop") %>%
-  pivot_longer(-c(data_source, entity), names_to = "flag", values_to = "n_true") %>%
-  arrange(data_source, entity, flag) %>%
-  kable(caption = "Provenance flags (rows flagged TRUE, production sample only)")
+  pivot_longer(-c(data_source, entity, sample), names_to = "flag", values_to = "n_true") %>%
+  arrange(data_source, entity, sample, flag) %>%
+  kable(caption = "Provenance flags (rows flagged TRUE, production & name_match samples)")
 ```
 
 ## Name-match source and method
 
 ```{r match-source}
-prod %>%
+matched %>%
   filter(!is.na(name_match_source)) %>%
-  count(data_source, entity, name_match_source) %>%
-  arrange(data_source, entity, desc(n)) %>%
-  kable(caption = "Name-match source: registry key that matched (official name vs biname) — production sample only")
+  count(data_source, entity, sample, name_match_source) %>%
+  arrange(data_source, entity, sample, desc(n)) %>%
+  kable(caption = "Name-match source: registry key that matched (official name vs biname) — production & name_match samples")
 
-prod %>%
+matched %>%
   filter(!is.na(name_match_method)) %>%
-  count(data_source, entity, name_match_method) %>%
-  arrange(data_source, entity, desc(n)) %>%
-  kable(caption = "Name-match method: exact vs fuzzy — production sample only")
+  count(data_source, entity, sample, name_match_method) %>%
+  arrange(data_source, entity, sample, desc(n)) %>%
+  kable(caption = "Name-match method: exact vs fuzzy — production & name_match samples")
 ```
 
 ## Name-match quality
 
 ```{r quality}
-prod %>%
+matched %>%
   filter(!is.na(cvr_name_match_quality)) %>%
-  group_by(data_source, entity) %>%
+  group_by(data_source, entity, sample) %>%
   summarise(
     n_scored        = n(),
     mean_quality    = round(mean(cvr_name_match_quality), 1),
@@ -171,16 +180,16 @@ prod %>%
     pct_substring   = round(100 * mean(cvr_name_is_substring %in% TRUE), 1),
     .groups = "drop"
   ) %>%
-  arrange(data_source, entity) %>%
-  kable(caption = "Name-match quality summary (scored rows only, production sample only)")
+  arrange(data_source, entity, sample) %>%
+  kable(caption = "Name-match quality summary (scored rows, production & name_match samples)")
 
-prod %>%
+matched %>%
   filter(!is.na(cvr_name_match_quality)) %>%
   mutate(bucket = cut(cvr_name_match_quality, c(-Inf, 50, 80, 99.999, Inf),
                       labels = c("<50", "50-80", "80-<100", "100"))) %>%
-  count(data_source, entity, bucket) %>%
-  arrange(data_source, entity, bucket) %>%
-  kable(caption = "cvr_name_match_quality distribution (scored rows, production sample only)")
+  count(data_source, entity, sample, bucket) %>%
+  arrange(data_source, entity, sample, bucket) %>%
+  kable(caption = "cvr_name_match_quality distribution (scored rows, production & name_match samples)")
 ```
 
 ## Cross-source winner agreement
@@ -240,59 +249,83 @@ bind_rows(
                         "incomplete_mean_share_pct = unweighted mean over the n_incomplete notices without full agreement."))
 ```
 
-# Production vs extraction coverage and overlap
+# Production / extraction / name_match coverage and overlap
 
-Both samples are selected from the delivered combined via `cvr_method`: **production** = `grepl("production", cvr_method)`,
-**extraction** = `grepl("extraction", cvr_method)`. A distinct valid `(tender, lot, CVR)` with `cvr_method == "production; extraction"` is counted
-in **both** (the intended behaviour when a lot's two methods agree). This reproduces the old per-source
+All three samples are selected from the delivered combined via `cvr_method`: **production** =
+`grepl("production", cvr_method)`, **extraction** = `grepl("extraction", cvr_method)`, **name_match** =
+`grepl("name_match", cvr_method)`. A distinct valid `(tender, lot, CVR)` produced by several methods (e.g.
+`cvr_method == "production; name_match"`) is counted in **each** of those samples (the intended behaviour when
+a lot's methods agree). `name_match_only` is the count of keys found by name matching that appear in **neither**
+production nor extraction — the CVRs name-matching contributes on its own. This reproduces the per-source
 stacked-file overlap using only `clean_all_samples_combined`, so a server recipient can reproduce it exactly.
 
-```{r prod-extr-overlap}
+```{r method-overlap}
 cmb %>%
   filter(is_valid_cvr(cvr_final)) %>%
   mutate(k = paste(tender_id, lot_id, norm_cvr(cvr_final))) %>%
   group_by(data_source, entity) %>%
-  summarise(production = n_distinct(k[grepl("production", cvr_method)]),
-            extraction = n_distinct(k[grepl("extraction", cvr_method)]),
-            both       = length(intersect(k[grepl("production", cvr_method)], k[grepl("extraction", cvr_method)])),
+  summarise(kp = list(unique(k[grepl("production", cvr_method)])),
+            ke = list(unique(k[grepl("extraction", cvr_method)])),
+            kn = list(unique(k[grepl("name_match", cvr_method)])),
             .groups = "drop") %>%
-  mutate(production_only = production - both, extraction_only = extraction - both) %>%
+  transmute(
+    data_source, entity,
+    production      = lengths(kp),
+    extraction      = lengths(ke),
+    name_match      = lengths(kn),
+    prod_and_extr   = mapply(function(a, b) length(intersect(a, b)), kp, ke),
+    prod_and_name   = mapply(function(a, b) length(intersect(a, b)), kp, kn),
+    extr_and_name   = mapply(function(a, b) length(intersect(a, b)), ke, kn),
+    name_match_only = mapply(function(n, a, b) length(setdiff(n, union(a, b))), kn, kp, ke)
+  ) %>%
   arrange(data_source, entity) %>%
-  kable(caption = "Production vs extraction (tender, lot, CVR) coverage and overlap, per source/entity (from the combined)")
+  kable(caption = "Production / extraction / name_match (tender, lot, CVR) coverage and pairwise overlap, per source/entity; name_match_only = keys unique to name matching")
 ```
 
-## Production vs extraction agreement (within source, lot level)
+## Method agreement (within source, lot level)
 
-Within a single source `lot_id` is comparable (unlike across sources), so we can measure how much the two
-CVR-resolution methods agree per lot. For each `(tender, lot)` where **both** methods produced a CVR, the
-share is the Jaccard `|prod ∩ extr| / |prod ∪ extr|`; `mean_share_pct` is the unweighted mean over lots,
-`wtd_mean_share_pct` weights each lot by its union size (pooled), and `incomplete_mean_share_pct` is the mean
-over only the `n_incomplete` lots without complete agreement. TED has no extraction method, so it does not appear.
+Within a single source `lot_id` is comparable (unlike across sources), so we can measure how much the
+CVR-resolution methods agree per lot, for **all three pairwise comparisons** (production vs extraction,
+production vs name_match, extraction vs name_match). For each `(tender, lot)` where **both** methods of a pair
+produced a CVR, the share is the Jaccard `|A ∩ B| / |A ∪ B|`; `mean_share_pct` is the unweighted mean over
+lots, `wtd_mean_share_pct` weights each lot by its union size (pooled), and `incomplete_mean_share_pct` is the
+mean over only the `n_incomplete` lots without complete agreement. (KFST buyers have no extraction variant, so
+pairs involving extraction do not appear for them.)
 
-```{r prod-extr-agreement}
-pe_sets <- cmb %>%
+```{r method-agreement}
+lot_sets <- cmb %>%
   filter(is_valid_cvr(cvr_final)) %>%
   mutate(cvr = norm_cvr(cvr_final)) %>%
   group_by(data_source, entity, tender_id, lot_id) %>%
   summarise(prod = list(sort(unique(cvr[grepl("production", cvr_method)]))),
-            extr = list(sort(unique(cvr[grepl("extraction", cvr_method)]))), .groups = "drop") %>%
-  filter(lengths(prod) > 0 & lengths(extr) > 0) %>%      # comparable = both methods present in the lot
-  mutate(inter = map2_int(prod, extr, ~ length(intersect(.x, .y))),
-         uni   = map2_int(prod, extr, ~ length(union(.x, .y))),
-         share = inter / uni,
-         exact = map2_lgl(prod, extr, setequal),
-         anyc  = inter > 0)
+            extr = list(sort(unique(cvr[grepl("extraction", cvr_method)]))),
+            name = list(sort(unique(cvr[grepl("name_match", cvr_method)]))), .groups = "drop")
 
-pe_sets %>%
-  group_by(data_source, entity) %>%
-  summarise(comparable_lots           = n(),
-            exact_pct                 = round(100 * mean(exact), 1),
-            any_common_pct            = round(100 * mean(anyc), 1),
-            mean_share_pct            = round(100 * mean(share), 1),
-            wtd_mean_share_pct        = round(100 * sum(inter) / sum(uni), 1),
-            n_incomplete              = sum(share < 1),
-            incomplete_mean_share_pct = ifelse(any(share < 1), round(100 * mean(share[share < 1]), 1), NA_real_),
-            .groups = "drop") %>%
-  arrange(data_source, entity) %>%
-  kable(caption = "Production vs extraction CVR agreement WITHIN each source, at the lot level (lots with both methods present)")
+pair_agree <- function(df, A, B, label) {
+  x <- df %>% filter(lengths(.data[[A]]) > 0 & lengths(.data[[B]]) > 0)   # both methods present in the lot
+  if (!nrow(x)) return(NULL)
+  a <- x[[A]]; b <- x[[B]]
+  inter <- map2_int(a, b, ~ length(intersect(.x, .y)))
+  uni   <- map2_int(a, b, ~ length(union(.x, .y)))
+  share <- inter / uni
+  tibble(data_source = x$data_source, entity = x$entity, pair = label,
+         inter, uni, share, exact = map2_lgl(a, b, setequal), anyc = inter > 0) %>%
+    group_by(data_source, entity, pair) %>%
+    summarise(comparable_lots           = n(),
+              exact_pct                 = round(100 * mean(exact), 1),
+              any_common_pct            = round(100 * mean(anyc), 1),
+              mean_share_pct            = round(100 * mean(share), 1),
+              wtd_mean_share_pct        = round(100 * sum(inter) / sum(uni), 1),
+              n_incomplete              = sum(share < 1),
+              incomplete_mean_share_pct = ifelse(any(share < 1), round(100 * mean(share[share < 1]), 1), NA_real_),
+              .groups = "drop")
+}
+
+bind_rows(
+  pair_agree(lot_sets, "prod", "extr", "production vs extraction"),
+  pair_agree(lot_sets, "prod", "name", "production vs name_match"),
+  pair_agree(lot_sets, "extr", "name", "extraction vs name_match")
+) %>%
+  arrange(data_source, entity, pair) %>%
+  kable(caption = "Pairwise CVR-method agreement WITHIN each source, at the lot level (lots where both methods of the pair are present)")
 ```
