@@ -39,6 +39,20 @@ s_prof <- grep("Profylakse",         kfst_sheets, value = TRUE)[1]
 data <- read_excel(kfst_path, sheet = s_main)
 prof <- read_excel(kfst_path, sheet = s_prof)
 stopifnot(identical(names(data), names(prof)))                       # same schema + order
+
+# `Vægtning af pris` (price_weight) has some cells stored as Danish TEXT -- comma decimals ("0,2") and
+# ranges ("0,2-0,3") -- which readxl coerces to NA (the "Expecting numeric ... got '0,2'" warnings).
+# Re-read ONLY that column as text and parse it (comma -> dot; a range -> its midpoint) to recover those
+# ~183 weights. Nothing else is touched -- we overwrite just the one column on each sheet.
+parse_price_weight <- function(x) {
+  x <- gsub(",", ".", gsub("[[:space:]]", "", as.character(x)))      # Danish decimal comma -> dot
+  dplyr::if_else(grepl("^[0-9.]+-[0-9.]+$", x),                      # "0.2-0.3" range -> midpoint
+                 (suppressWarnings(as.numeric(sub("-.*$", "", x))) +
+                  suppressWarnings(as.numeric(sub("^.*-", "", x)))) / 2,
+                 suppressWarnings(as.numeric(x)))
+}
+data[["Vægtning af pris"]] <- parse_price_weight(read_excel(kfst_path, sheet = s_main, col_types = "text")[["Vægtning af pris"]])
+prof[["Vægtning af pris"]] <- parse_price_weight(read_excel(kfst_path, sheet = s_prof, col_types = "text")[["Vægtning af pris"]])
 # CRITICAL: the profylakse sheet numbers Løbenummer (tender_id) and Nummerplade (lot_id)
 # INDEPENDENTLY from 1 -- they overlap almost entirely with 2.0's ids (1,097/1,097 tender ids,
 # 1,111/1,156 lot ids). Namespace the profylakse ids with a "P" prefix so the two id spaces stay
