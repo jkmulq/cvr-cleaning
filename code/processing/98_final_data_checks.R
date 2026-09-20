@@ -1,13 +1,15 @@
 # =============================================================================
 # code/processing/98_final_data_checks.R
-# Post-combine sanity checks on clean_all_samples_combined:
+# Post-combine sanity checks on tender_data_2006_2026:
 #   (1) its columns match the variable_key.xlsx "Variable key" sheet exactly;
 #   (2) missingness of every variable, per (data_source, entity) pair;
 #   (3) tender/lot-level columns agree across entities within each (data_source, tender_id, lot_id);
 #   (4) the sample-selection rule (cvr_method) reproduces the PRE-DEDUP production / extraction
 #       datasets (vs the references saved by 3_1/3_2/3_3) -- i.e. the CVR-level dedup is lossless;
 #   (5) the delivered combined is unique on (data_source, entity, tender_id, lot_id, cvr_final);
-#   (6) provenance: every KFST winner extraction CVR traces to the raw 'Vinders CVR' source field.
+#   (6) provenance: every KFST winner extraction CVR traces to the raw 'Vinders CVR' source field;
+#   (6b) cross-source join key: ted_notice_id is byte-identical across data sources (no zero-padding
+#        mismatch), so it still joins after de-identification/hashing.
 # Standalone check -- not part of the production pipeline.
 # =============================================================================
 rm(list = ls())
@@ -52,7 +54,7 @@ missingness  <- grp_n[missingness, on = c("data_source", "entity")]   # attach e
 missingness[, pct_missing := round(100 * n_missing / n_rows, 1)]
 setorder(missingness, data_source, entity, variable)
 
-out_csv <- file.path(dirs$clean_data, "clean_all_samples_combined_missingness_by_source_entity.csv")
+out_csv <- file.path(dirs$clean_data, "tender_data_2006_2026_missingness_by_source_entity.csv")
 fwrite(missingness, out_csv)
 cat(sprintf("Missingness: %d rows (%d variables x %d source-entity pairs) -> %s\n",
             nrow(missingness), uniqueN(missingness$variable), nrow(grp_n), out_csv))
@@ -115,8 +117,14 @@ tender_level_cols <- c(
   "award_dispatch_date", "award_publication_date", "award_tender_deadline_date")
 key3 <- c("data_source", "tender_id", "lot_id")
 tl_present <- intersect(tender_level_cols, names(final_data))
+# award_date / award_end_date are assigned PER WINNER for KFST multi-winner framework lots (the positional
+# per-winner award dates from 1_1_process_kfst.R), so they legitimately vary WITHIN a KFST lot and are not
+# lot-constant there. They remain lot-level for OT/TED, and TED winner/non-winner date alignment is checked
+# separately in 3c -- so exempt ONLY KFST for ONLY these two columns; the strict check stands everywhere else.
+per_winner_date_cols <- c("award_date", "award_end_date")
 disagree <- rbindlist(lapply(tl_present, function(col) {
-  g <- final_data[!is.na(get(col)), .(nd = uniqueN(get(col))), by = key3][nd > 1L]
+  dt <- if (col %in% per_winner_date_cols) final_data[data_source != "KFST"] else final_data
+  g <- dt[!is.na(get(col)), .(nd = uniqueN(get(col))), by = key3][nd > 1L]
   if (nrow(g)) data.table(column = col, n_lots_disagree = nrow(g)) else NULL
 }), fill = TRUE)
 
@@ -191,60 +199,72 @@ if (nrow(lots_wn) == 0L) {
   }
 }
 
-# 4 The sample-selection rule (cvr_method) reproduces the PRE-DEDUP production / extraction datasets.
-#   Load the pre-dedup references saved by 3_1/3_2/3_3 (per-lot CVR lists captured BEFORE the
-#   cross-method dedup) and rebuild the equivalent from the delivered combined's cvr_method
-#   (production = grepl("production", cvr_method); extraction = grepl("extraction", cvr_method)). If the
-#   dedup (or the combine/save) dropped or altered any CVR, the rebuilt lists will not match -- so this
-#   confirms the dedup is lossless and the README's selection rules recover the datasets they claim.
-#   Same lot key + cvr_list rule as the references (tender_id + lot_id; for TED tender_id is the notice
-#   id; CVRs sorted, not deduped -> exact per-lot CVR multiset).
+# 4 Every (data_source, entity, method) pre-dedup dataset can be extracted EXACTLY from the deduped combined
+#   using only data_source + entity + cvr_method. For each of the 18 combinations we run TWO comparisons:
+#     row-by-row : take the deduped rows whose cvr_method contains the method as ONE ROW PER CVR
+#                  (tender_id, lot_id, cvr) and fsetequal(..., all = TRUE) [MULTISET/bag] them against the
+#                  pre-dedup reference un-collapsed to one row per CVR -- row COUNT and every row must match.
+#     cvr_list   : collapse the same deduped rows to one sorted ";"-joined CVR list per lot and fsetequal()
+#                  that against the reference's stored cvr_list -- the per-lot CVR set must match.
+#   Both TRUE = the CVR-level dedup dropped/altered/duplicated nothing and the README's grepl rule recovers
+#   that dataset. Inline (no helper) so each combination is visible. (KFST buyer is name-only -> no reference.)
 ref_files <- c("predup_cvr_lists_kfst_winner.rds", "predup_cvr_lists_ot_winner.rds", "predup_cvr_lists_ot_buyer.rds",
                "predup_cvr_lists_ted_winner.rds", "predup_cvr_lists_ted_buyer.rds")
 ref <- rbindlist(lapply(file.path(dirs$clean_data, "checks", ref_files), readRDS))
+# 4_combine standardised blank tender_id/lot_id to NA; the references (saved by 3_* BEFORE that) keep "".
+# TED notice-level rows legitimately have an empty lot_id, so align "" -> NA on the references' keys once,
+# otherwise the same lot would bucket under lot_id="" (ref) vs lot_id=NA (deduped) and mismatch spuriously.
+ref[!is.na(tender_id) & trimws(tender_id) == "", tender_id := NA_character_]
+ref[!is.na(lot_id)    & trimws(lot_id)    == "", lot_id    := NA_character_]
+# ref (as loaded) is one row per (source, entity, method, tender_id, lot_id) with the collapsed cvr_list -> used
+# by the cvr_list check. ref_rows un-collapses it to one row per CVR -> used by the row-by-row check.
+ref_rows <- ref[, .(cvr = unlist(strsplit(cvr_list, ";", fixed = TRUE))), by = .(data_source, entity, method, tender_id, lot_id)]
 
-# Rebuild from the combined, restricted to the deduped source-entities the references cover
-# (KFST winner, OT winner, OT buyer). Filter on the "source | entity" pair so we keep exactly those
-# combos -- filtering data_source and entity separately would also let (KFST, buyer) through, which has
-# no reference. ref_pairs is derived from the references so it stays in sync if the deduped set changes.
-ref_pairs <- ref[, unique(paste(data_source, entity, sep = " | "))]
-fd <- final_data[paste(data_source, entity, sep = " | ") %in% ref_pairs]
-prod_rows <- fd[grepl("production", cvr_method),
-                .(data_source, entity, tender_id, lot_id, cvr_final,
-                  method = "production")]
-extr_rows <- fd[grepl("extraction", cvr_method),
-                .(data_source, entity, tender_id, lot_id, cvr_final,
-                  method = "extraction")]
-nm_rows   <- fd[grepl("name_match", cvr_method),
-                .(data_source, entity, tender_id, lot_id, cvr_final,
-                  method = "name_match")]
-rebuilt <- rbind(prod_rows, extr_rows, nm_rows)[
-  , .(cvr_list = paste(sort(cvr_final), collapse = ";")),
-  by = .(data_source, entity, method, tender_id, lot_id)]
+# Drift-guard: the 18 explicit checks below MUST cover exactly the source-entities the references contain.
+stopifnot(setequal(ref[, unique(paste(data_source, entity, sep = " | "))],
+                   c("KFST | winner", "OpenTender | winner", "OpenTender | buyer",
+                     "TED | winner", "TED | non-winner", "TED | buyer")))
 
-kcols <- c("data_source", "entity", "method", "tender_id", "lot_id")
-# 4_combine standardises blank strings to NA, but the pre-dedup references (saved by 3_* BEFORE that step)
-# keep an empty tender_id/lot_id as "". TED notice-level rows legitimately have an empty lot_id, so the same
-# (tender, CVR) would otherwise bucket under lot_id="" in the reference vs lot_id=NA in the rebuilt and
-# spuriously mismatch. Treat "" and NA identically on the key columns before comparing.
-for (dt in list(ref, rebuilt)) for (kc in c("tender_id", "lot_id")) {
-  dt[!is.na(get(kc)) & trimws(get(kc)) == "", (kc) := NA_character_]
-}
-setorderv(ref, kcols)
-setorderv(rebuilt, kcols)
-# identical() on the sorted tables (as data.frames -- data.tables carry an internal pointer that makes
-# a direct identical() always FALSE). TRUE only if every (source, entity, method, tender, lot) row and
-# its cvr_list match exactly, i.e. cvr_method reproduces the pre-dedup datasets perfectly.
-if (identical(as.data.frame(ref), as.data.frame(rebuilt))) {
-  message(sprintf("Passed: cvr_method reproduces the pre-dedup production + extraction datasets (all %d lot-method rows).",
-                  nrow(ref)))
+message("\nCheck 4: extract each (source, entity, method) from the DEDUPED combined via cvr_method and confirm")
+message("         it matches its pre-dedup reference -- both ROW-BY-ROW and at the collapsed CVR-LIST level.")
+
+r_kfst_w_prod <- fsetequal(final_data[data_source == "KFST" & entity == "winner" & grepl("production", cvr_method), 
+                                      .(tender_id, lot_id, cvr = cvr_final)], 
+                           ref_rows[data_source == "KFST" & entity == "winner" & method == "production", 
+                                    .(tender_id, lot_id, cvr)], all = TRUE); 
+l_kfst_w_prod <- fsetequal(final_data[data_source == "KFST" & entity == "winner" & grepl("production", cvr_method), .(cvr_list = paste(sort(cvr_final), collapse = ";")), by = .(tender_id, lot_id)], ref[data_source == "KFST" & entity == "winner" & method == "production", .(tender_id, lot_id, cvr_list)]); message("  KFST       | winner     | production : row-by-row=", r_kfst_w_prod, "  cvr_list=", l_kfst_w_prod)
+r_kfst_w_extr <- fsetequal(final_data[data_source == "KFST" & entity == "winner" & grepl("extraction", cvr_method), .(tender_id, lot_id, cvr = cvr_final)], ref_rows[data_source == "KFST" & entity == "winner" & method == "extraction", .(tender_id, lot_id, cvr)], all = TRUE); l_kfst_w_extr <- fsetequal(final_data[data_source == "KFST" & entity == "winner" & grepl("extraction", cvr_method), .(cvr_list = paste(sort(cvr_final), collapse = ";")), by = .(tender_id, lot_id)], ref[data_source == "KFST" & entity == "winner" & method == "extraction", .(tender_id, lot_id, cvr_list)]); message("  KFST       | winner     | extraction : row-by-row=", r_kfst_w_extr, "  cvr_list=", l_kfst_w_extr)
+r_kfst_w_name <- fsetequal(final_data[data_source == "KFST" & entity == "winner" & grepl("name_match", cvr_method), .(tender_id, lot_id, cvr = cvr_final)], ref_rows[data_source == "KFST" & entity == "winner" & method == "name_match", .(tender_id, lot_id, cvr)], all = TRUE); l_kfst_w_name <- fsetequal(final_data[data_source == "KFST" & entity == "winner" & grepl("name_match", cvr_method), .(cvr_list = paste(sort(cvr_final), collapse = ";")), by = .(tender_id, lot_id)], ref[data_source == "KFST" & entity == "winner" & method == "name_match", .(tender_id, lot_id, cvr_list)]); message("  KFST       | winner     | name_match : row-by-row=", r_kfst_w_name, "  cvr_list=", l_kfst_w_name)
+
+r_ot_w_prod <- fsetequal(final_data[data_source == "OpenTender" & entity == "winner" & grepl("production", cvr_method), .(tender_id, lot_id, cvr = cvr_final)], ref_rows[data_source == "OpenTender" & entity == "winner" & method == "production", .(tender_id, lot_id, cvr)], all = TRUE); l_ot_w_prod <- fsetequal(final_data[data_source == "OpenTender" & entity == "winner" & grepl("production", cvr_method), .(cvr_list = paste(sort(cvr_final), collapse = ";")), by = .(tender_id, lot_id)], ref[data_source == "OpenTender" & entity == "winner" & method == "production", .(tender_id, lot_id, cvr_list)]); message("  OpenTender | winner     | production : row-by-row=", r_ot_w_prod, "  cvr_list=", l_ot_w_prod)
+r_ot_w_extr <- fsetequal(final_data[data_source == "OpenTender" & entity == "winner" & grepl("extraction", cvr_method), .(tender_id, lot_id, cvr = cvr_final)], ref_rows[data_source == "OpenTender" & entity == "winner" & method == "extraction", .(tender_id, lot_id, cvr)], all = TRUE); l_ot_w_extr <- fsetequal(final_data[data_source == "OpenTender" & entity == "winner" & grepl("extraction", cvr_method), .(cvr_list = paste(sort(cvr_final), collapse = ";")), by = .(tender_id, lot_id)], ref[data_source == "OpenTender" & entity == "winner" & method == "extraction", .(tender_id, lot_id, cvr_list)]); message("  OpenTender | winner     | extraction : row-by-row=", r_ot_w_extr, "  cvr_list=", l_ot_w_extr)
+r_ot_w_name <- fsetequal(final_data[data_source == "OpenTender" & entity == "winner" & grepl("name_match", cvr_method), .(tender_id, lot_id, cvr = cvr_final)], ref_rows[data_source == "OpenTender" & entity == "winner" & method == "name_match", .(tender_id, lot_id, cvr)], all = TRUE); l_ot_w_name <- fsetequal(final_data[data_source == "OpenTender" & entity == "winner" & grepl("name_match", cvr_method), .(cvr_list = paste(sort(cvr_final), collapse = ";")), by = .(tender_id, lot_id)], ref[data_source == "OpenTender" & entity == "winner" & method == "name_match", .(tender_id, lot_id, cvr_list)]); message("  OpenTender | winner     | name_match : row-by-row=", r_ot_w_name, "  cvr_list=", l_ot_w_name)
+
+r_ot_b_prod <- fsetequal(final_data[data_source == "OpenTender" & entity == "buyer" & grepl("production", cvr_method), .(tender_id, lot_id, cvr = cvr_final)], ref_rows[data_source == "OpenTender" & entity == "buyer" & method == "production", .(tender_id, lot_id, cvr)], all = TRUE); l_ot_b_prod <- fsetequal(final_data[data_source == "OpenTender" & entity == "buyer" & grepl("production", cvr_method), .(cvr_list = paste(sort(cvr_final), collapse = ";")), by = .(tender_id, lot_id)], ref[data_source == "OpenTender" & entity == "buyer" & method == "production", .(tender_id, lot_id, cvr_list)]); message("  OpenTender | buyer      | production : row-by-row=", r_ot_b_prod, "  cvr_list=", l_ot_b_prod)
+r_ot_b_extr <- fsetequal(final_data[data_source == "OpenTender" & entity == "buyer" & grepl("extraction", cvr_method), .(tender_id, lot_id, cvr = cvr_final)], ref_rows[data_source == "OpenTender" & entity == "buyer" & method == "extraction", .(tender_id, lot_id, cvr)], all = TRUE); l_ot_b_extr <- fsetequal(final_data[data_source == "OpenTender" & entity == "buyer" & grepl("extraction", cvr_method), .(cvr_list = paste(sort(cvr_final), collapse = ";")), by = .(tender_id, lot_id)], ref[data_source == "OpenTender" & entity == "buyer" & method == "extraction", .(tender_id, lot_id, cvr_list)]); message("  OpenTender | buyer      | extraction : row-by-row=", r_ot_b_extr, "  cvr_list=", l_ot_b_extr)
+r_ot_b_name <- fsetequal(final_data[data_source == "OpenTender" & entity == "buyer" & grepl("name_match", cvr_method), .(tender_id, lot_id, cvr = cvr_final)], ref_rows[data_source == "OpenTender" & entity == "buyer" & method == "name_match", .(tender_id, lot_id, cvr)], all = TRUE); l_ot_b_name <- fsetequal(final_data[data_source == "OpenTender" & entity == "buyer" & grepl("name_match", cvr_method), .(cvr_list = paste(sort(cvr_final), collapse = ";")), by = .(tender_id, lot_id)], ref[data_source == "OpenTender" & entity == "buyer" & method == "name_match", .(tender_id, lot_id, cvr_list)]); message("  OpenTender | buyer      | name_match : row-by-row=", r_ot_b_name, "  cvr_list=", l_ot_b_name)
+
+r_ted_w_prod <- fsetequal(final_data[data_source == "TED" & entity == "winner" & grepl("production", cvr_method), .(tender_id, lot_id, cvr = cvr_final)], ref_rows[data_source == "TED" & entity == "winner" & method == "production", .(tender_id, lot_id, cvr)], all = TRUE); l_ted_w_prod <- fsetequal(final_data[data_source == "TED" & entity == "winner" & grepl("production", cvr_method), .(cvr_list = paste(sort(cvr_final), collapse = ";")), by = .(tender_id, lot_id)], ref[data_source == "TED" & entity == "winner" & method == "production", .(tender_id, lot_id, cvr_list)]); message("  TED        | winner     | production : row-by-row=", r_ted_w_prod, "  cvr_list=", l_ted_w_prod)
+r_ted_w_extr <- fsetequal(final_data[data_source == "TED" & entity == "winner" & grepl("extraction", cvr_method), .(tender_id, lot_id, cvr = cvr_final)], ref_rows[data_source == "TED" & entity == "winner" & method == "extraction", .(tender_id, lot_id, cvr)], all = TRUE); l_ted_w_extr <- fsetequal(final_data[data_source == "TED" & entity == "winner" & grepl("extraction", cvr_method), .(cvr_list = paste(sort(cvr_final), collapse = ";")), by = .(tender_id, lot_id)], ref[data_source == "TED" & entity == "winner" & method == "extraction", .(tender_id, lot_id, cvr_list)]); message("  TED        | winner     | extraction : row-by-row=", r_ted_w_extr, "  cvr_list=", l_ted_w_extr)
+r_ted_w_name <- fsetequal(final_data[data_source == "TED" & entity == "winner" & grepl("name_match", cvr_method), .(tender_id, lot_id, cvr = cvr_final)], ref_rows[data_source == "TED" & entity == "winner" & method == "name_match", .(tender_id, lot_id, cvr)], all = TRUE); l_ted_w_name <- fsetequal(final_data[data_source == "TED" & entity == "winner" & grepl("name_match", cvr_method), .(cvr_list = paste(sort(cvr_final), collapse = ";")), by = .(tender_id, lot_id)], ref[data_source == "TED" & entity == "winner" & method == "name_match", .(tender_id, lot_id, cvr_list)]); message("  TED        | winner     | name_match : row-by-row=", r_ted_w_name, "  cvr_list=", l_ted_w_name)
+
+r_ted_n_prod <- fsetequal(final_data[data_source == "TED" & entity == "non-winner" & grepl("production", cvr_method), .(tender_id, lot_id, cvr = cvr_final)], ref_rows[data_source == "TED" & entity == "non-winner" & method == "production", .(tender_id, lot_id, cvr)], all = TRUE); l_ted_n_prod <- fsetequal(final_data[data_source == "TED" & entity == "non-winner" & grepl("production", cvr_method), .(cvr_list = paste(sort(cvr_final), collapse = ";")), by = .(tender_id, lot_id)], ref[data_source == "TED" & entity == "non-winner" & method == "production", .(tender_id, lot_id, cvr_list)]); message("  TED        | non-winner | production : row-by-row=", r_ted_n_prod, "  cvr_list=", l_ted_n_prod)
+r_ted_n_extr <- fsetequal(final_data[data_source == "TED" & entity == "non-winner" & grepl("extraction", cvr_method), .(tender_id, lot_id, cvr = cvr_final)], ref_rows[data_source == "TED" & entity == "non-winner" & method == "extraction", .(tender_id, lot_id, cvr)], all = TRUE); l_ted_n_extr <- fsetequal(final_data[data_source == "TED" & entity == "non-winner" & grepl("extraction", cvr_method), .(cvr_list = paste(sort(cvr_final), collapse = ";")), by = .(tender_id, lot_id)], ref[data_source == "TED" & entity == "non-winner" & method == "extraction", .(tender_id, lot_id, cvr_list)]); message("  TED        | non-winner | extraction : row-by-row=", r_ted_n_extr, "  cvr_list=", l_ted_n_extr)
+r_ted_n_name <- fsetequal(final_data[data_source == "TED" & entity == "non-winner" & grepl("name_match", cvr_method), .(tender_id, lot_id, cvr = cvr_final)], ref_rows[data_source == "TED" & entity == "non-winner" & method == "name_match", .(tender_id, lot_id, cvr)], all = TRUE); l_ted_n_name <- fsetequal(final_data[data_source == "TED" & entity == "non-winner" & grepl("name_match", cvr_method), .(cvr_list = paste(sort(cvr_final), collapse = ";")), by = .(tender_id, lot_id)], ref[data_source == "TED" & entity == "non-winner" & method == "name_match", .(tender_id, lot_id, cvr_list)]); message("  TED        | non-winner | name_match : row-by-row=", r_ted_n_name, "  cvr_list=", l_ted_n_name)
+
+r_ted_b_prod <- fsetequal(final_data[data_source == "TED" & entity == "buyer" & grepl("production", cvr_method), .(tender_id, lot_id, cvr = cvr_final)], ref_rows[data_source == "TED" & entity == "buyer" & method == "production", .(tender_id, lot_id, cvr)], all = TRUE); l_ted_b_prod <- fsetequal(final_data[data_source == "TED" & entity == "buyer" & grepl("production", cvr_method), .(cvr_list = paste(sort(cvr_final), collapse = ";")), by = .(tender_id, lot_id)], ref[data_source == "TED" & entity == "buyer" & method == "production", .(tender_id, lot_id, cvr_list)]); message("  TED        | buyer      | production : row-by-row=", r_ted_b_prod, "  cvr_list=", l_ted_b_prod)
+r_ted_b_extr <- fsetequal(final_data[data_source == "TED" & entity == "buyer" & grepl("extraction", cvr_method), .(tender_id, lot_id, cvr = cvr_final)], ref_rows[data_source == "TED" & entity == "buyer" & method == "extraction", .(tender_id, lot_id, cvr)], all = TRUE); l_ted_b_extr <- fsetequal(final_data[data_source == "TED" & entity == "buyer" & grepl("extraction", cvr_method), .(cvr_list = paste(sort(cvr_final), collapse = ";")), by = .(tender_id, lot_id)], ref[data_source == "TED" & entity == "buyer" & method == "extraction", .(tender_id, lot_id, cvr_list)]); message("  TED        | buyer      | extraction : row-by-row=", r_ted_b_extr, "  cvr_list=", l_ted_b_extr)
+r_ted_b_name <- fsetequal(final_data[data_source == "TED" & entity == "buyer" & grepl("name_match", cvr_method), .(tender_id, lot_id, cvr = cvr_final)], ref_rows[data_source == "TED" & entity == "buyer" & method == "name_match", .(tender_id, lot_id, cvr)], all = TRUE); l_ted_b_name <- fsetequal(final_data[data_source == "TED" & entity == "buyer" & grepl("name_match", cvr_method), .(cvr_list = paste(sort(cvr_final), collapse = ";")), by = .(tender_id, lot_id)], ref[data_source == "TED" & entity == "buyer" & method == "name_match", .(tender_id, lot_id, cvr_list)]); message("  TED        | buyer      | name_match : row-by-row=", r_ted_b_name, "  cvr_list=", l_ted_b_name)
+
+if (all(r_kfst_w_prod, r_kfst_w_extr, r_kfst_w_name, r_ot_w_prod, r_ot_w_extr, r_ot_w_name,
+        r_ot_b_prod, r_ot_b_extr, r_ot_b_name, r_ted_w_prod, r_ted_w_extr, r_ted_w_name,
+        r_ted_n_prod, r_ted_n_extr, r_ted_n_name, r_ted_b_prod, r_ted_b_extr, r_ted_b_name,
+        l_kfst_w_prod, l_kfst_w_extr, l_kfst_w_name, l_ot_w_prod, l_ot_w_extr, l_ot_w_name,
+        l_ot_b_prod, l_ot_b_extr, l_ot_b_name, l_ted_w_prod, l_ted_w_extr, l_ted_w_name,
+        l_ted_n_prod, l_ted_n_extr, l_ted_n_name, l_ted_b_prod, l_ted_b_extr, l_ted_b_name)) {
+  message("Passed (4): all 18 (source, entity, method) datasets extract identically -- both row-by-row and cvr_list -- so the dedup is lossless.")
 } else {
-  cmp <- merge(ref, rebuilt, by = kcols, all = TRUE, suffixes = c("_ref", "_rebuilt"))
-  bad_rebuild <- cmp[is.na(cvr_list_ref) | is.na(cvr_list_rebuilt) | cvr_list_ref != cvr_list_rebuilt]
-  message(sprintf("Failed: reference (%d rows) and rebuilt (%d rows) not identical; %d differing lot-method rows:",
-                  nrow(ref), nrow(rebuilt), nrow(bad_rebuild)))
-  print(head(bad_rebuild, 5))
-  failures <- c(failures, "4: cvr_method does not reproduce the pre-dedup datasets")
+  failures <- c(failures, "4: a (source, entity, method) dataset does NOT extract identically from the deduped combined (see FALSE lines above)")
 }
 
 # 5 The delivered combined is UNIQUE on (data_source, entity, tender_id, lot_id, cvr_final): one row per
@@ -288,6 +308,49 @@ if (n_untraced == 0L) {
   message(sprintf("Failed: %d of %d KFST winner extraction CVR(s) do NOT trace to the raw field:", n_untraced, nrow(ex)))
   print(head(ex[!raw_field, on = .(tender_id, lot_id, cvr)], 5))
   failures <- c(failures, sprintf("6: %d untraceable KFST extraction CVRs", n_untraced))
+}
+
+# 6b Cross-source join key. `ted_notice_id` is the ONLY identifier shared across data sources
+#    (tender_id/lot_id are source-local -- KFST integers vs OT UUIDs). It is de-identified (hashed)
+#    before delivery, so the SAME notice must carry a BYTE-IDENTICAL string in every source or the
+#    hashes won't match and server-side cross-source dedup silently breaks. This GATES on the one thing
+#    that would break the join: a notice represented with different zero-padding across sources (e.g.
+#    "43653-2021" vs "043653-2021"). We detect it by comparing each source-pair's raw exact overlap to
+#    the overlap after stripping leading zeros -- if stripping recovers extra matches, padding differs.
+#    (The 6-digit legacy / 8-digit eForms split is a real TED numbering change over time, NOT a mismatch.)
+#    Non-blocking remedy if this ever fails: standardise ted_notice_id (zero-pad) before de-identification.
+nid <- function(src) {
+  v <- final_data[data_source == src & !is.na(ted_notice_id) & trimws(ted_notice_id) != "", ted_notice_id]
+  unique(as.character(v))
+}
+strip0 <- function(x) paste0(sub("^0+", "", sub("-.*$", "", x)), "-", sub("^.*-", "", x))
+srcs   <- intersect(c("KFST", "OpenTender", "TED"), unique(final_data$data_source))
+ids    <- setNames(lapply(srcs, nid), srcs)
+message("Cross-source join key (ted_notice_id) -- exact-match overlap by source pair:")
+pad_loss_total <- 0L
+if (length(srcs) >= 2) {
+  for (i in 1:(length(srcs) - 1)) for (j in (i + 1):length(srcs)) {
+    a <- ids[[srcs[i]]]; b <- ids[[srcs[j]]]
+    raw_ov   <- length(intersect(a, b))
+    strip_ov <- length(intersect(strip0(a), strip0(b)))
+    pad_loss <- strip_ov - raw_ov
+    pad_loss_total <- pad_loss_total + pad_loss
+    message(sprintf("  %-10s <-> %-10s : raw=%6d  zero-stripped=%6d  padding-loss=%d%s",
+                    srcs[i], srcs[j], raw_ov, strip_ov, pad_loss,
+                    if (pad_loss > 0L) "  <-- MISMATCH" else ""))
+  }
+}
+# format conformance + coverage (informational, printed for the record)
+fmt_ok <- final_data[!is.na(ted_notice_id) & trimws(ted_notice_id) != "",
+                     .(pct_conform = round(100 * mean(grepl("^[0-9]+-[0-9]{4}$", ted_notice_id)), 2)), by = data_source]
+cov    <- final_data[, .(pct_with_join_key = round(100 * mean(!is.na(ted_notice_id) & trimws(ted_notice_id) != ""), 1)), by = data_source]
+message("  format conformance (^digits-YYYY$):"); print(fmt_ok[order(data_source)])
+message("  coverage (rows with a join key):");    print(cov[order(data_source)])
+if (pad_loss_total == 0L) {
+  message("Passed: ted_notice_id is byte-identical across sources -- joins survive de-identification.")
+} else {
+  message(sprintf("Failed: %d notice(s) differ only by zero-padding across sources -- would fail to join after hashing.", pad_loss_total))
+  failures <- c(failures, sprintf("6b: %d cross-source ted_notice_id padding mismatch(es)", pad_loss_total))
 }
 
 # 7 Informational data-quality metrics -- NON-GATING. Surfaces distributional/coverage signals from the
@@ -385,6 +448,47 @@ tryCatch({
   message(sprintf("  analysis-readiness [winner tender size]: %d of %d dated-winner rows have a lot/tender amount (%.1f%%)",
                   amt_ok, nrow(au), 100 * amt_ok / max(1, nrow(au))))
 }, error = function(e) failures <<- c(failures, paste("analysis-readiness errored:", conditionMessage(e))))
+
+# 9 Viewable diagnostic objects (not pass/fail): built here so a reader can inspect them directly, and
+#   saved to CSV alongside the missingness output. (a) the cross-source notice_id overlap matrix -- how
+#   joinable notice ids are across data sources; (b) the winner/non-winner lot table -- every lot that
+#   carries a non-winner, with its winner + non-winner rows side by side.
+
+# 9a Cross-source notice_id overlap. Drop rows with no notice id first (otherwise every keyless row folds
+#    into a single phantom id = NA), and sort the sources in the label so a combo is not split by row order.
+notice_src <- unique(final_data[!is.na(ted_notice_id) & ted_notice_id != "", .(data_source, id = ted_notice_id)])
+notice_src <- notice_src[, .(in_source = paste(sort(unique(data_source)), collapse = "; "),
+                             n_sources = uniqueN(data_source)), by = id]
+notice_source_overlap <- notice_src[, .(n_notices = .N), by = .(n_sources, in_source)][order(-n_sources, -n_notices)]
+# coverage: the OTHER half of joinability -- how many rows even carry a notice id, per source.
+notice_id_coverage <- final_data[, .(rows = .N,
+                                      pct_with_notice_id = round(100 * mean(!is.na(ted_notice_id) & ted_notice_id != ""), 1),
+                                      distinct_notice_ids = uniqueN(ted_notice_id[!is.na(ted_notice_id) & ted_notice_id != ""])),
+                                  by = data_source][order(data_source)]
+message("\n9a notice_id coverage per source (can a row even join?):")
+print(notice_id_coverage)
+message(sprintf("9a cross-source notice_id overlap (%d of %d id-bearing notices are in >=2 sources, %.1f%%):",
+                notice_src[n_sources >= 2, .N], nrow(notice_src),
+                100 * notice_src[n_sources >= 2, .N] / max(1, nrow(notice_src))))
+print(notice_source_overlap)
+fwrite(notice_source_overlap, file.path(dirs$clean_data, "tender_data_2006_2026_notice_source_overlap.csv"))
+fwrite(notice_id_coverage,    file.path(dirs$clean_data, "tender_data_2006_2026_notice_id_coverage.csv"))
+
+# 9b Winner vs non-winner lots: every (tender_id, lot_id) that carries a non-winner, with its winner and
+#    non-winner rows, ordered winner-first within each lot. NOTE: this keeps dual-role firms in place -- a
+#    firm listed as both winner and non-winner on the same lot appears in both arms (excluded only at
+#    analysis time, e.g. estudy_winner_vs_nonwinner_matched.R).
+final_data[, non_winner_lot := any(entity == "non-winner"), by = .(tender_id, lot_id)]
+winner_nonwinner_lots <- final_data[non_winner_lot == TRUE & entity %chin% c("non-winner", "winner"),
+                                    .(tender_id, lot_id, entity, ted_notice_id, cvr_final,
+                                      tender_amount, lot_amount, award_date, award_publication_date)]
+setorder(winner_nonwinner_lots, tender_id, lot_id, -entity)
+final_data[, non_winner_lot := NULL]   # drop the scratch flag from the delivered object
+message(sprintf("\n9b winner/non-winner lot table: %d rows across %d lots (%d winner, %d non-winner rows); first 6:",
+                nrow(winner_nonwinner_lots), uniqueN(winner_nonwinner_lots[, .(tender_id, lot_id)]),
+                winner_nonwinner_lots[entity == "winner", .N], winner_nonwinner_lots[entity == "non-winner", .N]))
+print(head(winner_nonwinner_lots, 6))
+fwrite(winner_nonwinner_lots, file.path(dirs$clean_data, "tender_data_2006_2026_winner_nonwinner_lots.csv"))
 
 # ---- Summary: stop if any check failed, so 98_ can gate the pipeline ----
 if (length(failures)) {
