@@ -354,6 +354,14 @@ if (!exists("SKIP_TED_RUN")) {
   notice_indicator  <- bind_rows(lapply(chunks_read, `[[`, "summary"))
   non_winners_named <- bind_rows(lapply(chunks_read, `[[`, "named"))
 
+  # Chunk files can overlap across runs, so the same notice appears in several chunks -> dedup to ONE row
+  # per notice_id (preferring a successful fetch) BEFORE the diagnostics and the join. Otherwise the counts
+  # below are ~2x inflated and the left_join onto data_ot fans out (the many-to-many warning).
+  notice_indicator <- notice_indicator |>
+    dplyr::arrange(dplyr::desc(fetch_status == "ok")) |>
+    dplyr::distinct(notice_id, .keep_all = TRUE)
+  non_winners_named <- dplyr::distinct(non_winners_named)
+
   # ── Diagnostics: make failures & schema coverage visible ─────────────────────
 
   notice_indicator$year <- suppressWarnings(as.integer(sub(".*-", "", notice_indicator$notice_id)))
