@@ -34,7 +34,7 @@ onto the tender-lot data in `1_1`/`1_2`.
 **Relationship to the delivery dictionary (`variable_key_expanded.xlsx`).** This file documents the
 **matched-winner analytical schema** (and, via the winner→buyer analogy, the matched buyers). The
 server-facing delivery dictionary — the "Final key" sheet of `variable_key_expanded.xlsx` — instead
-lists the columns of the **combined** dataset (`clean_all_samples_combined`): it adds the combined-only
+lists the columns of the **combined** dataset (`tender_data_2006_2026`): it adds the combined-only
 structural columns (`data_source`, `entity`, `cvr_method`, `cvr_final`) and the
 buyer rows, and it **drops the firm-name and name-matching internals** documented here (`winner_name`,
 `winner_cvr_clean`, the prepared-name forms, `registered_name_match`, `fuzzy_candidate_name_*`, …) for
@@ -366,7 +366,7 @@ non-schema columns are added/renamed:
   simple filter: `build_prod == TRUE` gives the production sample, `build_extr == TRUE` the extraction
   sample. (A CVR produced by both methods on a lot is a single row carrying BOTH flags — the stack is
   unique on `(tender_id, lot_id, CVR)`.) These per-source stacks are intermediates; the delivered
-  `clean_all_samples_combined` collapses the two booleans into the single `cvr_method` categorical
+  `tender_data_2006_2026` collapses the two booleans into the single `cvr_method` categorical
   (`production` / `extraction` / `production; extraction`).
 - `ot_source_file` — OpenTender's native `dataset` column (annual source CSV), renamed so it does not
   collide with the method flag; `NA` for KFST rows.
