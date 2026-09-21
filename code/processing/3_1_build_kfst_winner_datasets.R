@@ -25,7 +25,7 @@ base_raw <- as.data.table(readRDS(file.path(clean_data_dir, "clean_winner_data_k
 # (see match_cache_read/write in functions.R). Empty refresh -> exact skip on identical input, full
 # rebuild on any change. Version ties to the CVR keys' mtime. Disable with MATCH_CACHE=false. Correctness
 # gated by the archive diff (a cache-off run must reproduce the cached output bit-for-bit).
-match_cache_ver  <- paste0("p2-", key_sig(clean_data_dir))  # p2: name_match slice now carries fuzzy_candidate_cvr_2/_score_2
+match_cache_ver  <- paste0("p3-", key_sig(clean_data_dir))  # p3: extraction/name_match slices now carry full lot/notice metadata (build_lot_ctx)
 match_cache_file <- file.path(dirs$intermediates, "match_cache", "stack__kfst_winner.rds")
 match_input      <- copy(base_raw)
 .hit <- match_cache_read(match_input, character(0), character(0), match_cache_file, match_cache_ver)
@@ -45,23 +45,13 @@ production <- unique(copy(base_raw)[!is.na(winner_cvr_final) & winner_cvr_final 
                      by = c("tender_id", "lot_id", "winner_cvr_final"))
 production[, dataset := "production"]
 
-# Lot-level context (shared-schema columns constant within a tender-lot) to attach to the extraction
-# rows. Built from base_raw so every lot has context, even lots whose production winners were all dropped.
-ctx_cols <- intersect(c(
-  "tender_id","lot_id","contract_type","contract_nature","lot_number","n_lots","n_bids_received","n_bidders",
-  "award_date","submit_date","divided_tender","joint_tender","consortium_winner","tender_cancelled",
-  "flag_awarded","tender_amount","tender_amount_eur","tender_amount_dkk","lot_amount","lot_amount_eur",
-  "lot_amount_dkk","lot_amount_orig","flag_all_orig_lot_amt_missing","annualised_tender_amount",
-  "annualised_lot_amount","cpv_code","cpv_code_first","cpv_division","cpv_division_name","cpv_sector",
-  "cpv_category","ted_notice_id","planning_dispatch_date","planning_publication_date",
-  "planning_tender_deadline_date","competition_dispatch_date","competition_publication_date",
-  "competition_tender_deadline_date","award_dispatch_date","award_publication_date",
-  "award_tender_deadline_date","award_contract_date",
-  "procedure_type","procedure_group","procedure_group_h","direct_award","award_criteria","award_criteria_h",
-  "contract_duration_months","contract_duration_months_min","contract_duration_months_max",
-  "is_framework","is_dps","eu_funded","subcontracted","n_award_criteria","price_weight"),
-  names(base_raw))
-lot_ctx <- unique(base_raw[, ..ctx_cols], by = c("tender_id","lot_id"))
+# Lot/notice-level metadata attached to the extraction / name_match slices (production carries it
+# natively). Built from base_raw so every lot has context, even lots whose production winners were all
+# dropped. build_lot_ctx() keeps every column that is constant within a tender-lot and drops
+# entity-identity / per-CVR / per-winner columns (incl. KFST per-winner award_date / consortium
+# members / field-CVR candidates, which stay row-level) -- see its definition in functions.R. Replaces
+# the hand-kept allow-list that silently dropped notice-level fields from the non-production slices.
+lot_ctx <- build_lot_ctx(base_raw, entity = "winner")
 
 # 2 Extraction: every standalone 8-digit CVR in the raw winner field, no matching. lot_field_cvrs() is
 #   the shared functions.R helper (returns distinct tender-lot-CVR triples).
