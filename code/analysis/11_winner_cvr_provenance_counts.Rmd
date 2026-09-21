@@ -140,7 +140,7 @@ matched %>%
 # Entity-agnostic provenance flags (the entity-specific missing-CVR flags differ winner vs buyer, so
 # they are excluded from this pooled table).
 prov_flags <- c("flag_name_match_found", "flag_name_match_ambiguous", "flag_review_name_match",
-                "flag_manual_name_review", "flag_cvr_recovered_from_invalid", "flag_valid_cvr_in_registry")
+                "flag_cvr_recovered_from_invalid", "flag_valid_cvr_in_registry")
 smp %>%
   filter(sample %in% c("production", "name_match")) %>%
   group_by(data_source, entity, sample) %>%
