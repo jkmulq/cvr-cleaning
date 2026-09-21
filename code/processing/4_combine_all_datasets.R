@@ -160,6 +160,21 @@ combined[data_source == "TED" & is.na(award_date) & !is.na(award_contract_date),
          award_date := award_contract_date]
 cat(sprintf("TED award_date fill: %d rows dated from award_contract_date (winners + non-winners)\n", .ted_filled))
 
+# ---- Lot-level award_date / award_end_date recovery ----
+# award_date is genuinely per-winner in ~1.3% of KFST lots, so build_lot_ctx excludes it from stamping
+# entirely (all-or-nothing per column). That leaves name_match-only / extraction-only rows (where production
+# resolved no CVR for that tender-lot-CVR) with NA award_date, even though the lot's date is known from its
+# production/extraction rows. Fill any remaining NA within (data_source, tender_id, lot_id) from the lot's
+# first non-NA value; present dates are NEVER overwritten (so real per-winner dates survive). Exact for
+# single-date lots (98.7% of fills); same-lot-approximate for the ~58 rows on genuinely per-winner lots
+# (0.014% of all rows). award_end_date (award_date + duration) carries the identical gap, so fill both.
+.fill_lot <- function(x) { i <- which(!is.na(x)); if (!length(i)) return(x); x[is.na(x)] <- x[i[1L]]; x }
+.dcols <- intersect(c("award_date", "award_end_date"), names(combined))
+.na_before <- vapply(.dcols, function(c) sum(is.na(combined[[c]])), integer(1))
+combined[, (.dcols) := lapply(.SD, .fill_lot), by = .(data_source, tender_id, lot_id), .SDcols = .dcols]
+for (.c in .dcols) cat(sprintf("%s lot-fill: %d NA -> %d remaining (recovered from same-lot value)\n",
+                               .c, .na_before[[.c]], sum(is.na(combined[[.c]]))))
+
 # ---- Harmonise divided_tender to a clean logical across sources ----
 # KFST/OpenTender arrive as the strings "TRUE"/"FALSE" while TED arrives as "yes"/"no", so the raw column
 # mixes all four. Recode to a proper logical (TRUE = split into lots) so the variable is usable cross-source;
