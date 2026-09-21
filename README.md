@@ -123,7 +123,7 @@ the pipeline table).
 | [code/processing/3_3_build_ot_buyer_datasets.R](code/processing/3_3_build_ot_buyer_datasets.R) | Buyer analogue of `3_2`, **OpenTender only** (KFST buyers carry no source CVR field, so there is nothing to extract): `production` (from `2_4`) + `extraction` (raw CVRs from the buyer field), deduped, with `build_prod` / `build_extr` flags. | `ot_buyer_datasets_stacked.{rds,csv,parquet}`. |
 | [code/processing/3_4_build_ted_winner_datasets.R](code/processing/3_4_build_ted_winner_datasets.R) | TED winner (and non-winner) mirror of `3_1`, pooling all three CVR methods — `production` (from `ted_4`), `extraction` (raw field CVRs), and `name_match` (name→registry, field CVR ignored) — deduped one row per tender-lot-CVR. | `ted_winner_datasets_stacked.{rds,csv,parquet}`. |
 | [code/processing/3_5_build_ted_buyer_datasets.R](code/processing/3_5_build_ted_buyer_datasets.R) | TED buyer analogue of `3_4` (production + extraction + name_match), same dedup. | `ted_buyer_datasets_stacked.{rds,csv,parquet}`. |
-| [code/processing/4_combine_all_datasets.R](code/processing/4_combine_all_datasets.R) | Combines all source samples (KFST/OpenTender/TED × winner/buyer, plus TED non-winners — the concat-and-dedup stacks where they exist, the matched files otherwise) into one long table, **unique on (data_source, entity, tender_id, lot_id, cvr_final)**. Adds a single sample-selection column `cvr_method` (a "; "-joined combination of `production` / `extraction` / `name_match`), standardises CVR columns to `cvr_*`, harmonises country, drops no-CVR rows, and self-checks that each sample round-trips. | `clean_all_samples_combined.{rds,csv,parquet}`. |
+| [code/processing/4_combine_all_datasets.R](code/processing/4_combine_all_datasets.R) | Combines all source samples (KFST/OpenTender/TED × winner/buyer, plus TED non-winners — the concat-and-dedup stacks where they exist, the matched files otherwise) into one long table, **unique on (data_source, entity, tender_id, lot_id, cvr_final)**. Adds a single sample-selection column `cvr_method` (a "; "-joined combination of `production` / `extraction` / `name_match`), standardises CVR columns to `cvr_*`, harmonises country, drops no-CVR rows, and self-checks that each sample round-trips. | `tender_data_2006_2026.{rds,csv,parquet}`. |
 | [code/processing/99_augment_matched_variables.R](code/processing/99_augment_matched_variables.R) | **Maintenance utility — not part of the pipeline** (numbered 99 to signal this). Additive tender/lot-level updates: re-attaches newly created variables from the clean datasets onto the existing `*_name_matched.rds` files without re-running the slow name-matching scripts. Use only when the cleaning changes are add-only and do not alter names, CVRs, or row expansion. | refreshed `*_name_matched.rds` files in place. |
 
 The [code/analysis/](code/analysis) notebooks and helpers run **manually, after matching**:
@@ -375,7 +375,7 @@ to refresh existing matched datasets without re-running the buyer-matching
 steps. It is only valid when those processing changes are additive.
 
 Outputs are written to `data/clean/` (the final matched datasets, the
-concat-and-dedup stacks, and the all-in-one `clean_all_samples_combined.*`
+concat-and-dedup stacks, and the all-in-one `tender_data_2006_2026.*`
 master table) with TED intermediates under `data/intermediates/ted/`.
 
 Expected run time depends on the machine. The figures below are a complete
@@ -433,7 +433,7 @@ RUN_MATCHING=false ./run_replication.sh
 
 The TED/XML winner/buyer chain (`ted_1`–`ted_5`) and the dataset combine
 (`4_combine_all_datasets.R`) are **standard** steps: a default `./run_replication.sh`
-builds the TED matched datasets and the combined `clean_all_samples_combined.*` file with
+builds the TED matched datasets and the combined `tender_data_2006_2026.*` file with
 no flag. The first run needs internet to fetch the notice XML; it is cached to the
 data root and reused offline on later runs.
 
@@ -525,7 +525,7 @@ definitions.
 All-in-one combined data (all six samples, built by `4_combine_all_datasets.R`):
 
 ```text
-clean_all_samples_combined.{rds,csv,parquet}
+tender_data_2006_2026.{rds,csv,parquet}
 ```
 
 One long table row-binding the six matched samples (KFST/OpenTender/TED ×
@@ -552,7 +552,7 @@ re-knit from Parquet and verified table-for-table identical to the `.rds` knit.
 
 #### The samples and how to reconstruct each
 
-`clean_all_samples_combined` is the master table; every row is one resolved-CVR record, **unique on
+`tender_data_2006_2026` is the master table; every row is one resolved-CVR record, **unique on
 (data_source, entity, tender_id, lot_id, cvr_final)**. `entity` is one of `winner`, `buyer`, or
 `non-winner` (TED losing bidders). `is_winner` marks TED's awarded winners (`TRUE`) vs its non-winning
 bidders (`FALSE`); it is `NA` for KFST/OpenTender and for all buyers.
@@ -643,7 +643,7 @@ rows with no resolved CVR are dropped (they remain in the `*_name_matched.rds`
 files). Two logical flags `build_prod` / `build_extr` rebuild each sample
 **exactly** by a filter (`build_prod == TRUE` for production, `build_extr == TRUE`
 for extraction). These per-source stacks are intermediates; the delivered
-`clean_all_samples_combined` collapses the two booleans into the single `cvr_method`
+`tender_data_2006_2026` collapses the two booleans into the single `cvr_method`
 categorical (a "; "-joined combination of `production` / `extraction` / `name_match`). Columns are the **union** of the sources' analytical + provenance
 fields (raw source dumps dropped); the two winner stacks share one schema, and
 `ot_source_file` carries OpenTender's renamed source-CSV column. The buyer stack is
