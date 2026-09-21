@@ -28,7 +28,7 @@ setDT(buyer_data)
 # unchanged input+panel is an exact skip, any change re-matches. Disable with MATCH_CACHE=false.
 .panel_f <- file.path(ted_dir, "ted_notice_dates.rds")
 .panel_h <- if (file.exists(.panel_f)) substr(rlang::hash(readRDS(.panel_f)), 1, 12) else "nopanel"
-match_cache_ver    <- paste0("p1-", key_sig(clean_data_dir), "-", .panel_h)
+match_cache_ver    <- paste0("p2-", key_sig(clean_data_dir), "-", .panel_h)  # p2: schema gained tender/lot_amount_estimated/final
 match_cache_file   <- file.path(dirs$intermediates, "match_cache", "whole__ted_buyer.rds")
 match_refresh_cols <- character(0)
 match_grain        <- character(0)
