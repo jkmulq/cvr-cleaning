@@ -310,12 +310,11 @@ if ("contract_duration_months" %in% names(combined)) {
 keep_cols <- c(
   "data_source", "entity", "cvr_method", "build_prod", "build_extr", "build_name_match", "tender_id", "lot_id", "cvr_final",
   "is_awarded_winner", "cvr_number_source", "ot_source_file", "consortium_flag",
-  "semi_tier", "registry_score", "is_consortium", "type",
+  "semi_tier", "registry_score", "type",
   "contract_type", "n_lots", "n_lots_announced",
-  "n_lot_winners", "tender_amount", "lot_amount", "tender_amount_eur",
-  "tender_amount_dkk", "lot_amount_eur", "lot_amount_dkk", "lot_amount_orig",
+  "n_lot_winners", "tender_amount", "lot_amount",
   "flag_all_orig_lot_amt_missing", "n_bidders", "pub_date", "award_date",
-  "submit_date", "divided_tender", "joint_tender", "consortium_winner",
+  "submit_date", "divided_tender", "joint_tender",
   "cpv_code", "cpv_code_first", "cpv_division", "cpv_division_name", "cpv_sector", "cpv_category",
   "tender_cancelled", "tender_status", "flag_awarded", "flag_nature_cpv_mismatch",
   "contract_duration_months_min", "contract_duration_months_max", "award_end_date", "annualised_tender_amount",
@@ -336,7 +335,7 @@ keep_cols <- c(
   "cvr_name_match_quality", "cvr_name_match_quality_basic", "cvr_name_match_quality_nospaces", "cvr_name_match_quality_broad",
   "cvr_name_is_substring", "row_id", "source", "cvr_recovered_from_formatting",
   "n_valid_cvr_raw", "flag_row_multiple_valid_cvr", "flag_cvr_recovered_from_formatting", "flag_cvr_placeholder",
-  "tender_amount_orig", "flag_lot_amt_equal_split", "flag_framework_prequalified", "name_partition_status",
+  "flag_lot_amt_equal_split", "flag_framework_prequalified", "name_partition_status",
   "name_partition_n_boundaries", "name_partition_n_legal_forms", "flag_name_partition_eligible", "name_partition_eligibility_reason",
   "name_partition_n_complete", "name_partition_n_firms", "flag_potential_multiple_names", "flag_joint_venture_text",
   "flag_consortium_text", "flag_collaboration_text", "flag_name_partition_expanded", "flag_separated_name",
@@ -351,17 +350,12 @@ keep_cols <- c(
   "is_dps", "direct_award", "date_receipt_tenders", "date_contract_award",
   "date_award_dispatch", "date_award_publication", "buyer_type", "buyer_activity",
   "eu_funded", "award_criteria", "price_weight", "n_tenders_sme",
-  "subcontracted", "contract_duration_days", "winner_is_sme", "winner_amount_raw",
-  "amount_awarded_raw", "amount_estimated_raw", "tender_amount_raw", "lot_amount_raw",
-  "lot_amount_orig_raw", "tender_amount_eur_raw", "tender_amount_dkk_raw", "lot_amount_eur_raw",
-  "lot_amount_dkk_raw", "buyer_amount"
+  "subcontracted", "contract_duration_days", "winner_is_sme", "buyer_amount"
 )
 # ---- Final harmonisation and variable consolidation: renames, added columns, and drops on the allowlist ----
 keep_cols[keep_cols == "flag_cvr_final_in_registry"] <- "flag_valid_cvr_in_registry"
 keep_cols[keep_cols == "type"]                       <- "kfst_consortium_split_method"
 keep_cols[keep_cols == "valid_cvr"]                  <- "valid_cvr_before_match"
-keep_cols <- c(keep_cols, "annualised_tender_amount_eur", "annualised_tender_amount_dkk",
-               "annualised_lot_amount_eur", "annualised_lot_amount_dkk")
 # Harmonised procedure / award-criteria / duration columns derived in the source scripts
 # (1_1, 1_2, ted_3): the cross-source group + criteria categories, the months duration, and
 # OpenTender's award-criteria count. The source-specific originals stay alongside them.
