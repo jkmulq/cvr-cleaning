@@ -281,12 +281,12 @@ cat(sprintf("uniqueness collapse: %d -> %d rows (removed %d duplicate (source,en
 # Annualise amounts for ALL contract types (not just frameworks), standardised on the harmonised
 # contract_duration_months (= KFST mean(min,max) / OT native months / TED days/30.44): per-year value =
 # amount / contract_duration_months * 12, for any row with a positive duration. This OVERRIDES the old
-# per-source framework-only, day-vs-month annualisation (single source of truth here). Each currency variant
-# (original / _eur / _dkk) is annualised from its own amount column; rows with no positive duration -> NA.
+# per-source framework-only, day-vs-month annualisation (single source of truth here). Annualised from the
+# native amount only (the _eur/_dkk twins are not carried to the final); rows with no positive duration -> NA.
 if ("contract_duration_months" %in% names(combined)) {
   dm <- suppressWarnings(as.numeric(combined[["contract_duration_months"]]))
   ok <- !is.na(dm) & dm > 0
-  for (a in c("tender", "lot")) for (suff in c("", "_eur", "_dkk")) {
+  for (a in c("tender", "lot")) for (suff in c("")) {
     src <- paste0(a, "_amount", suff); tgt <- paste0("annualised_", a, "_amount", suff)
     if (src %in% names(combined)) {
       v <- rep(NA_real_, nrow(combined))
@@ -313,6 +313,7 @@ keep_cols <- c(
   "semi_tier", "registry_score", "type",
   "contract_type", "n_lots", "n_lots_announced",
   "n_lot_winners", "tender_amount", "lot_amount",
+  "tender_amount_estimated", "tender_amount_final", "lot_amount_estimated", "lot_amount_final",
   "flag_all_orig_lot_amt_missing", "n_bidders", "pub_date", "award_date",
   "submit_date", "divided_tender", "joint_tender",
   "cpv_code", "cpv_code_first", "cpv_division", "cpv_division_name", "cpv_sector", "cpv_category",
@@ -400,10 +401,10 @@ ord_select <- c("cvr_method", "build_prod", "build_extr", "build_name_match", "i
 ord_tender <- c(
   "contract_type", "contract_nature", "n_lots", "n_lots_announced", "n_lot_winners",
   "n_bidders", "n_tenders_received", "n_tenders_sme", "n_winners_extracted", "n_buyers_extracted", "n_buyers_listed_original",
-  "tender_amount", "lot_amount", "tender_amount_eur", "tender_amount_dkk", "lot_amount_eur", "lot_amount_dkk",
+  "tender_amount", "lot_amount",
+  "tender_amount_estimated", "tender_amount_final", "lot_amount_estimated", "lot_amount_final",
   "lot_amount_orig", "tender_amount_orig",
-  "annualised_tender_amount", "annualised_tender_amount_eur", "annualised_tender_amount_dkk",
-  "annualised_lot_amount", "annualised_lot_amount_eur", "annualised_lot_amount_dkk",
+  "annualised_tender_amount", "annualised_lot_amount",
   "winner_amount", "buyer_amount", "amount_awarded", "amount_estimated", "lot_estimated_value", "lot_awarded_value", "currency",
   "pub_date", "award_date", "submit_date", "award_end_date", "award_contract_date",
   "planning_dispatch_date", "planning_publication_date", "planning_tender_deadline_date",

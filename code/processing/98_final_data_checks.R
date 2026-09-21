@@ -98,12 +98,13 @@ tryCatch({
 #   The winner, buyer (and TED non-winner) rows of one lot all inherit the tender/lot context, so every
 #   tender-level column must hold ONE value per (data_source, tender_id, lot_id) -- e.g. tender_amount
 #   must be identical on a lot's winner and buyer rows. Flag any that carry >1 distinct non-NA value.
-#   NOTE: the lot_amount family is deliberately EXCLUDED -- lot_amount is a per-firm value (the
-#   OpenTender demand shock; and per-award for TED), so it legitimately varies within a lot. Only the
-#   tender-level amount (tender_amount + its EUR/DKK/annualised twins) is expected to be lot-constant.
+#   NOTE: the per-firm lot values are deliberately EXCLUDED -- lot_amount (and lot_amount_final, which for
+#   OpenTender is the per-firm winning bid) legitimately varies within a lot (the OT demand shock; per-award
+#   for TED). Lot-CONSTANT amounts ARE checked: the tender-level amount (tender_amount + tender_amount_
+#   estimated/final + annualised twin) and lot_amount_estimated (the lot's advertised estimate, one per lot).
 tender_level_cols <- c(
-  "tender_amount", "tender_amount_eur", "tender_amount_dkk", "tender_amount_orig",
-  "annualised_tender_amount", "annualised_tender_amount_eur", "annualised_tender_amount_dkk",
+  "tender_amount", "tender_amount_estimated", "tender_amount_final", "lot_amount_estimated", "tender_amount_orig",
+  "annualised_tender_amount",
   "contract_type", "contract_nature", "is_framework", "is_dps", "eu_funded",
   "procedure_type", "procedure_group", "procedure_group_h", "award_criteria", "award_criteria_h",
   "n_award_criteria", "price_weight",

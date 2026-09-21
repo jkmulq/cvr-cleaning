@@ -232,7 +232,15 @@ data <- data %>%
     lot_amount = coalesce(
       as.numeric(final_lot_amount),
       as.numeric(estimated_lot_amount)
-    )
+    ),
+    # Raw ex-ante (estimated, from the contract notice) and ex-post (final, from the
+    # award notice) values, kept separate alongside the coalesced amount above. NO
+    # imputation/fill applied (unlike tender_amount/lot_amount) so the estimate-vs-final
+    # gap is clean. KFST native currency = DKK. (Codebook vars 30-33.)
+    tender_amount_estimated = as.numeric(estimated_tender_amount),
+    tender_amount_final     = as.numeric(final_tender_amount),
+    lot_amount_estimated    = as.numeric(estimated_lot_amount),
+    lot_amount_final        = as.numeric(final_lot_amount)
   )
 
 ## Fill missing amounts
@@ -464,6 +472,7 @@ tender_lot_data <- data %>%
     "tender_id", "lot_id", "contract_type", "lot_number", "buyer_name",
     "n_lots", "n_lots_contracted", "n_lot_winners", "n_bids_received",
     "tender_amount", "lot_amount",
+    "tender_amount_estimated", "tender_amount_final", "lot_amount_estimated", "lot_amount_final",
     "tender_amount_eur", "tender_amount_dkk", "lot_amount_eur", "lot_amount_dkk",
     "lot_amount_orig", "flag_all_orig_lot_amt_missing",
     "n_bidders",
@@ -1198,6 +1207,8 @@ clean_buyer_data <- clean_buyer_data %>%
 # Check that amount fields (incl. the EUR/DKK versions carried through the joins)
 # are present in both saved KFST outputs.
 required_amount_cols <- c("tender_amount", "lot_amount",
+                          "tender_amount_estimated", "tender_amount_final",
+                          "lot_amount_estimated", "lot_amount_final",
                           "tender_amount_eur", "tender_amount_dkk",
                           "lot_amount_eur", "lot_amount_dkk")
 stopifnot(all(required_amount_cols %in% names(clean_winner_data)))

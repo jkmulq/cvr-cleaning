@@ -148,7 +148,15 @@ data <- data %>%
       parse_number(bid_price_EUR),
       parse_number(lot_estimatedPrice_EUR)
     ),
-    bid_amount = parse_number(bid_price_EUR)
+    bid_amount = parse_number(bid_price_EUR),
+    # Raw ex-ante (estimated) and ex-post (final/awarded) values, kept separate from the
+    # coalesced amounts above and with NO imputation/fill, so the estimate-vs-final gap is
+    # clean. OT native currency = EUR. lot "final" = the winning bid price (per-firm, = bid_amount);
+    # lot "estimated" = the lot's advertised estimate.
+    tender_amount_estimated = parse_number(tender_estimatedPrice_EUR),
+    tender_amount_final     = parse_number(tender_finalPrice_EUR),
+    lot_amount_estimated    = parse_number(lot_estimatedPrice_EUR),
+    lot_amount_final        = parse_number(bid_price_EUR)
   )
 
 ## Number of bidders
@@ -833,6 +841,7 @@ clean_winner_data <- clean_winner_data %>%
       "flag_no_winner_info", "flag_verify_cvr_external",
       "n_bids_received", "flag_single_bidder",
       "tender_amount", "lot_amount", "bid_amount",
+      "tender_amount_estimated", "tender_amount_final", "lot_amount_estimated", "lot_amount_final",
       "n_lots", "flag_multilot", "tender_cancelled", "flag_cancelled",
       "buyer_name", "buyer_cvr_original"
     )),
@@ -1282,6 +1291,8 @@ clean_buyer_data <- clean_buyer_data %>%
 # Check that amount fields (incl. the EUR/DKK versions carried through the joins)
 # are present in both saved OpenTender outputs.
 required_amount_cols <- c("tender_amount", "lot_amount", "bid_amount",
+                          "tender_amount_estimated", "tender_amount_final",
+                          "lot_amount_estimated", "lot_amount_final",
                           "tender_amount_eur", "tender_amount_dkk",
                           "lot_amount_eur", "lot_amount_dkk")
 stopifnot(all(required_amount_cols %in% names(clean_winner_data)))

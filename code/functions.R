@@ -845,6 +845,49 @@ levenshtein_ratio <- function(value, candidates, pairwise = FALSE) {
   100 * (total_length - distance) / total_length
 }
 
+# Lot/notice-level context (one row per tender-lot) to attach to the extraction / name_match method
+# slices in the 3_* stack builders. The production slice carries every column natively; extraction and
+# name_match are built slim and get the shared context via this table. Returns every column that is
+# genuinely CONSTANT within a (tender_id, lot_id) -- i.e. true lot/notice metadata -- taking the first
+# NON-NA value per lot (metadata may sit on any row of the lot, e.g. TED currency only on the awarded row).
+#
+# Column selection is by EXCLUSION, not a hand-kept allow-list (which repeatedly, silently dropped
+# notice-level fields -- schema/cpv_main/currency/buyer_type -- from the non-production slices):
+#   1. Drop entity-identity / resolved-CVR / name-match-diagnostic / per-CVR-flag columns BY NAME -- each
+#      slice sets these itself, and merging them would collide. For buyers, buyer_type/buyer_activity/
+#      buyer_nuts are lot-level notice metadata (the contracting authority), so only buyer identity
+#      (cvr/name/number/country/firm_type) is name-excluded.
+#   2. Of the rest, keep ONLY columns that are single-valued within every tender-lot. This drops
+#      source-specific per-winner/per-firm fields a name list would miss (KFST per-winner award_date /
+#      consortium members / field-CVR candidates; OT per-firm lot_amount / bid_* / bidder_*), which must
+#      stay row-level rather than be broadcast to every slice.
+# `verbose` lists the within-lot-varying columns that were kept row-level, so a genuinely-lot-level field
+# that slips into the varying set (a real regression) is visible in the run log.
+build_lot_ctx <- function(base_raw, entity = c("winner", "buyer"), verbose = TRUE) {
+  entity <- match.arg(entity)
+  stopifnot(is.data.table(base_raw), all(c("tender_id", "lot_id") %in% names(base_raw)))
+  ident <- if (entity == "winner") grep("^winner_", names(base_raw), value = TRUE)
+           else grep("^buyer_(cvr|name|number|country|firm_type)", names(base_raw), value = TRUE)
+  party <- unique(c(ident,
+    grep("^cvr_|^name_match|^fuzzy_candidate_|^registered_name", names(base_raw), value = TRUE),
+    "is_winner", "is_awarded_winner", "valid_cvr", "valid_cvr_before_match", "winner_number", "buyer_number",
+    "winner_cvr_final", "buyer_cvr_final", "cvr_number_source", "dataset", "matching_candidate_type",
+    "broad_first_letter", "first_letter"))
+  cand <- setdiff(names(base_raw), c("tender_id", "lot_id", party))
+  const_ok <- function(x) { v <- if (is.character(x)) x[!is.na(x) & x != ""] else x[!is.na(x)]; uniqueN(v) <= 1L }
+  is_const <- base_raw[, lapply(.SD, const_ok), by = c("tender_id", "lot_id"), .SDcols = cand]
+  lot_cols <- cand[vapply(is_const[, ..cand], all, logical(1))]
+  if (verbose) {
+    dropped <- setdiff(cand, lot_cols)
+    if (length(dropped))
+      message(sprintf("build_lot_ctx(%s): %d within-lot-varying column(s) kept row-level (not broadcast): %s",
+                      entity, length(dropped), paste(dropped, collapse = ", ")))
+  }
+  first_present <- function(x) { i <- which(if (is.character(x)) !is.na(x) & x != "" else !is.na(x))[1L]
+                                 if (is.na(i)) x[1L] else x[i] }
+  base_raw[, lapply(.SD, first_present), by = c("tender_id", "lot_id"), .SDcols = lot_cols]
+}
+
 # Content-based fingerprint of the CVR key files, for cache versioning. Uses file SIZE (content-derived,
 # stable) rather than mtime -- mtime flaps on Box CloudStorage re-syncs, which silently changed the cache
 # version between runs and caused spurious misses. A key rebuild changes the size -> the cache invalidates.

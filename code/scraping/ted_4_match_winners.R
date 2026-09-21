@@ -344,6 +344,14 @@ winner_data[, `:=`(
   n_bidders              = suppressWarnings(as.numeric(n_tenders_received)),
   tender_amount          = as.numeric(amount_awarded),
   lot_amount             = as.numeric(lot_awarded_value),
+  # Raw ex-ante (estimated, from the notice) and ex-post (final/awarded) values, kept
+  # separate from tender_amount/lot_amount and with NO imputation/fill. TED native
+  # currency (the notice's own currency; not converted). TED never coalesces the
+  # estimate into the delivered amount, so tender/lot_amount_estimated is new information.
+  tender_amount_estimated = as.numeric(amount_estimated),
+  tender_amount_final     = as.numeric(amount_awarded),
+  lot_amount_estimated    = as.numeric(lot_estimated_value),
+  lot_amount_final        = as.numeric(lot_awarded_value),
   divided_tender         = fifelse(fcoalesce(n_lots > 1L, FALSE), "yes", "no"),
   consortium_winner      = NA_character_,   # TED splits consortia into rows; no source flag (see flag_consortium)
   tender_cancelled       = FALSE,           # winner rows come from AWARDED_CONTRACT lots only
