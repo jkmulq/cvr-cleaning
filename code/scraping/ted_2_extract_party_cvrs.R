@@ -310,6 +310,23 @@ nz1 <- function(x) { x <- x[!is.na(x) & x != ""]; if (length(x)) x[1] else NA_ch
 # double NA (data.table requires one type across groups).
 sum_or_na <- function(x) if (all(is.na(x))) NA_real_ else as.numeric(sum(x, na.rm = TRUE))
 
+# Coalesce a notice-level currency label from the most specific monetary node down to
+# the least. Many DK award notices publish no *awarded* total but still carry the
+# currency on the estimated / lot / party amount, so reading only the awarded total
+# (the old behaviour) dropped the currency for a large share of notices. `attr` is the
+# schema's currency attribute name -- eForms uses lowercase `currencyID`, legacy
+# TED_EXPORT uses uppercase `CURRENCY`. Tries each xpath in order, then falls back to
+# the most common currency-bearing attribute anywhere in the notice.
+coalesce_currency <- function(xml, attr, xpaths, ns = xml2::xml_ns(xml)) {
+  for (xp in xpaths) {
+    n <- xml_find_first(xml, xp, ns)
+    if (inherits(n, "xml_node")) { v <- xml_attr(n, attr); if (!is.na(v) && v != "") return(v) }
+  }
+  a <- xml_attr(xml_find_all(xml, sprintf("//*[@%s]", attr)), attr)
+  a <- a[!is.na(a) & a != ""]
+  if (length(a)) names(sort(table(a), decreasing = TRUE))[1] else NA_character_
+}
+
 # ── eForms notice + lot metadata: values, CPV, contract nature, tenders ────────
 parse_eforms_meta <- function(xml, notice_id) {
   amt_node <- xml_find_first(xml, "//efac:NoticeResult/cbc:TotalAmount", ns)
@@ -345,6 +362,14 @@ parse_eforms_meta <- function(xml, notice_id) {
     }), fill = TRUE)[!is.na(lot), .(n_tenders_received = sum_or_na(n_tenders_received)), by = lot]
     lot_dt <- merge(lot_dt, lrt, by = "lot", all.x = TRUE)
   } else if (nrow(lot_dt)) lot_dt[, n_tenders_received := NA_integer_]
+
+  # Currency: prefer the awarded total, else fall back to the estimated / lot / party
+  # amount currency (see coalesce_currency) -- otherwise notices with no published
+  # award value lose their currency label even though it is present in the XML.
+  if (is.na(currency) || currency == "")
+    currency <- coalesce_currency(xml, "currencyID",
+      c("//efac:NoticeResult/cbc:TotalAmount", "//cbc:EstimatedOverallContractAmount",
+        "//cac:LegalMonetaryTotal/cbc:PayableAmount", "//cbc:PayableAmount"), ns)
 
   meta <- meta_row(notice_id, amount_awarded,
                    if (nrow(lot_dt)) sum_or_na(lot_dt$lot_estimated_value) else NA_real_, currency,
@@ -413,6 +438,15 @@ parse_legacy_meta <- function(xml, notice_id) {
       currency = if (inherits(vtl, "xml_node")) xml_attr(vtl, "CURRENCY") else currency,
       n_tenders_received = suppressWarnings(as.integer(ln1(a, "NB_TENDERS_RECEIVED"))))
   }), fill = TRUE) else data.table()
+
+  # Currency: prefer the awarded total, else the estimated total, then any lot value,
+  # then any currency-bearing attribute in the notice (see coalesce_currency). Legacy
+  # notices frequently omit an awarded VAL_TOTAL but still carry CURRENCY on the
+  # estimated / object value.
+  if (is.na(currency) || currency == "")
+    currency <- coalesce_currency(xml, "CURRENCY",
+      c("//*[local-name()='VALUE'][@TYPE='PROCUREMENT_TOTAL']", "//*[local-name()='VAL_TOTAL']",
+        "//*[local-name()='VAL_ESTIMATED_TOTAL']", "//*[local-name()='VAL_OBJECT']"))
 
   meta <- meta_row(notice_id, amount_awarded, amount_estimated, currency, cpv_main,
                    contract_type, n_tenders, if (length(ac)) length(ac) else NA_integer_)
