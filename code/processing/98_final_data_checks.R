@@ -60,11 +60,13 @@ cat(sprintf("Missingness: %d rows (%d variables x %d source-entity pairs) -> %s\
             nrow(missingness), uniqueN(missingness$variable), nrow(grp_n), out_csv))
 cat("Rows per (data_source, entity):\n"); print(grp_n[order(data_source, entity)])
 
-# 2b Availability sheets in the variable key (programmatic) -- ONE WIDE sheet PER METHOD (production /
-#    extraction / name_match), so coverage is comparable both across (data_source, entity) combos and across
-#    methods (e.g. to see name_match thinness). WIDE: variables as rows, one availability% column per
-#    (data_source, entity); availability% = 100 - missing% (1 d.p.); first row __n_rows__ = each combo's
-#    denominator. Regenerated every run; non-gating (tryCatch) so a write failure can't fail the data checks.
+# 2b Availability sheets -> the SEPARATE data_availability.xlsx workbook (internal reference only; NOT
+#    ingested). variable_key.xlsx is now definitions-only, so availability lives in its own file. ONE WIDE
+#    sheet PER METHOD (production / extraction / name_match), so coverage is comparable both across
+#    (data_source, entity) combos and across methods (e.g. to see name_match thinness). WIDE: variables as
+#    rows, one availability% column per (data_source, entity); availability% = 100 - missing% (1 d.p.);
+#    first row __n_rows__ = each combo's denominator. Regenerated every run; non-gating (tryCatch) so a
+#    write failure can't fail the data checks.
 avail_wide_for <- function(dt) {
   vc <- setdiff(names(dt), c("data_source", "entity"))
   gn <- dt[, .(n_rows = .N), by = .(data_source, entity)]
@@ -78,20 +80,18 @@ avail_wide_for <- function(dt) {
               variable ~ data_source + entity, value.var = "v")
   rbindlist(list(nw, aw), use.names = TRUE, fill = TRUE)
 }
-vk_path <- file.path(dirs$data, "variable_key.xlsx")
+avail_path <- file.path(dirs$data, "data_availability.xlsx")
 tryCatch({
-  wb <- openxlsx::loadWorkbook(vk_path)
-  if ("Availability" %in% openxlsx::sheets(wb)) openxlsx::removeWorksheet(wb, "Availability")  # drop old combined sheet
+  wb <- openxlsx::createWorkbook()                       # fresh workbook -- availability is its own file now
   for (mth in c("production", "extraction", "name_match")) {
     sub   <- final_data[grepl(mth, cvr_method)]
     sheet <- paste0("Availability_", mth)
-    if (sheet %in% openxlsx::sheets(wb)) openxlsx::removeWorksheet(wb, sheet)
     openxlsx::addWorksheet(wb, sheet)
     openxlsx::writeData(wb, sheet, if (nrow(sub)) avail_wide_for(sub) else data.table(note = "no rows for this method"))
     cat(sprintf("  %-24s %d rows\n", sheet, sub[, .N]))
   }
-  openxlsx::saveWorkbook(wb, vk_path, overwrite = TRUE)
-  cat("Availability_{production,extraction,name_match} sheets written to", basename(vk_path), "\n")
+  openxlsx::saveWorkbook(wb, avail_path, overwrite = TRUE)
+  cat("Availability_{production,extraction,name_match} sheets written to", basename(avail_path), "\n")
 }, error = function(e) message("WARNING: could not write Availability sheets: ", conditionMessage(e)))
 
 # 3 Tender/lot-level agreement across entities.
@@ -108,6 +108,7 @@ tender_level_cols <- c(
   "procedure_type", "procedure_group", "procedure_group_h", "award_criteria", "award_criteria_h",
   "n_award_criteria", "price_weight",
   "cpv_code", "cpv_code_first", "cpv_division", "cpv_division_name", "cpv_sector", "cpv_category", "cpv_main",
+  "currency", "schema", "buyer_type",   # notice-level: source currency label, TED schema era, buyer legal type
   "n_lots", "n_lots_announced", "n_lots_awarded", "n_lot_winners", "divided_tender", "joint_tender",
   "tender_cancelled", "tender_status", "flag_awarded",
   "pub_date", "award_date", "submit_date", "award_end_date", "award_contract_date",
