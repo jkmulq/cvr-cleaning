@@ -1216,8 +1216,12 @@ clean_winner_data <- clean_winner_data %>%
     n_lots          = as.integer(n_lots),
     submit_date     = as.Date(substr(as.character(submit_date), 1, 10)),
     winner_number   = as.integer(winner_number),
-    flag_consortium = (!is.na(is_consortium) & is_consortium) |
-                      (!is.na(consortium_winner) & grepl("Ja", consortium_winner))
+    # Per-winner (positional): is_consortium already encodes THIS split-out winner's own consortium
+    # status -- built from the positionally-split consortium_flag ("ja") OR >=2 field CVRs (see the
+    # winner-split tiers above). The previous raw-string grepl on consortium_winner over-flagged
+    # multi-winner rows: consortium_winner is the UN-split "Ja;Nej;..." string carried onto every
+    # winner, so grepl fired on non-consortium members too (381 false positives). Use is_consortium.
+    flag_consortium = !is.na(is_consortium) & is_consortium
   )
 clean_buyer_data <- clean_buyer_data %>%
   mutate(
