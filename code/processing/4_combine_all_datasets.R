@@ -175,6 +175,18 @@ combined[, (.dcols) := lapply(.SD, .fill_lot), by = .(data_source, tender_id, lo
 for (.c in .dcols) cat(sprintf("%s lot-fill: %d NA -> %d remaining (recovered from same-lot value)\n",
                                .c, .na_before[[.c]], sum(is.na(combined[[.c]]))))
 
+# ---- TED: coalesce headline amounts to the estimated value (parity with KFST/OpenTender) ----
+# KFST/OpenTender set tender_amount/lot_amount = coalesce(final, estimated) in 1_1/1_2. TED historically used
+# the awarded value ONLY, so a notice that published only an estimate (no awarded total) came out NA. Fall
+# back to the estimated value (already carried in *_estimated) so the amount DEFINITION is uniform across all
+# three sources. Placed before annualisation so annualised_* uses the coalesced amount. TED-only (a no-op for
+# KFST/OpenTender, whose amounts already coalesce the estimate in), applied explicitly to keep it surgical.
+.ted_ta <- combined[data_source == "TED" & is.na(tender_amount) & !is.na(tender_amount_estimated), .N]
+.ted_la <- combined[data_source == "TED" & is.na(lot_amount)    & !is.na(lot_amount_estimated),    .N]
+combined[data_source == "TED", tender_amount := fcoalesce(tender_amount, tender_amount_estimated)]
+combined[data_source == "TED", lot_amount    := fcoalesce(lot_amount,    lot_amount_estimated)]
+cat(sprintf("TED amount coalesce: tender_amount +%d, lot_amount +%d rows filled from estimated\n", .ted_ta, .ted_la))
+
 # ---- Harmonise divided_tender to a clean logical across sources ----
 # KFST/OpenTender arrive as the strings "TRUE"/"FALSE" while TED arrives as "yes"/"no", so the raw column
 # mixes all four. Recode to a proper logical (TRUE = split into lots) so the variable is usable cross-source;
