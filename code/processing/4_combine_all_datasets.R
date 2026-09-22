@@ -181,11 +181,21 @@ for (.c in .dcols) cat(sprintf("%s lot-fill: %d NA -> %d remaining (recovered fr
 # back to the estimated value (already carried in *_estimated) so the amount DEFINITION is uniform across all
 # three sources. Placed before annualisation so annualised_* uses the coalesced amount. TED-only (a no-op for
 # KFST/OpenTender, whose amounts already coalesce the estimate in), applied explicitly to keep it surgical.
-.ted_ta <- combined[data_source == "TED" & is.na(tender_amount) & !is.na(tender_amount_estimated), .N]
-.ted_la <- combined[data_source == "TED" & is.na(lot_amount)    & !is.na(lot_amount_estimated),    .N]
-combined[data_source == "TED", tender_amount := fcoalesce(tender_amount, tender_amount_estimated)]
-combined[data_source == "TED", lot_amount    := fcoalesce(lot_amount,    lot_amount_estimated)]
-cat(sprintf("TED amount coalesce: tender_amount +%d, lot_amount +%d rows filled from estimated\n", .ted_ta, .ted_la))
+# Done at the LOT level: fall back to the estimated value ONLY where the WHOLE (tender_id, lot_id) has no
+# awarded-derived amount. A row-wise fcoalesce would fill cross-entity NA rows (e.g. a buyer row NA while the
+# winner row carries a sum-filled amount) with the estimate, creating two values in one lot and breaking the
+# tender-level lot-constancy that 98 check-3 enforces. This mirrors KFST/OpenTender, which coalesce once at
+# the tender level (in 1_1/1_2) before the amount is stamped onto entity rows.
+.ted_coal <- function(amt, est) {
+  if (all(is.na(amt))) { e <- est[!is.na(est)][1L]; if (is.na(e)) amt else rep(e, length(amt)) } else amt
+}
+.ta0 <- combined[data_source == "TED" & is.na(tender_amount), .N]
+.la0 <- combined[data_source == "TED" & is.na(lot_amount),    .N]
+combined[data_source == "TED", tender_amount := .ted_coal(tender_amount, tender_amount_estimated), by = .(tender_id, lot_id)]
+combined[data_source == "TED", lot_amount    := .ted_coal(lot_amount,    lot_amount_estimated),    by = .(tender_id, lot_id)]
+cat(sprintf("TED amount coalesce (lot-level, estimated fallback for wholly-missing lots): tender_amount %d->%d NA, lot_amount %d->%d NA\n",
+            .ta0, combined[data_source=="TED" & is.na(tender_amount), .N],
+            .la0, combined[data_source=="TED" & is.na(lot_amount), .N]))
 
 # ---- Harmonise divided_tender to a clean logical across sources ----
 # KFST/OpenTender arrive as the strings "TRUE"/"FALSE" while TED arrives as "yes"/"no", so the raw column
