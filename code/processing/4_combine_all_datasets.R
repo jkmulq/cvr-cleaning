@@ -496,6 +496,7 @@ save_dataset(combined, file.path(out_dir, "tender_data_2006_2026"))
 message(sprintf("tender_data_2006_2026: %d rows, %d cols", nrow(combined), ncol(combined)))
 print(combined[, .(rows = .N,
                    production = sum(grepl("production", cvr_method)),
-                   extraction = sum(grepl("extraction", cvr_method))),
+                   extraction = sum(grepl("extraction", cvr_method)),
+                   name_match = sum(grepl("name_match", cvr_method))),
                by = .(data_source, entity)][order(data_source, entity)])
 message("Written to ", out_dir)
