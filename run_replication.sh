@@ -18,7 +18,13 @@ BUILD_EMPLOYMENT_HISTORY="${BUILD_EMPLOYMENT_HISTORY:-false}"
 # so this is cheap on reruns. Set REBUILD_TED_DATES=false to reuse the cached panels for speed.
 REBUILD_TED_DATES="${REBUILD_TED_DATES:-true}"
 
-export PROJECT_DIR REBUILD_TED_DATES
+# Fold the API-only DK award notices (those the OpenTender/KFST award URLs miss) into the TED notice
+# universe + date lineage. ted_dates_0_api_universe.R discovers + parks them (cache-first); ted_1 and the
+# date chain then include them, tagged notice_source="api" in the combined data. Set to false to build the
+# TED sample from the OpenTender+KFST URLs only.
+TED_INCLUDE_API_ONLY="${TED_INCLUDE_API_ONLY:-true}"
+
+export PROJECT_DIR REBUILD_TED_DATES TED_INCLUDE_API_ONLY
 
 cd "$PROJECT_DIR"
 
@@ -30,7 +36,13 @@ cd "$PROJECT_DIR"
 LOG_DIR="${LOG_DIR:-$PROJECT_DIR/logs}"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/replication_$(date +%Y%m%d_%H%M%S).log"
-exec > >(tee -a "$LOG_FILE") 2>&1
+# By default, tee our own output to a log. Piping through tee makes each Rscript step block-buffer its
+# stdout, so live output only appears in bursts at step boundaries. Set NO_SELF_LOG=1 to skip this and run
+# under `script` (a pseudo-terminal) instead, which keeps output line-buffered/live AND captures a log:
+#   NO_SELF_LOG=1 script -q logs/replication_stream.log ./run_replication.sh
+if [ -z "${NO_SELF_LOG:-}" ]; then
+  exec > >(tee -a "$LOG_FILE") 2>&1
+fi
 PIPELINE_START_EPOCH=$(date +%s)
 
 # Parallel arrays recording each pipeline step and its wall-clock seconds.
@@ -178,6 +190,13 @@ run_r_script() {
   fi
 }
 
+# API-only universe expansion (optional): discover + park the DK award notices the OT/KFST URLs miss, so the
+# TED extraction and the date chain (rebuilt inside 1_1/1_2) can fold them in. Cache-first, so re-runs are
+# cheap. MUST run before 1_1 (its date-panel rebuild reads the manifest). Skip with TED_INCLUDE_API_ONLY=false.
+if [[ "$TED_INCLUDE_API_ONLY" != "false" ]]; then
+  run_r_script "code/scraping/ted_dates_0_api_universe.R"
+fi
+
 run_r_script "code/processing/1_1_process_kfst.R"
 run_r_script "code/processing/1_2_process_open_tender.R"
 
@@ -204,6 +223,9 @@ run_r_script "code/processing/2_1_match_kfst.R"
 run_r_script "code/processing/2_2_match_kfst_buyers.R"
 run_r_script "code/processing/2_3_match_opentender.R"
 run_r_script "code/processing/2_4_match_opentender_buyers.R"
+
+# The 3_* builders below produce three CVR-resolution methods each -- production, extraction, and name_match
+# (the name-match-only re-run of the matcher, field CVR ignored) -- folded into the cvr_method flag.
 run_r_script "code/processing/3_1_build_kfst_winner_datasets.R"
 run_r_script "code/processing/3_2_build_ot_winner_datasets.R"
 run_r_script "code/processing/3_3_build_ot_buyer_datasets.R"
@@ -224,10 +246,16 @@ run_r_script "code/scraping/ted_3_build_winner_buyer_datasets.R"
 run_r_script "code/scraping/ted_4_match_winners.R"
 run_r_script "code/scraping/ted_5_match_buyers.R"
 
+# TED stack builders (production + extraction + name_match) -- the TED analogues of 3_1-3_3. They consume
+# ted_4/ted_5's clean_*_ted_name_matched.rds (production/extraction) and re-run the matcher on ted_3's
+# ted_{winner,buyer}_data.rds inline for the name_match method.
+run_r_script "code/processing/3_4_build_ted_winner_datasets.R"
+run_r_script "code/processing/3_5_build_ted_buyer_datasets.R"
+
 # Combine all six matched samples (KFST/OT/TED x winner/buyer; the stacks where they exist) into one long
 # dataset, unique on (data_source, entity, tender_id, lot_id, cvr_final), with the sample-selection column
-# cvr_method (+ build_prod/build_extr convenience booleans), CVR columns standardised to cvr_*, and country
-# harmonised. This is the all-in-one server-delivery table.
+# cvr_method (+ build_prod/build_extr/build_name_match convenience booleans), CVR columns standardised to
+# cvr_*, and country harmonised. This is the all-in-one server-delivery table.
 run_r_script "code/processing/4_combine_all_datasets.R"
 
 # Gate the delivery: post-combine data checks -- variable list <-> variable key, missingness per
