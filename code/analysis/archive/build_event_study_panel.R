@@ -57,7 +57,9 @@ build_event_study_panel <- function(match_tab,
   # rows. Peak memory is one chunk's transient cross, not the whole thing; the result is identical.
   stack_ids <- unique(mt$stack_id)
   n_chunks  <- max(1L, ceiling(length(stack_ids) / chunk_events))
-  groups    <- split(stack_ids, cut(seq_along(stack_ids), n_chunks, labels = FALSE))
+  # cut(x, 1) errors ("invalid number of intervals"); when everything fits in one chunk, use it directly.
+  groups    <- if (n_chunks <= 1L) list(stack_ids)
+               else split(stack_ids, cut(seq_along(stack_ids), n_chunks, labels = FALSE))
   if (!is.null(window)) stopifnot(length(window) == 2L)
 
   parts <- vector("list", length(groups))
@@ -78,6 +80,10 @@ build_event_study_panel <- function(match_tab,
 
 # ---- Materialise the windowed long panel and save it -----------------------------------------------
 # Inputs/window/output are set via ESP_* env vars (see header).
+# Guarded so this only runs when the file is executed directly (`Rscript build_event_study_panel.R`).
+# When another script `source()`s this file just to reuse build_event_study_panel(), sys.nframe() > 0 and
+# the (heavy, ESP_*-driven) materialisation below is skipped -- sourcing has no side effects, as the header promises.
+if (sys.nframe() == 0L) {
 # Anchor paths off the project root so this works from any working directory.
 .proj <- local({
   d <- normalizePath(getwd(), mustWork = TRUE)
@@ -112,3 +118,4 @@ print(panel[, .(rows = .N, firms = uniqueN(cvr)), by = control_type][order(-rows
 
 saveRDS(panel, out_file)
 cat(sprintf("Saved -> %s (%.0f MB)\n", out_file, file.size(out_file) / 1e6))
+}  # end main-guard (sys.nframe() == 0L)
