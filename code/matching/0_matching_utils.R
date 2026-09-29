@@ -676,6 +676,19 @@ load_nonwinner_panel <- function(window = 8, unit = c("quarters", "months"), har
   d[]
 }
 
+# args:  x = numeric vector; w = weights of the same length, zero or NA wherever x is NA.
+# returns: list(n, mean, sd). n counts non-missing x; mean and sd are weighted with divisor sum(w),
+#          i.e. the biased weighted variance, not the reliability-corrected form.
+# Shared so the balance statistic cannot drift between reports that both claim to compute it.
+# NOTE estudy_winner_vs_nonwinner_matched.Rmd still carries an inline copy in its `compare-wnw-tables`
+# chunk; point that at this one next time the file is touched.
+wstats <- function(x, w) {
+  sw <- sum(w, na.rm = TRUE)
+  mu <- sum(x * w, na.rm = TRUE) / sw
+  list(n = sum(!is.na(x)), mean = mu,
+       sd = sqrt(sum(w * (x - mu)^2, na.rm = TRUE) / sw))
+}
+
 # ---- reporting -------------------------------------------------------------------------------------------
 # args:  title = section heading to print between rules. Cosmetic; keeps long logs scannable.
 match_rule_banner <- function(title) {
