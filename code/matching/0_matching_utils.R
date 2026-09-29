@@ -252,13 +252,42 @@ emp_positive <- function(dt, rule = match_env_chr("MATCH_EMP_RULE", "either")) {
          stop("MATCH_EMP_RULE must be one of: either, fte, employees (got '", rule, "')", call. = FALSE))
 }
 
+# ---- event provenance --------------------------------------------------------------------------------
+# Which PROCUREMENT an event is, carried from the combined dataset to the regression data so a matched
+# event joins to a lot-level design -- the co-bidder panel above all, whose stack_id is .GRP by
+# (tender_id, lot_id) -- by identifier rather than by (winner cvr, event quarter). A timing join cannot
+# say WHICH lot of a quarter a stack is.
+#
+# An event is (cvr, event_qidx), one award quarter, and can span several lots. These describe the
+# EARLIEST award in the quarter, which is also the row that sets first_award_date -- so provenance and
+# event timing always come from the same lot. Ties break on (data_source, tender_id, lot_id).
+#   event_data_source    KFST | OpenTender | TED
+#   event_tender_id      source tender id  (NOT unique across sources: pair with data_source)
+#   event_lot_id         source lot id     (ditto)
+#   event_ted_notice_id  the contract-award notice. The only identifier byte-identical ACROSS sources
+#                        (98_final_data_checks.R check 6b), so it is the key for a cross-source join.
+#   event_lot_key        "data_source|tender_id|lot_id" -- the composite that IS unique, pre-pasted.
+EVENT_META_COLS <- c("event_data_source", "event_tender_id", "event_lot_id",
+                     "event_ted_notice_id", "event_lot_key")
+EVENT_META_SRC  <- c("data_source", "tender_id", "lot_id", "ted_notice_id")
+
 # ---- the winner universe ------------------------------------------------------------------------------
 # Events come from the COMBINED delivered dataset, not the per-source winner files -- those disagree
 # (find_control_firms_never_winners.R used OT+KFST only, missing ~20% of winning firms).
 #
+# THE EVENT GRAIN IS THE QUARTER, not the calendar year. It used to be (cvr, award_year), which threw
+# away every award quarter after a firm's first in a year -- those events were not merged, they were
+# DISCARDED, and the loss is what estudy_matched_vs_cobidder_validation.Rmd's `leak` table counts.
+# Two consequences beyond the larger sample, both of them fixes:
+#   - the sometimes-winner buffer becomes complete. 2_match_controls.R builds award_idx from these
+#     rows, so under the year grain a firm with a Q1 and a Q3 award was INVISIBLE to the buffer in Q3
+#     and could be offered as a clean control during a quarter it had actually won in.
+#   - a firm can now be treated more than once, and two of its events can sit close enough that each
+#     is inside the other's study window. The firm fixed effect pools them; it does not separate them.
+#
 # Two DIFFERENT sets come out of here and the distinction matters:
 #   $events   competitive award events we study: entity==winner & flag_awarded & build_prod
-#             & direct_award==FALSE, one row per (cvr, award_year).
+#             & direct_award==FALSE, one row per (cvr, event_qidx) -- i.e. per award QUARTER.
 #   $winners  the EXCLUSION set barring a firm from the never-winner control pool. Built from
 #             COMPETITIVE winner rows only, so a firm whose wins were all DIRECT awards is NOT
 #             excluded and pools with the never-winners (a deliberate choice: in this pipeline
@@ -274,8 +303,9 @@ emp_positive <- function(dt, rule = match_env_chr("MATCH_EMP_RULE", "either")) {
 #                the combined table, so this choice moves the event count -- the split is printed.
 #   verbose      TRUE prints the funnel (rows -> competitive -> dated -> events) as it narrows.
 # returns: list with
-#   $events   one row per (cvr, award_year) COMPETITIVE event, with first_award_date,
-#             award_quarter, event_qidx and a deterministic `ev` id (ordered by cvr, award_year)
+#   $events   one row per (cvr, event_qidx) COMPETITIVE event -- one per award QUARTER -- with
+#             first_award_date, award_year, award_quarter, the EVENT_META_COLS provenance columns,
+#             and a deterministic `ev` id (ordered by cvr, event_qidx)
 #   $winners  the EXCLUSION set: competitive winners only. A firm whose wins were all DIRECT
 #             awards is absent here, so it stays available as a never-winner control.
 winner_universe <- function(tender_stem = match_env_chr("MATCH_TENDER_FILE",
@@ -295,13 +325,40 @@ winner_universe <- function(tender_stem = match_env_chr("MATCH_TENDER_FILE",
   winners <- sort(unique(comp$cvr))              # exclusion set: competitive winners only
   comp[, award_date := as.Date(award_date)]
   dated <- comp[!is.na(award_date)]
-  events <- dated[, .(first_award_date = min(award_date),
-                      n_awards_in_year = .N,
-                      data_sources     = paste(sort(unique(data_source)), collapse = "|")),
-                  by = .(cvr, award_year = year(award_date))]
-  events[, `:=`(award_quarter = quarter(first_award_date))]
-  events[, event_qidx := qidx_of(award_year, award_quarter)]
-  setorder(events, cvr, award_year)              # deterministic ev regardless of join order
+
+  # ---- event provenance (see EVENT_META_COLS) -------------------------------------------------------
+  for (cc in EVENT_META_SRC) if (!cc %in% names(dated)) dated[, (cc) := NA_character_]
+  # "" is missing, not a value: tender_id / lot_id are blank on some rows and a blank that survives as
+  # an empty string is a join key that silently matches every other blank.
+  for (cc in EVENT_META_SRC) {
+    v <- as.character(dated[[cc]])
+    v[!is.na(v) & !nzchar(trimws(v))] <- NA_character_
+    set(dated, j = cc, value = v)
+  }
+  dated[, event_qidx := qidx_of(year(award_date), quarter(award_date))]
+  # NA, not "KFST|NA|NA": a composite built from a missing part is not a usable key, and paste() would
+  # manufacture one that looks fine and joins wrongly.
+  dated[, lot_key := fifelse(is.na(tender_id) | is.na(lot_id), NA_character_,
+                             paste(data_source, tender_id, lot_id, sep = "|"))]
+
+  # Sorted first, so [1L] IS the earliest award in the quarter and every provenance column comes from
+  # that one row -- no second pass, no merge, and the ids cannot describe a different lot from the date.
+  # The (data_source, tender_id, lot_id) tail of the sort makes the pick deterministic when two lots
+  # share the earliest date; which one wins does not matter for a quarterly event study, only that the
+  # same one wins every run.
+  setorderv(dated, c("cvr", "event_qidx", "award_date", "data_source", "tender_id", "lot_id"))
+  events <- dated[, .(first_award_date    = award_date[1L],
+                      n_awards_in_quarter = .N,
+                      data_sources        = paste(sort(unique(data_source)), collapse = "|"),
+                      event_data_source   = data_source[1L],
+                      event_tender_id     = tender_id[1L],
+                      event_lot_id        = lot_id[1L],
+                      event_ted_notice_id = ted_notice_id[1L],
+                      event_lot_key       = lot_key[1L]),
+                  by = .(cvr, event_qidx)]
+  events[, `:=`(award_year = year(first_award_date), award_quarter = quarter(first_award_date))]
+  stopifnot(events[, all(event_qidx == qidx_of(award_year, award_quarter))])
+  setorder(events, cvr, event_qidx)              # deterministic ev regardless of join order
   events[, ev := .I]
 
   if (verbose) {
@@ -310,7 +367,7 @@ winner_universe <- function(tender_stem = match_env_chr("MATCH_TENDER_FILE",
                 da[["FALSE"]], da[["TRUE"]], da[["NA"]], da_rule))
     cat(sprintf("  competitive rows                        : %d  | cvrs %d\n", nrow(comp), length(winners)))
     cat(sprintf("  dated rows                              : %d  | cvrs %d\n", nrow(dated), uniqueN(dated$cvr)))
-    cat(sprintf("  events (cvr x award_year)               : %d  | %d-%d\n",
+    cat(sprintf("  events (cvr x award QUARTER)            : %d  | %d-%d\n",
                 nrow(events), min(events$award_year), max(events$award_year)))
     cat(sprintf("  events 2019+                            : %d (%.1f%%)\n",
                 events[award_year >= 2019, .N], 100 * events[award_year >= 2019, .N] / nrow(events)))
@@ -642,11 +699,22 @@ load_estimation_panel <- function(protocol = NULL, arm = NULL, tag = match_tag()
 #              can be compared directly. `entity` (winner/non-winner) becomes `treatment`
 #              (treated/control), `tidx` becomes `qidx`, and `arm` is set to "non_winner_bidder".
 # returns: the estimation panel from estudy_winner_vs_nonwinner_matched.Rmd -- the design whose
-#          controls are REAL losing bidders on the same TED lot, not synthetic matches.
+#          controls are REAL losing bidders on the same TED lot, not synthetic matches. Carries
+#          tender_id, lot_id, lot_key and ted_notice_id alongside the opaque stack_id, so a stack can
+#          be traced to its procurement and joined to the matched design (see JOINING THE TWO below).
+#          A panel saved before that change has none of them -- re-knit the .Rmd.
 #
 # The two designs answer different questions and this is the point of comparing them:
 #   load_estimation_panel()   -> winner vs matched never-winner / sometimes-winner  (large, synthetic)
 #   load_nonwinner_panel()    -> winner vs actual co-bidder on the same lot         (small, sharp)
+#
+# JOINING THE TWO. Both sides carry the lot's identifiers, built to the same recipe, so join on those
+# and not on (winner cvr, event quarter) -- a timing join cannot say which lot of a quarter a stack is.
+# Matched side: event_lot_key / event_ted_notice_id (EVENT_META_COLS), describing the earliest award of
+# the event's quarter. Co-bidder side: lot_key / ted_notice_id, one lot per stack.
+#
+#   merge(unique(m[, .(ev, event_lot_key)]), unique(nw[, .(stack_id, lot_key)]),
+#         by.x = "event_lot_key", by.y = "lot_key")
 #
 #   m  <- load_estimation_panel("full_full", "never_winner")
 #   nw <- load_nonwinner_panel(8)

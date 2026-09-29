@@ -53,6 +53,14 @@
 # eligibility window share the candidate set, so eligibility is computed ONCE and merely re-scored per
 # ranking window; adding a protocol costs one mean() over a subset of quarters, not another cascade.
 #
+# EVENT PROVENANCE. Every output row -- treated and control alike -- carries the identifiers of the
+# procurement its event came from (EVENT_META_COLS, documented in 0_matching_utils.R), so a matched
+# event joins to the co-bidder design by identifier instead of by (winner cvr, event quarter).
+#
+# NOTE ON REPEAT EVENTS. The event grain is the award QUARTER, so one firm can be treated in several
+# events, and two of them can sit close enough that each is inside the other's window. The firm fixed
+# effect pools them; it does not separate them.
+#
 # PERFORMANCE. Events are processed in groups sharing an event_qidx (~100 distinct values, not 33k), so
 # the panel is sliced ~100 times instead of once per event. Only the columns matching needs are carried:
 # find_control_firms_never_winners.R:133-135 records that hauling all ~69 columns "exhausted the 24 GB
@@ -111,6 +119,10 @@ if (!nrow(study)) stop("no study events -- check stage 1 output", call. = FALSE)
 
 # Every competitive award date, INCLUDING unplaceable events: the sometimes-winner arm has to know about
 # awards it cannot itself study, or it would offer a firm as a control during its own award window.
+# This is complete only because stage 1's event grain is the QUARTER. Under the old (cvr, award_year)
+# grain a firm's second and later award quarters in a year were never in `events` at all, so a firm with
+# a Q1 and a Q3 award read as having no Q3 award and could be offered as a clean control in a quarter it
+# had actually won in. Nothing here changed -- the input did.
 award_idx  <- unique(events[, .(cvr, event_qidx)])
 all_comp_w <- unique(events$cvr)
 
@@ -382,6 +394,21 @@ discards    <- rbindlist(lapply(good, `[[`, "discards"), use.names = TRUE, fill 
 # Absent from a checkpoint written before the funnel counters existed -- see the report block below.
 eligfunnel  <- rbindlist(lapply(good, `[[`, "diags"),    use.names = TRUE, fill = TRUE)
 
+# ---- event provenance ---------------------------------------------------------------------------------
+# Attached here, not inside match_one_event(): it is event-level, so carrying it through the per-event
+# worker would copy five columns into every fork for nothing. Riding on match_table means it reaches the
+# matched panel, the regression data and the estimation panel with no further join, and it lands on
+# CONTROL rows too -- which is the point, since it says which procurement the whole stack is about.
+# `study` is one row per ev, so this is many-to-one and the row count is invariant.
+meta_have <- intersect(EVENT_META_COLS, names(study))
+if (!length(meta_have)) {
+  cat("  WARNING: 01_events.rds carries no event provenance -- re-run stage 1 to add it.\n")
+} else {
+  n_mt <- nrow(match_table)
+  match_table <- merge(match_table, study[, c("ev", meta_have), with = FALSE], by = "ev", all.x = TRUE)
+  stopifnot(nrow(match_table) == n_mt)
+}
+
 # ---- report ----------------------------------------------------------------------------------------------
 match_rule_banner("3. report")
 matched_ev  <- match_table[, uniqueN(ev)]
@@ -397,6 +424,7 @@ if (n_skipped > 0L)
                      "                 this match, or the sample is silently short by that many events.\n"),
               n_skipped, nrow(study), 100 * n_skipped / nrow(study), length(failed_q)))
 if (nrow(discards)) { cat("  discard reasons:\n"); print(discards[, .N, by = reason][order(-N)]) }
+
 
 cat("\n  rung distribution (controls only):\n")
 print(match_table[treatment == "control", .(events = uniqueN(ev), firms = .N),
@@ -509,6 +537,8 @@ mp    <- merge(panel[, .(cvr, qidx, year, quarter, fte, employees, frequency,
                keep, by = "cvr", allow.cartesian = TRUE)
 mp[, event_time := qidx - event_qidx]
 mp <- mp[event_time %between% c(-H, H)]
+# This merge is also what puts the event-provenance columns on every panel row -- they ride on
+# match_table, so nothing here needs to name them.
 mp <- merge(mp, match_table, by = c("ev", "cvr"), allow.cartesian = TRUE)
 setorder(mp, ev, scoring_protocol, arm, treatment, cvr, qidx)
 cat(sprintf("  matched panel: %d rows | %d events | %d firms\n", nrow(mp), uniqueN(mp$ev), uniqueN(mp$cvr)))

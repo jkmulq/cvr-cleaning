@@ -14,7 +14,7 @@
 #
 # Outputs (the ONLY inputs stage 2 may open):
 #   01_firm_panel.parquet        one row per (firm, quarter) at MATCH_FREQ, winners + controls
-#   01_events.rds                one row per (winning cvr, award_year) competitive event
+#   01_events.rds                one row per (winning cvr, award QUARTER) competitive event
 #   01_eligible_controls.rds     the screened never-winner pool, with sector/kommune
 #   01_pull_report.rds           what was screened, what was pulled, what is still missing
 #
@@ -45,7 +45,7 @@ DO_PULL <- if (TEST) FALSE else match_env_lgl("MATCH_DO_PULL", TRUE)
 P       <- match_paths()
 emp_dir <- dirs$employment
 
-cat(sprintf("STAGE 1 | freq=%s | emp_rule=%s | pull=%s%s\n", FREQ,
+cat(sprintf("STAGE 1 | freq=%s | emp_rule=%s | event grain=quarter | pull=%s%s\n", FREQ,
             match_env_chr("MATCH_EMP_RULE", "either"), DO_PULL,
             if (TEST) sprintf(" | TEST MODE (first %d events)", TEST_N) else ""))
 cat(sprintf("output dir: %s\n", P$dir))
@@ -88,7 +88,7 @@ events[, placeable := !is.na(division) & !is.na(kommune)]
 cat(sprintf("  events placeable: %d of %d (%.1f%%) | unplaceable (kept, flagged): %d\n",
             events[placeable == TRUE, .N], nrow(events),
             100 * events[placeable == TRUE, .N] / nrow(events), events[placeable == FALSE, .N]))
-setorder(events, cvr, award_year)
+setorder(events, cvr, event_qidx)
 events[, ev := .I]
 
 # ---- 3. incremental pull ------------------------------------------------------------------------------

@@ -41,6 +41,9 @@
 # each stack each sum to 1 and a stack that happened to tie 40 controls at rank 1 does not outvote a
 # stack that matched one.
 #
+# EVENT PROVENANCE passes straight through: this stage subsets rows and adds columns but never selects
+# columns, so the EVENT_META_COLS stage 2 attached are in the output unchanged, treated and control alike.
+#
 #   Rscript code/matching/3_build_reg_data.R
 # Options (env):
 #   MATCH_MIN_FTE     strict lower bound on FTE (default 0)
