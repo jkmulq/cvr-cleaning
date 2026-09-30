@@ -404,9 +404,15 @@ meta_have <- intersect(EVENT_META_COLS, names(study))
 if (!length(meta_have)) {
   cat("  WARNING: 01_events.rds carries no event provenance -- re-run stage 1 to add it.\n")
 } else {
+  # THE FAILURE MODE THAT MATTERS: `ev` is positional (.I over events sorted by cvr, event_qidx), so it
+  # is NOT stable across runs that built events differently -- the year->quarter grain change renumbered
+  # every single one. A checkpoint reused without MATCH_FORCE_REMATCH carries the OLD numbering, and
+  # merging it onto today's events would attach real-looking identifiers describing the wrong
+  # procurement. all.x = TRUE would not complain. This is what complains.
+  stopifnot(all(match_table$ev %in% study$ev))
   n_mt <- nrow(match_table)
   match_table <- merge(match_table, study[, c("ev", meta_have), with = FALSE], by = "ev", all.x = TRUE)
-  stopifnot(nrow(match_table) == n_mt)
+  stopifnot(nrow(match_table) == n_mt, !anyNA(match_table$event_data_source))
 }
 
 # ---- report ----------------------------------------------------------------------------------------------
