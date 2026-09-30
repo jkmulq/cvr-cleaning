@@ -1,0 +1,488 @@
+---
+title: "Validating the matching algorithm against real bidding non-winners"
+author: "Jack Mulqueeney"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    self_contained: true
+    df_print: kable
+knit: >
+  (function(inputFile, encoding) {
+    project_dir <- normalizePath(dirname(inputFile), mustWork = TRUE)
+    while (!file.exists(file.path(project_dir, "cvr-cleaning.Rproj")) &&
+           dirname(project_dir) != project_dir) project_dir <- dirname(project_dir)
+    output_dir <- file.path(project_dir, "output", "docs")
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    rmarkdown::render(
+      inputFile,
+      encoding = encoding,
+      knit_root_dir = project_dir,
+      output_dir = output_dir
+    )
+  })
+---
+
+<!--
+WHAT THIS IS. The matching pipeline picks controls on an industry/kommune cascade plus closeness of
+the pre-award FTE path. Nothing in it tests whether those controls behave like the ACTUAL
+counterfactual. TED gives us one: firms that bid on the same lot and lost. This report compares
+employment outcomes under the two control groups.
+
+SCOPE: FTE ONLY. Eligibility, qscore distributions and covariate balance were all removed -- this
+report now answers one question, which is whether the synthetic control reproduces the employment
+path of the real losing bidder. The eligibility and balance diagnostics live in the build log of
+code/matching/5_cobidder_stacks.R and in 05_cobidder_roster.rds, which carries the per-firm verdicts
+(pool_side, buffer_ok, elig_pre, elig_post, eligible, in_both_roles) if they are wanted again.
+
+INPUT. code/matching/5_cobidder_stacks.R builds ONE stack per (contract notice, winner) holding all
+three groups -- the winner, its synthetic matched controls, and its real losing co-bidders -- at the
+same t = 0, with employment for each:
+
+  05_cobidder_panel.parquet   the regression-ready panel, one row per (event, firm, quarter)
+  05_cobidder_roster.rds      one row per (event, firm): qscore, eligibility verdict, flags
+
+  Rscript -e 'rmarkdown::render("code/analysis/estudy_matched_vs_cobidder_validation.Rmd")'
+
+Parameters are VMC_* environment variables. This report is READ-ONLY with respect to the pipeline and
+writes nothing under match_paths() unless VMC_SAVE=1.
+-->
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+# opts_knit$get("output.dir") is NULL when running chunks interactively, and nzchar(NULL) errors in
+# a bare if(). Fall back to getwd(), then walk up to the .Rproj marker.
+.od <- knitr::opts_knit$get("output.dir")
+project_dir <- if (!is.null(.od) && nzchar(.od)) .od else getwd()
+project_dir <- normalizePath(project_dir, mustWork = TRUE)
+while (!file.exists(file.path(project_dir, "cvr-cleaning.Rproj")) &&
+       dirname(project_dir) != project_dir) project_dir <- dirname(project_dir)
+
+suppressPackageStartupMessages({
+  library(data.table); library(arrow); library(ggplot2); library(knitr); library(fixest)
+})
+# Sourced, not match_setup(): that setwd()s and re-sources, hostile inside a knit.
+source(file.path(project_dir, "config.R"))
+source(file.path(project_dir, "code", "functions.R"))
+source(file.path(project_dir, "code", "matching", "0_matching_utils.R"))
+
+.envchr <- function(k, d) { v <- Sys.getenv(k, ""); if (nzchar(v)) v else d }
+.envint <- function(k, d) { v <- Sys.getenv(k, ""); if (nzchar(v)) as.integer(v) else d }
+
+TAG        <- .envchr("VMC_TAG", match_tag())
+MIN_EVENTS <- .envint("VMC_MIN_EVENTS", 20L)     # mirrors MATCH_MIN_STACKS
+SAVE       <- .envint("VMC_SAVE", 0L) == 1L
+
+P   <- match_paths(TAG)
+fmt <- function(x) formatC(x, big.mark = ",", format = "d")
+
+# Fixed label order, so groups never swap colours between a table and the plot beside it.
+CATS <- c(treated = "winner", found_control = "matched control", non_winner = "real co-bidder")
+```
+
+# Inputs and scope
+
+```{r inputs}
+meta <- read_obj(P$cobid_roster)
+H    <- meta$h                         # from the build, never from the environment
+
+# complete_stack: the event still holds all three groups after balancing. Everything runs on this set.
+panel <- read_tab(P$cobid_panel)
+d     <- panel[complete_stack == TRUE]
+d[, series := factor(CATS[category], levels = unname(CATS))]
+
+scope <- data.table(
+  item = c("control pool", "scoring protocol", "window (+/- quarters)", "FTE floor",
+           "artefact tag", "events built (notice x winner)",
+           "events surviving the balance screen",
+           "COMPLETE stacks (all three groups)", "panel rows"),
+  value = c(meta$pool, meta$protocol, as.character(H), as.character(meta$min_fte),
+            if (nzchar(TAG)) TAG else "(full run)",
+            fmt(nrow(as.data.table(meta$events))),
+            fmt(panel[, uniqueN(ev)]), fmt(d[, uniqueN(ev)]), fmt(nrow(d))))
+kable(scope, caption = "Scope of this validation")
+```
+
+`r if (d[, uniqueN(ev)] < MIN_EVENTS) sprintf("**INSUFFICIENT EVENTS: %d complete stacks, below VMC_MIN_EVENTS = %d.** Everything below is reported for completeness but should not be interpreted.", d[, uniqueN(ev)], MIN_EVENTS) else ""`
+
+# Median FTE by event time
+
+**Medians, not means.** The winner size distribution spans three orders of magnitude (median 69,
+p99 ~2,500, max ~4,000 FTE), so a mean of levels is a statement about the ten largest notices and
+almost nothing else. The synthetic control pool reproduces the winners' median well and their right
+tail badly — a registry screen on industry and kommune contains no firm the size of the largest
+winners — so the two statistics tell opposite stories. The median is the honest one.
+
+Each event contributes one value per group per quarter: the within-event mean over that group's firms
+(the `weight` column, which sums to 1 per stack and group). The line is the median of those across
+events, with the interquartile range shaded.
+
+```{r series, fig.width = 10, fig.height = 5.5, fig.align = 'center'}
+# one value per (event, group, quarter) first, so a 40-way tie counts once
+ev_mean <- d[, .(fte = weighted.mean(fte, weight)), by = .(ev, category, series, event_time)]
+
+series_med <- ev_mean[, .(med_fte = as.numeric(median(fte)),
+                          p25     = as.numeric(quantile(fte, .25)),
+                          p75     = as.numeric(quantile(fte, .75)),
+                          n_evt   = uniqueN(ev)),
+                      by = .(event_time, series)][order(series, event_time)]
+
+ggplot(series_med, aes(event_time, med_fte, colour = series, fill = series)) +
+  geom_ribbon(aes(ymin = p25, ymax = p75), alpha = 0.10, colour = NA) +
+  geom_line(linewidth = 0.6) + geom_point(size = 1.1) +
+  geom_vline(xintercept = -0.5, linetype = "dashed", colour = "grey40") +
+  labs(title = sprintf("Median FTE by event time, %d complete stacks", d[, uniqueN(ev)]),
+       subtitle = "Median across events of the within-event group mean; shaded = interquartile range",
+       x = sprintf("Quarters relative to award (+/-%d)", H), y = "FTE", colour = NULL, fill = NULL,
+       caption = paste("Not the main pipeline's estimand: the event grain here is the LOT, so a",
+                       "winner of several lots appears once per lot.")) +
+  theme_light(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "top",
+        plot.caption = element_text(hjust = 0))
+
+kable(dcast(series_med, event_time ~ series, value.var = "med_fte"), digits = 1,
+      caption = "Median FTE by event time")
+```
+
+## Size relative to the winner
+
+The scale-free version of the same picture, and the one that says whether each control group is the
+right *size*. Computed per event and then medianed, so it is unaffected by the tail that breaks the
+level mean. A group tracking the winner sits on 1.
+
+```{r series-ratio, fig.width = 10, fig.height = 4.5, fig.align = 'center'}
+# dcast on `category`, not `series`: the labels contain spaces
+rat <- dcast(ev_mean, ev + event_time ~ category, value.var = "fte")
+rat[, `:=`(`matched control` = found_control / treated,
+           `real co-bidder`  = non_winner    / treated)]
+rl <- melt(rat, id.vars = "event_time",
+           measure.vars = c("matched control", "real co-bidder"),
+           variable.name = "series", value.name = "ratio")
+
+rat_med <- rl[is.finite(ratio), .(med = as.numeric(median(ratio)),
+                                  p25 = as.numeric(quantile(ratio, .25)),
+                                  p75 = as.numeric(quantile(ratio, .75))),
+              by = .(event_time, series)][order(series, event_time)]
+
+ggplot(rat_med, aes(event_time, med, colour = series, fill = series)) +
+  geom_hline(yintercept = 1, colour = "grey50") +
+  geom_ribbon(aes(ymin = p25, ymax = p75), alpha = 0.10, colour = NA) +
+  geom_line(linewidth = 0.6) + geom_point(size = 1.1) +
+  geom_vline(xintercept = -0.5, linetype = "dashed", colour = "grey40") +
+  labs(title = "Control group size relative to the winner",
+       subtitle = "Median across events of (group FTE / winner FTE); shaded = interquartile range",
+       x = sprintf("Quarters relative to award (+/-%d)", H), y = "Ratio to winner FTE",
+       colour = NULL, fill = NULL) +
+  theme_light(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "top")
+
+kable(dcast(rat_med, event_time ~ series, value.var = "med"), digits = 3,
+      caption = "Median size relative to the winner")
+```
+
+# Event studies: the same winners, two control groups
+
+Two estimations on the **same stacks**, differing only in which rows are kept. That is the point of
+building the groups together: the contrast between the two lines is the control group and nothing
+else — same notices, same winners, same window, same weights.
+
+## Specification
+
+Let $i$ index firms, $e$ a stack (one contract notice $\times$ winner), and $t$ a calendar quarter.
+$T_e$ is the award quarter of stack $e$'s notice, so event time is $k = t - T_e$, and the panel is
+balanced on $k \in \{-h, \dots, h\}$ with $h = `r H`$. $D_i = 1$ for the winner of the stack and $0$
+for its controls. Then
+
+$$
+y_{iet} \;=\; \sum_{\substack{k=-h \\ k \neq -1}}^{h} \beta_k \bigl(\mathbf{1}[t - T_e = k] \cdot D_i\bigr)
+\;+\; \delta D_i \;+\; \theta_k \;+\; \varepsilon_{iet}
+$$
+
+| term | what it is | in code |
+|---|---|---|
+| $y_{iet}$ | FTE, and $\log$ FTE as a second outcome | `fte`, `log(fte)` |
+| $\beta_k$ | the estimand: the winner-vs-control gap at event time $k$, relative to $k = -1$ | `i(event_time, treated, ref = "-1")` |
+| $\delta D_i$ | treated main effect — the constant level difference between the two groups | `treated` |
+| $\theta_k$ | event-time main effects, common to both groups | `event_time` |
+
+**The $\beta_k$ compute differences in means between the treated and control groups.** There is no firm fixed effect and no calendar-time fixed effect: the only two absorbed terms are the group level and the event-time profile. A later diagnostic confirms the equality (it is convenient to use regression functions since we can easily compute standard errors and hypothesis tests).
+
+**Weights** are $w_{ie} = 1 / n_{e,c(i)}$, where $n_{e,c}$ is the number of firms in group $c$ of
+stack $e$. Each of a stack's sides therefore sums to $1$ in every period, so a notice that tied forty
+controls at rank 1 does not outvote a notice with one real co-bidder — and because the weights are
+defined per (stack, group), the property survives filtering to any two of the three groups, with
+nothing to rebuild.
+
+**Standard errors** are clustered on `cvr`, set once as `CL` in the first chunk below and reused by
+every fit, so the intervals on the plots and the p-values in the tests can never come from different
+assumptions. Clustering on the firm is the dimension that matters most here: the event grain is the
+lot, so a winner of four lots contributes the same firm-quarters to four stacks, and a firm can be a
+control for dozens of events — `~ cvr` is exactly what absorbs that repetition.
+```{r es-prep}
+# One definition for every fit: the split fits draw the CIs, the stacked fits the p-values.
+CL <- ~ cvr                       # ~ lot_key + cvr to add the notice dimension
+
+# Winner rows are deliberately duplicated across the two stacks. Fine under split = ~sample, which
+# fits each separately -- but never pool reg_data into one regression without dropping a copy.
+nw_d <- d[category %chin% c("treated", "non_winner")][,    sample := "non_winner_stack"]
+sw_d <- d[category %chin% c("treated", "found_control")][, sample := "synthetic_stack"]
+reg_data <- rbindlist(list(nw_d, sw_d), use.names = TRUE, fill = TRUE)
+reg_data[, sample := factor(sample,
+                            levels = c("synthetic_stack", "non_winner_stack"),
+                            labels = c("Synthetic matched control", "Real losing co-bidder"))]
+
+# Both stacks must rest on the SAME events, or the gap between the lines is part sample composition.
+spec_tab <- reg_data[complete_stack == TRUE,
+                     .(events = uniqueN(ev), firms = uniqueN(cvr), rows = .N), by = sample]
+kable(spec_tab, caption = "What each specification is estimated on -- the event counts must match")
+stopifnot(spec_tab[, uniqueN(events)] == 1L)
+```
+
+```{r es-fit}
+mods <- feols(fte ~ i(event_time, treated, ref = "-1") |
+                treated + event_time,
+              data = reg_data[complete_stack == TRUE, ],
+              split = ~sample,
+              cluster = CL,
+              weights = ~weight)
+
+log_mods <- feols(log(fte) ~ i(event_time, treated, ref = "-1") |
+                    treated + event_time,
+                  data = reg_data[complete_stack == TRUE, ],
+                  split = ~sample,
+                  cluster = CL,
+                  weights = ~weight)
+
+# t = -1 is the omitted base period, added back at zero so every path is anchored alike.
+# A fixest_multi is indexed by POSITION: m[["label"]] errors. Hence seq_along() plus names()[i],
+# with the "sample: " prefix stripped.
+tidy_es <- function(m, outcome) {
+  lbl <- sub("^[^:]+: ", "", names(m))
+  stopifnot(length(lbl) == length(m))
+  rbindlist(lapply(seq_along(m), function(i) {
+    ct <- as.data.table(coeftable(m[[i]]), keep.rownames = "term")[grepl("event_time", term)]
+    ct[, event_time := as.integer(gsub(".*event_time::(-?[0-9]+).*", "\\1", term))]
+    rbind(ct[, .(event_time, est = Estimate, se = `Std. Error`)],
+          data.table(event_time = -1L, est = 0, se = 0))[
+            , `:=`(control = lbl[i], outcome = outcome)]
+  }))
+}
+coefs <- rbind(tidy_es(mods, "FTE (level)"), tidy_es(log_mods, "log FTE"))
+coefs[, `:=`(lo = est - 1.96 * se, hi = est + 1.96 * se)]
+coefs[, control := gsub("sample; sample: ", "", control)]
+setorder(coefs, outcome, control, event_time)
+```
+
+```{r es-stack}
+# Both designs in ONE fit, so Cov(beta_syn, beta_cob) exists; split = ~sample gives no such term.
+# Every FE carries ^sample -- the winner rows are duplicated, so a shared FE would pool them and force
+# beta_syn == beta_cob exactly. The clustering is NOT interacted: that is what makes the covariance.
+rd <- reg_data[complete_stack == TRUE]
+rd[, D_syn := as.integer(treated == 1L & sample == "Synthetic matched control")]
+rd[, D_cob := as.integer(treated == 1L & sample == "Real losing co-bidder")]
+
+st     <- feols(fte ~ i(event_time, D_syn, ref = "-1") + i(event_time, D_cob, ref = "-1") |
+                  treated^sample + event_time^sample,
+                data = rd, cluster = CL, weights = ~weight)
+st_log <- feols(log(fte) ~ i(event_time, D_syn, ref = "-1") + i(event_time, D_cob, ref = "-1") |
+                  treated^sample + event_time^sample,
+                data = rd, cluster = CL, weights = ~weight)
+
+# If the stacked estimates do not reproduce the split ones, an FE was left un-interacted.
+.pick <- function(m, sfx) {
+  ct <- as.data.table(coeftable(m), keep.rownames = "term")
+  ct <- ct[grepl(sprintf("^event_time::-?[0-9]+:%s$", sfx), term)]
+  ct[, k := as.integer(gsub("^event_time::(-?[0-9]+):.*$", "\\1", term))]
+  ct[order(k), Estimate]
+}
+stack_gap <- max(abs(.pick(st, "D_syn") - coefs[outcome == "FTE (level)" &
+                          control == "Synthetic matched control" & event_time != -1L][
+                          order(event_time), est]),
+                 abs(.pick(st, "D_cob") - coefs[outcome == "FTE (level)" &
+                          control == "Real losing co-bidder" & event_time != -1L][
+                          order(event_time), est]))
+stopifnot(stack_gap < 1e-8)
+
+# H0: beta_syn_k = beta_cob_k. Joint over every k in the period, and on their average (1 df).
+wald_eq <- function(m, period, label) {
+  b <- coef(m); V <- vcov(m); nm <- names(b)
+  syn <- grep("^event_time::-?[0-9]+:D_syn$", nm, value = TRUE)
+  cob <- sub("D_syn$", "D_cob", syn)
+  k   <- as.integer(gsub("^event_time::(-?[0-9]+):.*$", "\\1", syn))
+  sel <- if (identical(period, "pre")) k < 0L else k >= 0L
+  syn <- syn[sel]; cob <- cob[sel]; kk <- sort(k[sel])
+  stopifnot(length(syn) > 0L, all(cob %in% nm))
+
+  R <- matrix(0, length(syn), length(b), dimnames = list(NULL, nm))
+  for (j in seq_along(syn)) { R[j, syn[j]] <- 1; R[j, cob[j]] <- -1 }
+  Rb <- R %*% b; VR <- R %*% V %*% t(R)
+  W  <- as.numeric(t(Rb) %*% solve(VR) %*% Rb); q <- nrow(R)
+
+  Ra <- matrix(colMeans(R), 1)                       # the same R, collapsed to the average
+  da <- as.numeric(Ra %*% b); sa <- sqrt(as.numeric(Ra %*% V %*% t(Ra)))
+
+  data.table(outcome = label, period = period,
+             k = sprintf("%d..%d", min(kk), max(kk)),
+             joint_df = q, joint_chisq = round(W, 2),
+             joint_p = signif(pchisq(W, q, lower.tail = FALSE), 3),
+             avg_diff = round(da, 4), avg_se = round(sa, 4),
+             avg_chisq = round((da / sa)^2, 2),
+             avg_p = signif(pchisq((da / sa)^2, 1, lower.tail = FALSE), 3))
+}
+
+eq_tests <- rbindlist(list(
+  wald_eq(st,     "pre",  "FTE (level)"), wald_eq(st,     "post", "FTE (level)"),
+  wald_eq(st_log, "pre",  "log FTE"),     wald_eq(st_log, "post", "log FTE")))
+
+# One-line summary of the post-period tests, for the plot titles. Built from eq_tests rather than
+# recomputed, so a figure can never disagree with the table it sits above.
+.fp <- function(x) ifelse(x < 0.001, "< 0.001", sprintf("= %.3f", x))
+eq_note <- function(out) {
+  e <- eq_tests[outcome == out & period == "post"]
+  sprintf("Post-period H0 the two designs agree:  joint chi2(%d) p %s   |   average p %s",
+          e$joint_df, .fp(e$joint_p), .fp(e$avg_p))
+}
+```
+
+## {.tabset}
+
+### FTE (level)
+
+```{r es-plot-fte, fig.width = 9, fig.height = 5.5, fig.align = 'center'}
+iplot(mods,
+      main = paste0("Winner vs synthetic control and real co-bidder\n", eq_note("FTE (level)")),
+      xlab = "Quarters relative to award",
+      ylab = "Effect on FTE",
+      pt.join = TRUE)
+legend("topleft", legend = levels(reg_data$sample), col = 1:2, pch = 20, lwd = 1, bty = "n")
+```
+
+### log FTE
+
+```{r es-plot-log, fig.width = 9, fig.height = 5.5, fig.align = 'center'}
+iplot(log_mods,
+      main = paste0("Winner vs synthetic control and real co-bidder\n", eq_note("log FTE")),
+      xlab = "Quarters relative to award",
+      ylab = "Effect on log(FTE)",
+      pt.join = TRUE)
+legend("topleft", legend = levels(reg_data$sample), col = 1:2, pch = 20, lwd = 1, bty = "n")
+```
+
+### Overlay
+
+```{r es-plot-overlay, fig.width = 10, fig.height = 5.5, fig.align = 'center'}
+notes <- coefs[, .(lab = eq_note(outcome[1])), by = outcome]
+notes <- merge(notes, coefs[, .(x = min(event_time), y = max(hi)), by = outcome], by = "outcome")
+
+ggplot(coefs, aes(event_time, est, colour = control, fill = control)) +
+  geom_hline(yintercept = 0, colour = "grey50") +
+  geom_text(data = notes, aes(x, y, label = lab), inherit.aes = FALSE,
+            hjust = 0, vjust = 1, size = 2.9, colour = "grey25") +
+  geom_vline(xintercept = -0.5, linetype = "dashed", colour = "grey40") +
+  geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.12, colour = NA) +
+  geom_line() + geom_point(size = 1.1) +
+  facet_wrap(~ outcome, scales = "free_y") +
+  labs(title = "Same winners, two control groups",
+       subtitle = "Shaded = 95% CI, clustered by lot and firm. t = -1 omitted",
+       x = "Quarters relative to award", y = "Coefficient", colour = NULL, fill = NULL) +
+  theme_light(base_size = 11) + theme(legend.position = "top")
+```
+
+### Coefficients
+
+```{r es-table}
+kable(dcast(coefs[outcome == "log FTE"], event_time ~ control, value.var = "est"), digits = 3,
+      caption = "log FTE event-study coefficients by control group")
+```
+
+## {-}
+
+## Do the two designs agree?
+
+Fitted once with both designs in a single regression, so $\mathrm{Cov}(\hat\beta^{syn}_k,
+\hat\beta^{cob}_k)$ exists — with `split = ~sample` it does not, and there is then no standard error
+for the difference. Point estimates are identical to the split fits (asserted above), so this tests
+exactly the paths plotted.
+
+Two nulls per period. **Joint:** $\beta^{syn}_k = \beta^{cob}_k$ at every $k$. **Average:** the same
+equality on the mean over those $k$, one restriction. The joint null is the stronger one, so it can
+reject while the average does not — that means the designs disagree about *shape*, not magnitude.
+
+```{r es-tests}
+kable(eq_tests, caption = paste("H0: the two control groups imply the same treatment effect.",
+                                "Chi-squared tests, clustered on the firm."))
+```
+
+**The pre-period row is not a placebo.** The matcher selects controls on the FTE path across the whole
+of $[-h,-1]$ under the `full_full` protocol, so $\beta^{syn}_k$ is near zero there by construction
+while $\beta^{cob}_k$ is unconstrained. A rejection in the pre period says the matching worked, not
+that the designs disagree. Only the post row is informative. A genuine placebo would need the
+`full_firsthalf` protocol, which ranks on the early pre-period and leaves $[-h/2,-1]$ unused.
+
+# Are these coefficients just differences in means?
+
+Yes, exactly. With `treated + event_time` as the only fixed effects the model is **saturated** in the
+(treated $\times$ event time) cells: $2 \times (2h{+}1) = `r 2 * (2 * H + 1)`$ cells against
+$1 + (2h{+}1) + 2h = `r 1 + (2 * H + 1) + 2 * H`$ free parameters. A saturated model reproduces the
+weighted cell means exactly, so
+
+$$\hat\beta_k \;=\; \left[\bar y_T(k) - \bar y_C(k)\right] - \left[\bar y_T(-1) - \bar y_C(-1)\right]$$
+
+with $\bar y$ the weighted mean over a (group, event time) cell. This section recomputes that by hand
+— no regression — and checks it against the coefficients the plots above are drawn from.
+
+It is worth doing rather than asserting. It pins down what the estimates are, it catches a weighting
+or balance error that would otherwise surface only as a puzzling coefficient, and it means any
+$\beta_k$ that looks odd can be traced to the two cell means behind it.
+
+```{r did-check}
+# hand-computed weighted DiD, no regression involved
+did_by_hand <- function(dat, samp, yvar) {
+  cm <- dat[sample == samp, .(y = weighted.mean(get(yvar), weight)), by = .(treated, event_time)]
+  wd <- dcast(cm, event_time ~ treated, value.var = "y")
+  setnames(wd, c("0", "1"), c("ctrl", "trt"))
+  base <- wd[event_time == -1L, trt - ctrl]
+  wd[, .(event_time, ctrl, trt, did = (trt - ctrl) - base)][order(event_time)]
+}
+
+rd[, log_fte := log(fte)]
+did_cmp <- rbindlist(lapply(levels(rd$sample), function(lbl) rbindlist(list(
+  did_by_hand(rd, lbl, "fte")[,     `:=`(control = lbl, outcome = "FTE (level)")],
+  did_by_hand(rd, lbl, "log_fte")[, `:=`(control = lbl, outcome = "log FTE")]))))
+
+# `coefs` is what the tabset plots, read off the fitted objects
+did_cmp <- merge(did_cmp, coefs[, .(control, outcome, event_time, fitted = est)],
+                 by = c("control", "outcome", "event_time"))
+did_cmp[, gap := did - fitted]
+
+kable(did_cmp[, .(periods = .N, max_abs_gap = max(abs(gap))), by = .(outcome, control)],
+      digits = 12,
+      caption ="Hand-computed difference-in-differences against the fitted coefficients.")
+stopifnot(did_cmp[, max(abs(gap))] < 1e-8)
+```
+
+The cell means themselves, which is where any surprising coefficient should be read from:
+
+```{r did-cells}
+kable(dcast(did_cmp[outcome == "FTE (level)"], event_time ~ control,
+            value.var = c("trt", "ctrl", "did")),
+      digits = 2,
+      caption = paste("Weighted mean FTE in each cell and the resulting DiD, by event time.",
+                      "trt = winners, ctrl = that design's control group."))
+```
+
+```{r save, include=FALSE}
+if (SAVE) {
+  out <- file.path(P$dir, sprintf("05_validation_cobidder%s.rds",
+                                  if (nzchar(TAG)) paste0("_", TAG) else ""))
+  saveRDS(list(scope = scope, spec = spec_tab, series = series_med, ratio = rat_med,
+               coefs = coefs, eq_tests = eq_tests, did_check = did_cmp,
+               params = list(h = H, min_events = MIN_EVENTS, tag = TAG,
+                             pool = meta$pool, protocol = meta$protocol),
+               run_at = Sys.time()), out)
+}
+```
