@@ -1,0 +1,138 @@
+---
+title: "TWFE event studies by data source x entity x CVR method"
+date: "`r format(Sys.Date(), '%d %b %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    fig_width: 11
+    fig_height: 10
+    df_print: kable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+                      fig.align = "center", dpi = 110)
+suppressWarnings(suppressPackageStartupMessages({
+  library(data.table); library(fixest); library(ggplot2)
+}))
+# knitr::opts_knit$get("output.dir") is NULL when NOT knitting (running chunks interactively), and
+# nzchar(NULL) is logical(0), so a bare if() on it errors with "argument is of length zero". Fall back to
+# getwd(), then walk up to the .Rproj marker so this works from code/analysis/ as well as the repo root.
+project_dir <- local({
+  d <- knitr::opts_knit$get("output.dir")
+  if (is.null(d) || !nzchar(d)) d <- getwd()
+  d <- normalizePath(d, mustWork = TRUE)
+  while (!file.exists(file.path(d, "cvr-cleaning.Rproj")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+while (!file.exists(file.path(project_dir, "cvr-cleaning.Rproj")) && dirname(project_dir) != project_dir)
+  project_dir <- dirname(project_dir)
+knitr::opts_knit$set(root.dir = project_dir)
+setwd(project_dir); source("config.R"); source("code/functions.R")
+emp_dir <- dirs$employment
+
+H         <- 8L                       # +/- window (quarters)
+FREQ      <- "quarterly_spliced"
+MIN_FIRMS <- 30L                      # drop cells with fewer firms
+MIN_FTE   <- 0
+ENTITIES  <- c("winner", "buyer")
+```
+
+A firm-fixed-effect event study of (log) quarterly-spliced employment around each firm's **first award**, run
+**separately for every `data_source | entity | cvr_method` cell**. This is the naive within-sample design (no
+matched controls — biased under staggered timing; the rigorous design is the matched winner-vs-non-winner
+study). FE = firm only; balanced panel with strictly positive FTE in each of the +/-`r H` event quarters;
+cells with fewer than `r MIN_FIRMS` firms are dropped. Each panel below is one cell; `t = -1` is omitted.
+
+```{r prep}
+# --- firm quarterly employment panel -----------------------------------------------------------------
+emp <- as.data.table(readRDS(file.path(emp_dir, "firm_employment_panel_all.rds")))
+nonwin <- file.path(emp_dir, "cvr_employment_history_nonwinner.rds")
+if (file.exists(nonwin)) emp <- rbind(emp, as.data.table(readRDS(nonwin)), use.names = TRUE, fill = TRUE)
+emp[, cvr := as.character(cvr)]
+firm <- emp[frequency == FREQ & !is.na(year) & !is.na(quarter),
+            .(cvr, qidx = year * 4L + quarter, fte = as.numeric(fte))]
+firm <- unique(firm, by = c("cvr", "qidx"))
+
+# --- events: first award per firm, within each (data_source, entity, cvr_method) cell ----------------
+cmb <- as.data.table(read_clean(file.path(dirs$clean_data, "tender_data_2006_2026")))
+cmb <- cmb[entity %chin% ENTITIES & !is.na(cvr_final) & cvr_final != "" & !is.na(award_date)]
+cmb[, cvr := sprintf("%08d", suppressWarnings(as.integer(gsub("[^0-9]", "", cvr_final))))]
+cmb <- cmb[grepl("^[0-9]{8}$", cvr)]
+cmb[, award_date := as.Date(award_date)]
+ev <- rbind(
+  cmb[grepl("production", cvr_method), .(data_source, entity, method = "production", cvr, award_date)],
+  cmb[grepl("extraction", cvr_method), .(data_source, entity, method = "extraction", cvr, award_date)],
+  cmb[grepl("name_match", cvr_method), .(data_source, entity, method = "name_match", cvr, award_date)])
+ev[, cell := paste(data_source, entity, method, sep = " | ")]
+ev <- ev[, .(award_date = min(award_date)), by = .(cell, cvr)]
+ev[, event_qidx := year(award_date) * 4L + quarter(award_date)]
+
+# --- balanced +/-H panel with positive FTE, drop small cells -----------------------------------------
+panel <- firm[ev, on = "cvr", allow.cartesian = TRUE, nomatch = NULL]
+panel[, event_time := qidx - event_qidx]
+panel <- panel[event_time %between% c(-H, H) & !is.na(fte) & fte > MIN_FTE]
+panel[, n_periods := uniqueN(event_time), by = .(cell, cvr)]
+panel <- panel[n_periods == 2L * H + 1L]
+panel[, n_firms := uniqueN(cvr), by = cell]
+panel <- panel[n_firms >= MIN_FIRMS]
+
+# --- per-cell event-time coefficients (level + log FTE), firm FE, clustered by firm ------------------
+cells <- sort(unique(panel$cell))
+coefs <- rbindlist(lapply(cells, function(cl) {
+  dt <- panel[cell == cl]
+  one <- function(m, lab) {
+    ct <- as.data.table(coeftable(m), keep.rownames = "term")[grepl("event_time", term)]
+    ct[, event_time := as.integer(gsub(".*event_time::(-?[0-9]+).*", "\\1", term))]
+    ct <- rbind(ct[, .(event_time, est = Estimate, se = `Std. Error`)], data.table(event_time = -1L, est = 0, se = 0))
+    ct[, `:=`(cell = cl, outcome = lab)]; ct[]
+  }
+  rbind(one(feols(fte      ~ i(event_time, ref = -1) | cvr, dt, cluster = ~cvr), "FTE (level)"),
+        one(feols(log(fte) ~ i(event_time, ref = -1) | cvr, dt, cluster = ~cvr), "log FTE"))
+}))
+coefs[, `:=`(lo = est - 1.96 * se, hi = est + 1.96 * se)]
+setorder(coefs, cell, outcome, event_time)
+
+cell_summary <- panel[, .(firms = uniqueN(cvr), firm_quarters = .N), by = cell][order(cell)]
+```
+
+Cells estimated (firms per cell): `r nrow(cell_summary)` cells.
+
+```{r cell-table}
+knitr::kable(cell_summary, col.names = c("cell (source | entity | method)", "firms", "firm-quarters"))
+```
+
+# log FTE event studies (all cells)
+
+```{r plot-log, fig.width=11, fig.height=10}
+ggplot(coefs[outcome == "log FTE"], aes(event_time, est)) +
+  geom_hline(yintercept = 0, colour = "grey50", linewidth = 0.3) +
+  geom_vline(xintercept = -0.5, linetype = "dashed", colour = "grey60") +
+  geom_ribbon(aes(ymin = lo, ymax = hi), fill = "#2c7fb8", alpha = 0.15) +
+  geom_line(colour = "#2c7fb8", linewidth = 0.5) + geom_point(colour = "#2c7fb8", size = 1.4) +
+  facet_wrap(~ cell, scales = "free_y", ncol = 3) +
+  scale_x_continuous(breaks = seq(-H, H, 4)) +
+  labs(title = sprintf("log FTE around first award, by cell (+/-%d quarters, firm FE)", H),
+       x = "Quarters relative to first award (t = -1 omitted)", y = "log FTE coefficient",
+       caption = "Shaded = 95% CI, clustered by firm. Naive within-sample (no matched controls).") +
+  theme_light(base_size = 10) + theme(plot.title = element_text(face = "bold"),
+                                      strip.text = element_text(size = 7.5))
+```
+
+# FTE level event studies (all cells)
+
+```{r plot-level, fig.width=11, fig.height=10}
+ggplot(coefs[outcome == "FTE (level)"], aes(event_time, est)) +
+  geom_hline(yintercept = 0, colour = "grey50", linewidth = 0.3) +
+  geom_vline(xintercept = -0.5, linetype = "dashed", colour = "grey60") +
+  geom_ribbon(aes(ymin = lo, ymax = hi), fill = "#d95f0e", alpha = 0.15) +
+  geom_line(colour = "#d95f0e", linewidth = 0.5) + geom_point(colour = "#d95f0e", size = 1.4) +
+  facet_wrap(~ cell, scales = "free_y", ncol = 3) +
+  scale_x_continuous(breaks = seq(-H, H, 4)) +
+  labs(title = sprintf("FTE (level) around first award, by cell (+/-%d quarters, firm FE)", H),
+       x = "Quarters relative to first award (t = -1 omitted)", y = "FTE coefficient",
+       caption = "Shaded = 95% CI, clustered by firm. Naive within-sample (no matched controls).") +
+  theme_light(base_size = 10) + theme(plot.title = element_text(face = "bold"),
+                                      strip.text = element_text(size = 7.5))
+```

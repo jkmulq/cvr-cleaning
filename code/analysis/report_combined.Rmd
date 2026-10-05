@@ -1,0 +1,362 @@
+---
+title: "Matched-control validation, co-bidder event studies, and selection into bidding"
+author: "Jack Mulqueeney"
+date: "`r format(Sys.Date(), '%d %b %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    self_contained: true
+    df_print: kable
+knit: >
+  (function(inputFile, encoding) {
+    project_dir <- normalizePath(dirname(inputFile), mustWork = TRUE)
+    while (!file.exists(file.path(project_dir, "cvr-cleaning.Rproj")) &&
+           dirname(project_dir) != project_dir) project_dir <- dirname(project_dir)
+    output_dir <- file.path(project_dir, "output", "docs")
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    rmarkdown::render(
+      inputFile,
+      encoding = encoding,
+      knit_root_dir = project_dir,
+      output_dir = output_dir
+    )
+  })
+---
+
+<!--
+WHAT THIS IS. One self-contained HTML for sending to coauthors.
+
+  Part I   code/analysis/estudy_matched_vs_cobidder_validation.Rmd, knitted unchanged under
+           VMC_SCORE = "log". The source is read as text, its YAML header stripped, and the body knitted
+           with knitr::knit_child() in its own environment. Edit the source and this report picks the
+           change up; there is no second copy.
+  Part II  "What predicts bidding?" only, written out in this file. It is the section of the same name
+           in estudy_winner_vs_nonwinner_matched.Rmd plus the data prep it needs; the event studies, the
+           winner/non-winner balance tables, "What predicts winning?" and the legal-form sections are
+           not carried over. DEPARTURES from the source:
+             - only tenders where every lot names a losing bidder (a winner also listed as a bidder
+               on its own lot does not count);
+             - the non-bidder pool excludes anyone named on any lot of the tender and the tender's
+               buyers (the source kept each bidder twice, once as bid = 1 and once as bid = 0);
+             - one competition-notice quarter per tender, the earliest across its lots (the source
+               could get several and recycle them);
+             - calendar lags of FTE (exactly 4 and 8 quarters back, from the full panel), not
+               row-based shift()s, which reach further back for firms with gaps;
+             - the employment panel is bounded by the notice quarters, not by the award quarters in
+               `lf_es` (the balanced +/-8 co-bidder panel, which only exists after its event study);
+             - no capital data. The source required non-missing capital at both lags, which dropped
+               firms with no registered capital although capital is not a predictor;
+             - one conditional logit replaces the source's LPMs and its two (equivalent) clogits.
+
+INPUTS: stage-4 and stage-5 artefacts (log score) for Part I; the combined tender data and the employment
+panels for Part II. Nothing here changes them.
+
+  Rscript -e 'rmarkdown::render("code/analysis/report_combined.Rmd", output_dir = "output/docs")'
+or the Knit button (the hook above writes to output/docs/report_combined.html).
+-->
+
+```{r combined-setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+# Part I is knitted as a child; a chunk label repeated across it and this file would otherwise be an error.
+options(knitr.duplicate.label = "allow")
+
+.od <- knitr::opts_knit$get("output.dir")
+project_dir <- if (!is.null(.od) && nzchar(.od)) .od else getwd()
+project_dir <- normalizePath(project_dir, mustWork = TRUE)
+while (!file.exists(file.path(project_dir, "cvr-cleaning.Rproj")) &&
+       dirname(project_dir) != project_dir) project_dir <- dirname(project_dir)
+src <- function(f) file.path(project_dir, "code", "analysis", f)
+
+# Drop a leading YAML block (--- ... ---). The sources' titles and knit hooks belong to their
+# standalone knits, not to this document.
+strip_yaml <- function(lines) {
+  if (!length(lines) || trimws(lines[1]) != "---") return(lines)
+  end <- which(trimws(lines[-1]) == "---")[1] + 1L
+  stopifnot(!is.na(end))
+  lines[-seq_len(end)]
+}
+
+# Push every markdown heading down one level so each part nests under this document's Part headings.
+# Fenced blocks are skipped: printed R output inside them starts with "## ", and is not a heading.
+demote_headings <- function(md) {
+  lines <- unlist(strsplit(paste(md, collapse = "\n"), "\n", fixed = TRUE))
+  in_fence <- FALSE
+  for (i in seq_along(lines)) {
+    if (grepl("^\\s*```", lines[i])) { in_fence <- !in_fence; next }
+    if (!in_fence && grepl("^#{1,5} ", lines[i])) lines[i] <- paste0("#", lines[i])
+  }
+  paste(lines, collapse = "\n")
+}
+
+# Knit one source into this document, in its own environment. `tag` keeps the source's figure files
+# apart from this document's (labels may repeat).
+knit_part <- function(path, tag) {
+  lines <- strip_yaml(readLines(path, warn = FALSE))
+  old <- knitr::opts_chunk$get("fig.path")
+  # A prefix on rmarkdown's own figure path, so self_contained still embeds and cleans them up.
+  knitr::opts_chunk$set(fig.path = paste0(old, tag, "-"))
+  on.exit(knitr::opts_chunk$set(fig.path = old), add = TRUE)
+  out <- knitr::knit_child(text = lines, envir = new.env(parent = globalenv()), quiet = TRUE)
+  cat(demote_headings(out), sep = "\n")
+}
+```
+
+This note summarises two pieces of analysis. 
+
+**Part I** uses the non-winning bidder panel to validate the matched-control design. For the same tender-lot, I compare treatment effects on employment for the winning firm and its matched controls, against the winning firm and its real losing co-bidders. Encouragingly, I cannot reject that the average treatment effects are equal, though there is some evidence that the full paths are different. This suggests the matched controls event studies, which show a positive effect of tender win on employment, are valid.
+
+**Part II** compares bidders (contract winners and their real losing co-bidders) with a set of plausible non-bidders, to see which firm characteristics predict bidding. I find that legal form predicts bidding, over and above the level of FTE and recent FTE growth.
+
+# How the matching works
+
+```
+ EVENT: winner W, award quarter T                                  
+   |                                                                 
+   v
+ CANDIDATE POOL
+   never-winners      never won a competitive award
+   sometimes-winners  won competitively, but not within +/-12 quarters of T
+   |
+   v
+ ELIGIBILITY  (every candidate, every event)
+   positive FTE in every pre-award quarter k = -h..-1
+   observed in at least h post-award quarters
+   |
+   v
+ CASCADE  -- stop at the first step with >= 10 eligible candidates (last rung: >= 1)
+   1. 6-digit industry  + same municipality (kommune)
+   2. 4-digit industry  + kommune
+   3. 3-digit industry  + kommune
+   4. 2-digit industry  + kommune
+   5. 2-digit industry
+   6. any industry
+   |
+   v
+ Score every candidate at each over the pre-period window, keep the minimum (ties kept)
+   log score     sqrt(mean_k (log FTE_c - log FTE_W)^2)       
+   level score   sqrt(mean_k (FTE_c - FTE_W)^2) / mean_k FTE_W
+   ranking window: full_full      k = -h..-1
+                   full_firsthalf k = -h..-(h/2+1)   (k = -h/2..-1 left out)
+
+```
+
+# Part 1: Validating the matched-control design
+
+```{r part-1, results = 'asis'}
+.old_score <- Sys.getenv("VMC_SCORE", NA_character_)
+Sys.setenv(VMC_SCORE = "log")
+knit_part(src("estudy_matched_vs_cobidder_validation.Rmd"), tag = "validation")
+if (is.na(.old_score)) Sys.unsetenv("VMC_SCORE") else Sys.setenv(VMC_SCORE = .old_score)
+```
+
+# Part 2: What predicts bidding?
+
+This section asks which firm characteristics predict bidding. The unit is a TED tender, with all its lots pooled. I define bidders as firms named as either winners or losing bidders on the tender.
+
+* A tender is kept only if every one of its lots names at least one losing bidder.
+* Non-bidders are all other firms that, in the eight quarters before the competition notice, shared a two-digit industry with one of the bidders.
+* I do not require the same kommune.
+* Anyone named on any lot of the tender, and the tender's buyers, are excluded.
+* Every firm, bidder or not, must have positive employment in the notice quarter and exactly one and two years earlier.
+
+I estimate a conditional logit concentrating out tender fixed effects.
+
+<!-- Ported from estudy_winner_vs_nonwinner_matched.Rmd: setup + `prep` (A, C), the legal-form recode
+and `wnw_simple` from `compare-wnw-data`, then `join-non-bid` and `run-models`. For what changed, see
+DEPARTURES in the header comment. -->
+
+```{r bid-setup, include=FALSE}
+suppressWarnings(suppressPackageStartupMessages({
+  library(data.table); library(fixest); library(survival)
+}))
+source(file.path(project_dir, "config.R")); source(file.path(project_dir, "code", "functions.R"))
+emp_dir <- dirs$employment
+IND_DIGITS <- 2L    # industry granularity: 2 = division
+
+# Build a firm employment panel at a given frequency, keyed by (cvr, tidx). tidx is a quarter index
+# (year*4 + quarter) or month index (year*12 + month). Audits duplicate (cvr, tidx) rows: if any disagree
+# on FTE or industry we WARN and resolve deterministically (highest-FTE row, via setorder) rather than
+# relying on raw row order.
+prep_firm <- function(freq, per, subcol) {
+  f <- emp[frequency == freq & !is.na(year) & !is.na(get(subcol)),
+           .(cvr, tidx = year * per + get(subcol), fte = as.numeric(fte), industry_code = as.character(industry_code),
+             registration_date, legal_form_short)]
+  disagree <- f[, .(bad = uniqueN(fte[!is.na(fte)]) > 1L |
+                          uniqueN(na.omit(substr(industry_code, 1L, IND_DIGITS))) > 1L),
+                by = .(cvr, tidx)][bad == TRUE, .N]
+  if (disagree) warning(sprintf("%s: %d (cvr, period) cells have DISAGREEING duplicate fte/industry; keeping highest-FTE row.", freq, disagree))
+  setorder(f, cvr, tidx, -fte)                          # deterministic tiebreak, not raw row order
+  f <- unique(f, by = c("cvr", "tidx"))
+  f[, industry_grp := substr(industry_code, 1L, IND_DIGITS)]
+  f[]
+}
+```
+
+```{r bid-prep}
+# --- A. Winners and named losing bidders on the same TED lot -----------------------------------------
+cmb <- as.data.table(read_clean(file.path(dirs$clean_data, "tender_data_2006_2026")))
+# require valid tender_id AND lot_id so missing ids can't merge distinct lots into one stack.
+wn  <- cmb[data_source == "TED" & entity %chin% c("winner", "non-winner") &
+             !is.na(cvr_final) & cvr_final != "" &
+             !is.na(tender_id) & tender_id != "" & !is.na(lot_id) & lot_id != ""]
+wn[, cvr := sprintf("%08d", suppressWarnings(as.integer(gsub("[^0-9]", "", cvr_final))))]
+wn <- wn[grepl("^[0-9]{8}$", cvr)]
+wn[, award_date := as.Date(award_date)]
+# the event date comes from the WINNER, so only winners need a dated award; non-winners are kept regardless
+# (they inherit the stack's winner date) -- this keeps more controls.
+wn <- wn[entity == "non-winner" | !is.na(award_date)]
+wn[, is_dual := ("winner" %in% entity) & ("non-winner" %in% entity), by = .(tender_id, lot_id, cvr)]
+wn <- wn[!(entity == "non-winner" & is_dual == TRUE)]                       # a firm can't be its own control
+wn[, has_both := ("winner" %in% entity) & ("non-winner" %in% entity), by = .(tender_id, lot_id)]
+wn <- wn[has_both == TRUE]
+wn[, stack_id := .GRP, by = .(tender_id, lot_id)]
+wn[, wdate := min(award_date[entity == "winner"]), by = stack_id]           # winners are all dated -> non-NA
+
+# Simplify winner and non-winner panel
+wnw_simple <- wn[, .(stack_id, tender_id, lot_id,
+                     entity, cvr_final,
+       wdate, competition_publication_date,
+       qidx_wdate = year(wdate) * 4L + quarter(wdate),
+       qidx_cdate = year(competition_publication_date) * 4L + quarter(competition_publication_date))]
+setorder(wnw_simple, stack_id, -entity, cvr_final)
+
+# --- B. Firm employment panel (quarterly-spliced), with duplicate audit ------------------------------
+emp <- as.data.table(readRDS(file.path(emp_dir, "firm_employment_panel_all.rds")))
+nonwin_out <- file.path(emp_dir, "cvr_employment_history_nonwinner.rds")
+if (file.exists(nonwin_out))
+  emp <- rbind(emp, as.data.table(readRDS(nonwin_out)), use.names = TRUE, fill = TRUE)
+emp[, cvr := as.character(cvr)]
+firm_q <- prep_firm("quarterly_spliced", 4L,  "quarter")
+
+# Recode legal form to simplify counts
+firm_q[, legal_form_short := fifelse(legal_form_short %in% c("A/S", "APS", "ENK"), legal_form_short, "Other")]
+```
+
+```{r bid-nonbidders}
+# Horizon
+H <- 8
+
+# We focus only on the tenders where every lot names at least one losing bidder (non-winner): on a lot
+# without one, the losers are unknown and could sit in the non-bidder pool
+lot_nw <- cmb[data_source == "TED" &
+                tender_id %in% wnw_simple[, unique(tender_id)] &
+                entity %chin% c("winner", "non-winner"), ]
+# A winner also listed as a bidder on the same lot is not a losing bidder (cmb keeps these dual rows)
+lot_nw[, is_dual := !is.na(cvr_final) & cvr_final != "" & "winner" %in% entity & "non-winner" %in% entity,
+       by = .(tender_id, lot_id, cvr_final)]
+lot_nw[, has_nw := any(entity == "non-winner" & !is_dual), by = .(tender_id, lot_id)]
+lot_nw[, all_has_nw := all(has_nw), by = tender_id]
+bidder_cvrs <- lot_nw[all_has_nw == TRUE, unique(cvr_final)]
+tenders_with_nw <- lot_nw[all_has_nw == TRUE, unique(tender_id)]
+
+# Buyer CVRs of each kept tender, to drop from its non-bidder pool (a buyer cannot bid on its own tender)
+tender_buyers <- unique(cmb[data_source == "TED" & entity == "buyer" & tender_id %in% tenders_with_nw &
+                              !is.na(cvr_final) & cvr_final != "", .(tender_id, cvr_final)])
+
+# Competition-notice quarter of each lot. The panel runs from H quarters before the earliest notice (the
+# industry window) to H after the latest.
+lot_nw[, comp_tidx := year(competition_publication_date) * 4L + quarter(competition_publication_date)]
+notice_periods <- sort(unique(lot_nw[all_has_nw == TRUE, comp_tidx]))
+min_period <- min(notice_periods) - H
+max_period <- max(notice_periods) + H
+
+# Filter
+firm_q_bidders <- firm_q[cvr %in% bidder_cvrs, ]
+firm_q_bidders <- firm_q_bidders[tidx %in% min_period:max_period & !is.na(industry_grp) & industry_grp != "" & fte > 0, ]
+firm_q_sample_frame <- firm_q[tidx %in% min_period:max_period & !is.na(industry_grp) & industry_grp != "" & fte > 0, ]
+
+# Make calendar lags of FTE: exactly 4 and 8 quarters before, looked up in the full panel. (A row-based
+# shift() on this frame would reach further back for firms with gaps, since fte <= 0 quarters are dropped.)
+firm_q_sample_frame[, `:=`(t4 = tidx - 4L, t8 = tidx - 8L)]
+firm_q_sample_frame[firm_q, on = .(cvr, t4 = tidx), fte_l1y := i.fte]
+firm_q_sample_frame[firm_q, on = .(cvr, t8 = tidx), fte_l2y := i.fte]
+
+# Keep observations with positive employment one and two years earlier
+firm_q_sample_frame <- firm_q_sample_frame[fte_l1y > 0 & fte_l2y > 0, ]
+
+# Create filtering meta data at event level.
+contract_meta <- lapply(tenders_with_nw, function(sid) {
+
+  # Bidder CVRs (includes winners and non-winning bidders)
+  bidder_cvrs <- wnw_simple[entity %in% c("winner", "non-winner") & tender_id == sid, unique(cvr_final)]
+
+  # Get dates. One notice quarter per tender, the earliest across its lots: the date is set per lot and
+  # can differ or be missing, and a vector here would recycle silently in the comparisons below.
+  award_qidx <- unique(wnw_simple[tender_id == sid & entity == "winner", qidx_wdate])
+  comp_qidx <- suppressWarnings(lot_nw[tender_id == sid, min(comp_tidx, na.rm = TRUE)])
+  if (!is.finite(comp_qidx)) comp_qidx <- NA_real_
+
+  # Get industry groups observed in periods before publication of competition notice
+  pre_comp_industries <- unique(firm_q_bidders[(tidx <= comp_qidx & tidx >= comp_qidx - H) &
+                                                 cvr %in% bidder_cvrs,
+                                               industry_grp])
+
+  # Report metadata
+  list(stack_id = sid, bidder_cvrs = bidder_cvrs,
+       award_tidx = award_qidx, comp_tidx = comp_qidx, industry_groups = pre_comp_industries)
+
+})
+
+# Use contract meta-data to find plausible non-bidders (same industry groups as the bidders)
+nonbidder_dt <- lapply(contract_meta, function(contract){
+
+  # Extract contract data
+  bidder_industry_groups <- contract$industry_groups
+  comp_qidx <- contract$comp_tidx
+
+  # Get possible bidders
+  possible_bidders_emp <- firm_q_sample_frame[(tidx <= comp_qidx & tidx >= comp_qidx - H), ]
+  possible_bidders_emp[, possible_bidder := any(industry_grp %chin% bidder_industry_groups), by = cvr]
+  possible_bidders_emp <- possible_bidders_emp[possible_bidder == TRUE, ]
+  possible_bidders_emp <- possible_bidders_emp[tidx == comp_qidx, ]
+  possible_bidders_emp$stack_id <- contract$stack_id
+  possible_bidders_emp[, bid := 0]
+  
+  # Remove anyone named as a bidder on any lot of the tender, and the tender's buyers
+  excl_cvrs <- c(lot_nw[tender_id == contract$stack_id, cvr_final],
+                 tender_buyers[tender_id == contract$stack_id, cvr_final])
+  possible_bidders_emp <- possible_bidders_emp[!(cvr %chin% excl_cvrs), ]
+  
+  # Get equivalent bidders info
+  bidders_emp <- firm_q_sample_frame[cvr %chin% contract$bidder_cvrs, ]
+  bidders_emp <- bidders_emp[tidx == comp_qidx, ]
+  bidders_emp[, bid := 1]
+  bidders_emp$stack_id <- contract$stack_id
+
+  # Bind
+  out <- rbindlist(list(bidders_emp, possible_bidders_emp), fill = TRUE)
+
+  # Return
+  return(out)
+
+})
+
+nonbidder_dt <- rbindlist(nonbidder_dt)
+setorder(nonbidder_dt, stack_id, -bid, cvr)
+
+# Create firm age as another variable
+nonbidder_dt[, by_tidx := year(registration_date)*4 + quarter(registration_date)] # Firm birth year as a quarter
+nonbidder_dt[, age_q := tidx - by_tidx]
+```
+
+```{r bid-models}
+
+## Conditional Logit, concentrating out the stack level fixed effects.
+## For legal form, ApS is the reference category
+nonbidder_dt[, legal_form_short := relevel(factor(legal_form_short), ref = "APS")]
+nonbidder_dt[, fte_x := fte / 100]
+nonbidder_dt[, fte_growth_1y := log(fte / fte_l1y)]
+nonbidder_dt[, fte_growth_2y := log(fte_l1y / fte_l2y)]
+
+# Run model
+cmod <- clogit(bid ~ fte_x + fte_growth_1y + fte_growth_2y + legal_form_short + strata(stack_id),
+             data = nonbidder_dt, cluster = cvr, method = "efron")
+
+# Print output
+summary(cmod)
+```
+

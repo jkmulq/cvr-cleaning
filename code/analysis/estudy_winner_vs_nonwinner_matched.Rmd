@@ -1,0 +1,654 @@
+---
+title: "Matched winner vs non-winner event studies (TED co-bidder controls)"
+date: "`r format(Sys.Date(), '%d %b %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    fig_width: 11
+    fig_height: 5
+    df_print: kable
+---
+
+<!--
+Running this file -- it is standalone; there is no companion .R script.
+  1. Knit          : the Knit button, or
+                     Rscript -e 'rmarkdown::render("code/analysis/estudy_winner_vs_nonwinner_matched.Rmd")'
+  2. Interactively : open it and run chunks. project_dir falls back to getwd() and walks up to the
+                     .Rproj marker, so this works from the repo root or from code/analysis/.
+  3. As a script   : knitr::purl("code/analysis/estudy_winner_vs_nonwinner_matched.Rmd", output = "/tmp/es.R")
+                     extracts the code on demand -- generate it, do not hand-maintain a second copy.
+Parameters are ESWNW_* environment variables (see the setup chunk); ESWNW_SAVE=0 skips writing .rds.
+NOT carried over from the retired .R: the optional Virk pull. A report should not make API calls as a
+side effect -- employment pulls now belong to code/matching/1_build_universe.R.
+-->
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+                      fig.align = "center", dpi = 110)
+suppressWarnings(suppressPackageStartupMessages({
+  library(data.table); library(fixest); library(ggplot2)
+}))
+# knitr::opts_knit$get("output.dir") is NULL when NOT knitting (running chunks interactively), and
+# nzchar(NULL) is logical(0), so a bare if() on it errors with "argument is of length zero". Fall back to
+# getwd(), then walk up to the .Rproj marker so this works from code/analysis/ as well as the repo root.
+project_dir <- local({
+  d <- knitr::opts_knit$get("output.dir")
+  if (is.null(d) || !nzchar(d)) d <- getwd()
+  d <- normalizePath(d, mustWork = TRUE)
+  while (!file.exists(file.path(d, "cvr-cleaning.Rproj")) && dirname(d) != d) d <- dirname(d)
+  d
+})
+knitr::opts_knit$set(root.dir = project_dir)
+setwd(project_dir); source("config.R"); source("code/functions.R")
+emp_dir <- dirs$employment
+
+# Parameters are env-overridable so this file can be driven non-interactively without editing it --
+# see the "Running this file" note above. Defaults reproduce the previous hardcoded behaviour.
+.envint <- function(k, d) { v <- Sys.getenv(k, ""); if (nzchar(v)) as.integer(v) else as.integer(d) }
+.envnum <- function(k, d) { v <- Sys.getenv(k, ""); if (nzchar(v)) as.numeric(v) else as.numeric(d) }
+.envvec <- function(k, d) { v <- Sys.getenv(k, ""); x <- if (nzchar(v)) v else d
+                            as.integer(strsplit(trimws(x), "[ ,]+")[[1]]) }
+
+MIN_FTE    <- .envnum("ESWNW_MIN_FTE",    0)
+MIN_STACKS <- .envint("ESWNW_MIN_STACKS", 20)
+IND_DIGITS <- .envint("ESWNW_IND_DIGITS", 2)    # industry FE granularity: 2 = division
+QUARTER_WINDOWS <- .envvec("ESWNW_QUARTER_WINDOWS", "8 4")    # +/- quarters
+SAVE_RDS   <- Sys.getenv("ESWNW_SAVE", "1") == "1"   # persist models + panel per window
+
+# Build a firm employment panel at a given frequency, keyed by (cvr, tidx). tidx is a quarter index
+# (year*4 + quarter) or month index (year*12 + month). Audits duplicate (cvr, tidx) rows: if any disagree
+# on FTE or industry we WARN and resolve deterministically (highest-FTE row, via setorder) rather than
+# relying on raw row order.
+prep_firm <- function(freq, per, subcol) {
+  f <- emp[frequency == freq & !is.na(year) & !is.na(get(subcol)),
+           .(cvr, tidx = year * per + get(subcol), fte = as.numeric(fte), industry_code = as.character(industry_code),
+             registration_date, capital_amount, capital_currency, legal_form_short)]
+  disagree <- f[, .(bad = uniqueN(fte[!is.na(fte)]) > 1L |
+                          uniqueN(na.omit(substr(industry_code, 1L, IND_DIGITS))) > 1L),
+                by = .(cvr, tidx)][bad == TRUE, .N]
+  if (disagree) warning(sprintf("%s: %d (cvr, period) cells have DISAGREEING duplicate fte/industry; keeping highest-FTE row.", freq, disagree))
+  setorder(f, cvr, tidx, -fte)                          # deterministic tiebreak, not raw row order
+  f <- unique(f, by = c("cvr", "tidx"))
+  f[, industry_grp := substr(industry_code, 1L, IND_DIGITS)]
+  f[]
+}
+
+# One matched-control (stacked) event study per window, printed as a tab. Deshpande-Li-style structure:
+# i(event_time, treated) with FE = cvr + tidx^industry_grp + treated + event_time (NO stack x event_time or
+# stack x cvr FE -- that would change the estimator). `firm` has (cvr, tidx, fte, industry_grp); `matchtab`
+# has (stack_id, cvr, entity, event_tidx) in the SAME time unit (quarters or months).
+estudy_section <- function(firm, matchtab, windows, unit) {
+  for (H in windows) {
+    reg <- firm[matchtab, on = "cvr", allow.cartesian = TRUE, nomatch = NULL]
+    reg[, event_time := tidx - event_tidx]
+    # keep periods in the window with strictly positive FTE AND a present industry_grp: industry enters the
+    # FE, so a missing value would be dropped by feols later and silently destroy the balance.
+    reg <- reg[event_time %between% c(-H, H) & !is.na(fte) & fte > MIN_FTE &
+                 !is.na(industry_grp) & industry_grp != ""]
+    # balanced firm: exactly 2H+1 rows AND 2H+1 distinct periods spanning -H..H (catches gaps AND duplicates)
+    reg[, `:=`(n_row = .N, n_per = uniqueN(event_time), tmin = min(event_time), tmax = max(event_time)),
+        by = .(stack_id, cvr)]
+    reg <- reg[n_row == 2L * H + 1L & n_per == 2L * H + 1L & tmin == -H & tmax == H]
+    reg[, `:=`(has_w = "winner" %in% entity, has_n = "non-winner" %in% entity), by = stack_id]
+    reg <- reg[has_w == TRUE & has_n == TRUE]
+    n_stk <- uniqueN(reg$stack_id)
+
+    cat(sprintf("\n\n## +/-%d %s\n\n", H, unit))
+    if (n_stk < MIN_STACKS) { cat(sprintf("*Only %d stacks (< %d) at this window - skipped.*\n\n", n_stk, MIN_STACKS)); next }
+
+    # balance audit: every retained firm is exactly balanced on -H..H (belt-and-braces on the filter above)
+    aud <- reg[, .(n = .N, u = uniqueN(event_time), lo = min(event_time), hi = max(event_time)), by = .(stack_id, cvr)]
+    stopifnot(all(aud$n == 2L * H + 1L), all(aud$u == 2L * H + 1L), all(aud$lo == -H), all(aud$hi == H))
+
+    reg[, treated := as.integer(entity == "winner")]
+    reg[, weight  := 1 / uniqueN(cvr), by = .(stack_id, entity)]     # each stack-arm sums to 1
+    reg[, event_time := relevel(factor(event_time), ref = "-1")]
+    n_w <- reg[treated == 1, uniqueN(cvr)]; n_n <- reg[treated == 0, uniqueN(cvr)]
+    cat(sprintf("**%d stacks** | %d winners vs %d non-winners | %d firm-%s.\n\n", n_stk, n_w, n_n, nrow(reg), unit))
+    brk <- seq(-H, H, by = max(1L, H %/% 4L))
+
+    # Two-way clustering (tender + firm): allows arbitrary correlation across co-bidders within a tender AND
+    # across repeated appearances of the same firm. (stack-only, ~stack_id, is the closest single-way D-L
+    # analogue -- swap the `cluster =` line for that as a robustness check.)
+    # fixef.rm = "none": keep the full balanced panel -- otherwise fixest drops singleton tidx^industry_grp
+    # cells (one obs in a calendar-period x industry cell), which would silently unbalance the sample.
+    # i(event_time, treated) gives one interaction per k only if treated is numeric 0/1; a factor gets one
+    # per level, collinear with the event_time FE, and fixest may drop the wrong ones.
+    stopifnot(is.numeric(reg$treated), all(reg$treated %in% c(0, 1)))
+    est <- feols(c(fte, log(fte)) ~ i(event_time, treated, ref = "-1") |
+                  treated + event_time, 
+                 data = reg, 
+                 cluster = ~cvr, weights = ~weight,
+                 fixef.rm = "none")
+    stopifnot(nobs(est[[1]]) == nrow(reg), nobs(est[[2]]) == nrow(reg))   # fixest kept every observation
+    # Persist the fitted models and the estimation panel. Quarterly keeps the filenames the old .R wrote
+    # (estudy_wnw_h8.rds / _h4.rds) so anything already reading them keeps working; monthly uses _m.
+    if (SAVE_RDS) {
+      .f <- file.path(emp_dir, sprintf("estudy_wnw_%s%d.rds",
+                                       if (identical(unit, "quarters")) "h" else "m", H))
+      saveRDS(list(models = est, panel = reg, window = H, unit = unit,
+                   min_fte = MIN_FTE, ind_digits = IND_DIGITS, run_at = Sys.time()), .f)
+    }
+    # `reg` is local to estudy_section(), so it disappears when the chunk finishes. Stash each window's
+    # estimation panel (and its models) in the global env so they are reachable after running chunks
+    # interactively: es_panels$h8, es_panels$h4, es_panels$m12, es_panels$m6.
+    .nm <- sprintf("%s%d", if (identical(unit, "quarters")) "h" else "m", H)
+    if (!exists("es_panels", envir = .GlobalEnv)) assign("es_panels", list(), envir = .GlobalEnv)
+    if (!exists("es_models", envir = .GlobalEnv)) assign("es_models", list(), envir = .GlobalEnv)
+    .p <- get("es_panels", envir = .GlobalEnv); .p[[.nm]] <- copy(reg)
+    .m <- get("es_models", envir = .GlobalEnv); .m[[.nm]] <- est
+    assign("es_panels", .p, envir = .GlobalEnv); assign("es_models", .m, envir = .GlobalEnv)
+
+    # graph 1: coefficient event study, FTE level + log FTE, 95% CI
+    co <- data.table()
+    for (m in c(1L, 2L)) {
+      ct <- as.data.table(coeftable(est[[m]]), keep.rownames = "term")[grepl("event_time", term)]
+      ct[, event_time := as.integer(gsub(".*event_time::(-?[0-9]+).*", "\\1", term))]
+      ct <- rbind(ct[, .(event_time, est = Estimate, se = `Std. Error`)], data.table(event_time = -1L, est = 0, se = 0))
+      ct[, outcome := c("FTE (level)", "log FTE")[m]]
+      co <- rbind(co, ct)
+    }
+    co[, `:=`(lo = est - 1.96 * se, hi = est + 1.96 * se)]; setorder(co, outcome, event_time)
+    print(ggplot(co, aes(event_time, est)) +
+      geom_hline(yintercept = 0, colour = "grey50", linewidth = 0.3) +
+      geom_vline(xintercept = -0.5, linetype = "dashed", colour = "grey60") +
+      geom_ribbon(aes(ymin = lo, ymax = hi), fill = "#2c7fb8", alpha = 0.15) +
+      geom_line(colour = "#2c7fb8", linewidth = 0.5) + geom_point(colour = "#2c7fb8", size = 1.8) +
+      facet_wrap(~ outcome, scales = "free_y") + scale_x_continuous(breaks = brk) +
+      labs(title = sprintf("Employment response: winner - non-winner co-bidders (+/-%d %s)", H, unit),
+           subtitle = sprintf("Matched controls | %d stacks, %d winners vs %d non-winners", n_stk, n_w, n_n),
+           x = sprintf("%s relative to award (t = 0 = award %s; t = -1 omitted)", tools::toTitleCase(unit), sub("s$", "", unit)),
+           y = "Effect (winner - non-winner)", caption = "Shaded = 95% CI, two-way clustered by tender (stack) + firm.") +
+      theme_light(base_size = 11) + theme(plot.title = element_text(face = "bold")))
+    cat("\n\n")
+
+    # graph 2: weighted mean FTE levels with OLS pre/post trends, labelled slope [95% CI]
+    d <- reg[, .(m_fte = weighted.mean(fte, w = weight)), by = .(event_time, entity)]
+    d[, event_time := as.integer(as.character(event_time))]
+    d[, period := ifelse(event_time < 0, "pre", "post")]
+    lab <- d[, { mm <- lm(m_fte ~ event_time); ci <- confint(mm)["event_time", ]; xx <- mean(event_time)
+      .(x = xx, y = predict(mm, data.frame(event_time = xx)),
+        txt = sprintf("slope %.2f\n[%.2f, %.2f]", coef(mm)[["event_time"]], ci[[1]], ci[[2]])) }, by = .(entity, period)]
+    lab[, ny := fifelse((entity == "winner") == (period == "post"), 26, -26)]
+    print(ggplot(d, aes(event_time, m_fte, colour = entity)) +
+      geom_point() + geom_line(aes(group = entity), alpha = 0.35) +
+      geom_smooth(aes(group = interaction(entity, period)), method = "lm", se = FALSE, linewidth = 0.9) +
+      geom_vline(xintercept = -0.5, linetype = "dashed", colour = "grey60") +
+      geom_label(data = lab, aes(x, y + ny, label = txt), size = 2.9, show.legend = FALSE) +
+      scale_x_continuous(breaks = brk) +
+      labs(title = sprintf("Weighted mean FTE with OLS pre/post trends (+/-%d %s)", H, unit),
+           x = sprintf("%s relative to award", tools::toTitleCase(unit)), y = "Weighted mean FTE", colour = NULL) +
+      theme_minimal(base_size = 11))
+    cat("\n\n")
+  }
+}
+```
+
+**Balance restriction:** a firm is retained only if it has strictly positive FTE *and* a non-missing industry
+in **every one of the 2H+1 event periods** around its stack's award (`t = 0` = award period, `t = -1`
+omitted). Firms with any gap, missing FTE, or missing industry in the window are dropped.
+
+```{r prep}
+# --- A. Matched winner/non-winner set from the delivered combined ------------------------------------
+cmb <- as.data.table(read_clean(file.path(dirs$clean_data, "tender_data_2006_2026")))
+# require valid tender_id AND lot_id so missing ids can't merge distinct lots into one stack.
+wn  <- cmb[data_source == "TED" & entity %chin% c("winner", "non-winner") &
+             !is.na(cvr_final) & cvr_final != "" &
+             !is.na(tender_id) & tender_id != "" & !is.na(lot_id) & lot_id != ""]
+wn[, cvr := sprintf("%08d", suppressWarnings(as.integer(gsub("[^0-9]", "", cvr_final))))]
+wn <- wn[grepl("^[0-9]{8}$", cvr)]
+wn[, award_date := as.Date(award_date)]
+# the event date comes from the WINNER, so only winners need a dated award; non-winners are kept regardless
+# (they inherit the stack's winner date) -- this keeps more controls.
+wn <- wn[entity == "non-winner" | !is.na(award_date)]
+wn[, is_dual := ("winner" %in% entity) & ("non-winner" %in% entity), by = .(tender_id, lot_id, cvr)]
+wn <- wn[!(entity == "non-winner" & is_dual == TRUE)]                       # a firm can't be its own control
+wn[, has_both := ("winner" %in% entity) & ("non-winner" %in% entity), by = .(tender_id, lot_id)]
+wn <- wn[has_both == TRUE]
+wn[, stack_id := .GRP, by = .(tender_id, lot_id)]
+wn[, wdate := min(award_date[entity == "winner"]), by = stack_id]           # winners are all dated -> non-NA
+match_q <- unique(wn[, .(stack_id, cvr, entity, event_tidx = year(wdate) * 4L  + quarter(wdate))])
+
+# --- B. Carry the lot's identifiers onto the panel ---------------------------------------------------
+# stack_id is a .GRP integer: it names a lot only within this knit, so a reader of estudy_wnw_h8.rds
+# cannot tell which procurement a stack is. lot_key is built to the same recipe as the matching
+# pipeline's EVENT_META_COLS (0_matching_utils.R) and joins straight onto event_lot_key.
+# Built per STACK and merged, not selected alongside cvr in the unique() above: ted_notice_id is only
+# ASSUMED constant within a lot, and were it ever to vary, carrying it through that unique() would
+# duplicate firm rows and silently unbalance the panel.
+if (!"ted_notice_id" %in% names(wn)) wn[, ted_notice_id := NA_character_]
+wn[, ted_notice_id := as.character(ted_notice_id)]   # else all-NA groups type-clash with the rest
+stack_key <- unique(wn[, .(stack_id, tender_id, lot_id)])                  # 1:1 with stack_id by .GRP
+stack_key[, lot_key := paste("TED", tender_id, lot_id, sep = "|")]         # wn is filtered to TED
+stack_key <- merge(stack_key,
+                   wn[, .(ted_notice_id = { v <- sort(unique(ted_notice_id[!is.na(ted_notice_id)]))
+                                            if (length(v)) v[1L] else NA_character_ }), by = stack_id],
+                   by = "stack_id")
+.n_mq <- nrow(match_q)
+match_q <- merge(match_q, stack_key, by = "stack_id")
+stopifnot(nrow(stack_key) == uniqueN(wn$stack_id), nrow(match_q) == .n_mq)  # many-to-one, no fan-out
+
+# --- C. Firm employment panel (quarterly-spliced), with duplicate audit ------------------------------
+emp <- as.data.table(readRDS(file.path(emp_dir, "firm_employment_panel_all.rds")))
+nonwin_out <- file.path(emp_dir, "cvr_employment_history_nonwinner.rds")
+if (file.exists(nonwin_out))
+  emp <- rbind(emp, as.data.table(readRDS(nonwin_out)), use.names = TRUE, fill = TRUE)
+emp[, cvr := as.character(cvr)]
+firm_q <- prep_firm("quarterly_spliced", 4L,  "quarter")
+```
+
+# Compare winners and non-winners
+```{r compare-wnw-data}
+
+# Convert capital up front
+firm_q[, capital_amount_dkk := fifelse(capital_currency == "EUR", capital_amount * 7.46038, capital_amount)]
+firm_q[, capital_amount_dkk := capital_amount_dkk / 1e6]  # millions of DKK
+
+# Recode legal form to simplify counts
+firm_q[, legal_form_short := fifelse(legal_form_short %in% c("A/S", "APS", "ENK"), legal_form_short, "Other")]
+
+# Simplify winner and non-winner panel
+wnw_simple <- wn[, .(stack_id, tender_id, lot_id,
+                     entity, cvr_final, 
+       wdate, competition_publication_date,
+       qidx_wdate = year(wdate) * 4L + quarter(wdate),
+       qidx_cdate = year(competition_publication_date) * 4L + quarter(competition_publication_date))]
+
+# Lag indices off the win date: qidx = year*4 + quarter, so 1 year back = 4 quarters, 2 years = 8
+wnw_simple[, qidx_wdate_l1 := qidx_wdate - 4L]
+wnw_simple[, qidx_wdate_l2 := qidx_wdate - 8L]
+
+# Join on employment at win date and publication of competition notice
+# at the win date
+wnw_simple[firm_q, on = .(cvr_final = cvr, qidx_wdate = tidx),
+           `:=`(fte_at_win           = i.fte,
+                industry_code_at_win = i.industry_code,
+                industry_grp_at_win  = i.industry_grp,
+                capital_at_win = i.capital_amount_dkk,
+                legal_form_at_win = i.legal_form_short)]
+
+# at the competition-notice date
+wnw_simple[firm_q, on = .(cvr_final = cvr, qidx_cdate = tidx),
+           `:=`(fte_at_comp           = i.fte,
+                industry_code_at_comp = i.industry_code,
+                industry_grp_at_comp  = i.industry_grp,
+                capital_at_comp = i.capital_amount_dkk,
+                legal_form_at_comp = i.legal_form_short)]
+
+# 1 year before the win date
+wnw_simple[firm_q, on = .(cvr_final = cvr, qidx_wdate_l1 = tidx),
+           `:=`(fte_l1y           = i.fte,
+                industry_code_l1y = i.industry_code,
+                industry_grp_l1y  = i.industry_grp,
+                capital_l1y = i.capital_amount_dkk,
+                legal_form_l1y = i.legal_form_short)]
+
+# 2 years before the win date
+wnw_simple[firm_q, on = .(cvr_final = cvr, qidx_wdate_l2 = tidx),
+           `:=`(fte_l2y           = i.fte,
+                industry_code_l2y = i.industry_code,
+                industry_grp_l2y  = i.industry_grp,
+                capital_l2y = i.capital_amount_dkk,
+                legal_form_l2y = i.legal_form_short)]
+
+# Join one registration date
+wnw_simple[firm_q, on = .(cvr_final = cvr, qidx_wdate = tidx),
+           `:=`(registration_date = i.registration_date)]
+
+# Create age
+wnw_simple[, age_at_win := as.integer(wdate - registration_date) / 365.25]
+wnw_simple[, age_at_comp := as.integer(competition_publication_date - registration_date) / 365.25]
+wnw_simple[, age_l1y := age_at_win - 1]
+wnw_simple[, age_l2y := age_at_win - 2]
+
+# Treated and non-treated weights for each variable
+vars <- c("fte_at_win", "fte_at_comp", "fte_l1y", "fte_l2y",
+          "capital_at_win", "capital_at_comp", "capital_l1y", "capital_l2y",
+          "age_at_win", "age_at_comp")
+
+wnw_simple[, paste0("w_", vars) := lapply(.SD, function(x) {
+    n <- sum(!is.na(x))
+    if (n == 0L) rep(NA_real_, length(x)) else as.numeric(!is.na(x)) / n
+  }), by = .(stack_id, entity), .SDcols = vars]
+
+
+# Set order
+setorder(wnw_simple, stack_id, -entity, cvr_final)
+
+```
+
+```{r compare-wnw-tables}
+
+# Weighted mean / SD of one variable, using that variable's own weight column
+wstats <- function(x, w) {
+  sw <- sum(w, na.rm = TRUE)                      
+  mu <- sum(x * w, na.rm = TRUE) / sw
+  list(n = sum(!is.na(x)), mean = mu,
+       sd = sqrt(sum(w * (x - mu)^2, na.rm = TRUE) / sw))
+}
+
+# One row per variable x entity
+balance <- rbindlist(lapply(vars, function(v)
+  wnw_simple[, c(list(variable = v), wstats(get(v), get(paste0("w_", v)))), by = entity]))
+
+# Winners and non-winners side by side, plus the normalised difference
+balance[, entity := fifelse(entity == "winner", "win", "nonwin")]
+tab <- dcast(balance, variable ~ entity, value.var = c("n", "mean", "sd"))
+tab[, norm_diff := (mean_win - mean_nonwin) / sqrt((sd_win^2 + sd_nonwin^2) / 2)]
+
+knitr::kable(tab, digits = 2,
+             caption = "Weighted balance: winners vs non-winning bidders on the same lot")
+
+```
+
+```{r compare-wnw-legal-form, fig.width = 10, fig.height = 7, fig.align='center'}
+lf_vars <- c(at_win = "legal_form_at_win", at_comp = "legal_form_at_comp",
+             l1y    = "legal_form_l1y",    l2y     = "legal_form_l2y")
+
+# Weights that respect each legal-form column's own missingness (same rule as the numeric vars)
+wnw_simple[, paste0("w_", lf_vars) := lapply(.SD, function(x) {
+    n <- sum(!is.na(x)); if (n == 0L) rep(NA_real_, length(x)) else as.numeric(!is.na(x)) / n
+  }), by = .(stack_id, entity), .SDcols = unname(lf_vars)]
+
+# Long: one row per (firm-lot x time point), carrying the form and its matching weight
+lf <- melt(wnw_simple, id.vars = c("stack_id", "entity"),
+           measure.vars = list(form = unname(lf_vars), w = paste0("w_", unname(lf_vars))),
+           variable.name = "when")
+lf[, when := factor(when, labels = names(lf_vars))]
+
+# Weighted share of each legal form within (time point, entity)
+shares <- lf[!is.na(form), .(w = sum(w, na.rm = TRUE)), by = .(when, entity, form)]
+shares[, share := w / sum(w), by = .(when, entity)]
+setorder(shares, -share)
+shares[, form := factor(form, levels = unique(shares[when == "at_win", form]))]
+
+ggplot(shares, aes(x = form, y = share, fill = entity)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  facet_wrap(~ when, nrow = 2) +
+  scale_fill_manual(values = c("winner" = "#2a78d6", "non-winner" = "#eb6834"), name = NULL) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), expand = expansion(c(0, 0.05))) +
+  labs(title = "Legal form of winners vs non-winning bidders on the same lot",
+       subtitle = "Weighted shares; each stack-arm contributes equally",
+       x = NULL, y = "Share of firms") +
+  theme_light(base_size = 11) +
+  theme(plot.title = element_text(face = "bold"), legend.position = "top",
+        panel.grid.major.x = element_blank(), panel.grid.minor = element_blank())
+```
+
+# Quarterly event studies {.tabset}
+
+```{r quarterly, results='asis', fig.width=11, fig.height=5}
+estudy_section(firm_q, match_q, QUARTER_WINDOWS, "quarters")
+```
+
+# What predicts winning?
+This section tries to use the winner and non-winner panel to understand the predictors between winning and non-winning.
+
+```{r basics}
+# Filter to pre-award, including award
+win_pred_data <- lf_es[event_time <= 0, ]
+
+# Code a win indicator
+win_pred_data[, win := as.integer(entity == "winner" & event_time == 0)]
+
+# Order 
+setorder(win_pred_data, stack_id, -entity, cvr, event_time)
+
+# Create FTE/capital growth from 1 year/2 year ago
+win_pred_data[, `:=`(
+  fte_growth_21 = shift(fte, n = 4, type = "lag") / shift(fte, n = 8, type = "lag"),
+  fte_growth_10 = fte / shift(fte, n = 4, type = "lag"),
+  k_growth_21 = shift(capital_amount_dkk, n = 4, type = "lag") / shift(capital_amount_dkk, n = 8, type = "lag"),
+  k_growth_10 = capital_amount_dkk / shift(capital_amount_dkk, n = 4, type = "lag")
+), by = .(stack_id, entity, cvr)]
+
+# Run regression
+feols(win ~ fte_growth_21 + fte_growth_10 + k_growth_21 + k_growth_10 | stack_id, 
+      data = win_pred_data[event_time == 0, ],
+      cluster = ~stack_id + cvr)
+
+```
+
+# What predicts bidding?
+This section tries to use the winner and non-winner panel to understand the predictors between bidding and non-bidding. Here I define a non-bidder as a firm who is the same industry set as the known bidders and with positive employment, over the whole pre-period.
+
+```{r join-non-bid}
+
+# Horizon
+H <- 8
+
+# Filter firm employment a bit more so things are faster
+bidder_cvrs <- unique(wnw_simple$cvr_final)
+winning_periods <- sort(unique(lf_es$event_tidx))
+min_period <- min(winning_periods) - H
+max_period <- max(winning_periods) + H
+
+# Filter
+firm_q_bidders <- firm_q[cvr %in% bidder_cvrs, ]
+firm_q_bidders <- firm_q_bidders[tidx %in% min_period:max_period & !is.na(industry_grp) & industry_grp != "" & fte > 0, ]
+firm_q_sample_frame <- firm_q[tidx %in% min_period:max_period & !is.na(industry_grp) & industry_grp != "" & fte > 0, ]
+
+# Make lags of FTE and employment
+firm_q_sample_frame[, k_l2y := shift(capital_amount_dkk, n = 8, type = "lag"), by = cvr]
+firm_q_sample_frame[, fte_l2y := shift(fte, n = 8, type = "lag"), by = cvr]
+firm_q_sample_frame[, k_l1y := shift(capital_amount_dkk, n = 4, type = "lag"), by = cvr]
+firm_q_sample_frame[, fte_l1y := shift(fte, n = 4, type = "lag"), by = cvr]
+
+# Filter out observations that don't have the lagged amounts available
+firm_q_sample_frame <- firm_q_sample_frame[!is.na(k_l2y) & !is.na(k_l1y) & !is.na(fte_l2y) & !is.na(fte_l1y), ]
+  
+# Create filtering meta data at event level.
+contract_meta <- lapply(unique(wnw_simple$tender_id), function(sid) {
+  
+  # Bidder CVRs (includes winners and non-winng bidders)
+  bidder_cvrs <- wnw_simple[entity %in% c("winner", "non-winner") & tender_id == sid, unique(cvr_final)]
+  
+  # Get dates
+  award_qidx <- unique(wnw_simple[tender_id == sid & entity == "winner", qidx_wdate])
+  comp_qidx <- unique(wnw_simple[tender_id == sid & entity == "winner", qidx_cdate])
+  
+  # Get industry groups observed in periods before publication of competition notice
+  pre_comp_industries <- unique(firm_q_bidders[(tidx <= comp_qidx & tidx >= comp_qidx - H) &
+                                                 cvr %in% bidder_cvrs, 
+                                               industry_grp])
+  
+  # Report metadata
+  list(stack_id = sid, bidder_cvrs = bidder_cvrs,
+       award_tidx = award_qidx, comp_tidx = comp_qidx, industry_groups = pre_comp_industries)
+  
+}) 
+
+# Use contract meta-data to find plausible non-bidders (same industry groups as the bidders)
+nonbidder_dt <- lapply(contract_meta, function(contract){
+  
+  # Extract contract data
+  bidder_industry_groups <- contract$industry_groups
+  comp_qidx <- contract$comp_tidx
+  
+  # Get possible bidders
+  possible_bidders_emp <- firm_q_sample_frame[(tidx <= comp_qidx & tidx >= comp_qidx - H), ]
+  possible_bidders_emp[, possible_bidder := any(industry_grp %chin% bidder_industry_groups), by = cvr]
+  possible_bidders_emp <- possible_bidders_emp[possible_bidder == TRUE, ]
+  possible_bidders_emp <- possible_bidders_emp[tidx == comp_qidx, ]
+  possible_bidders_emp$stack_id <- contract$stack_id
+  possible_bidders_emp[, bid := 0]
+  
+  # Get equivalent bidders info
+  bidders_emp <- firm_q_sample_frame[cvr %chin% contract$bidder_cvrs, ]
+  bidders_emp <- bidders_emp[tidx == comp_qidx, ]
+  bidders_emp[, bid := 1]
+  bidders_emp$stack_id <- contract$stack_id
+  
+  # Bind
+  out <- rbindlist(list(bidders_emp, possible_bidders_emp), fill = TRUE)
+  
+  # Return
+  return(out)
+  
+})
+
+nonbidder_dt <- rbindlist(nonbidder_dt)
+setorder(nonbidder_dt, stack_id, -bid, cvr)
+
+# Create firm age as another variable
+nonbidder_dt[, by_tidx := year(registration_date)*4 + quarter(registration_date)] # Firm birth year as a quarter
+nonbidder_dt[, age_q := tidx - by_tidx]
+```
+
+
+```{r run-models}
+library(fixest)
+
+# Basic levels
+m1 <- feols(bid ~ log(fte) + log(fte_l2y) + log(fte_l1y) + legal_form_short | stack_id,
+           family = binomial(), data = nonbidder_dt, cluster = ~cvr)
+summary(m1)
+
+# FTE gaps
+nonbidder_dt[, fte_gap_2y := (log(fte_l1y) - log(fte_l2y))/10] # rescale
+nonbidder_dt[, fte_gap_1y := (log(fte) - log(fte_l1y))/10] # rescale
+m2 <- feols(bid ~ fte_gap_2y + fte_gap_1y + legal_form_short | stack_id,
+           data = nonbidder_dt, cluster = ~cvr)
+summary(m2)
+
+# All csw() 
+m3 <- feols(bid ~ csw(legal_form_short, log(fte), log(fte_l2y), log(fte_l1y), age_q)  | stack_id, 
+            data = nonbidder_dt, cluster = ~cvr)
+summary(m3)
+
+## CLogit
+library(survival)
+
+# ApS as reference, so the A/S coefficient reads in the direction your summary stats suggest
+nonbidder_dt[, legal_form_short := relevel(factor(legal_form_short), ref = "APS")]
+nonbidder_dt[, fte_x := fte / 10]
+c1 <- clogit(bid ~ fte_x + fte_gap_1y + fte_gap_2y + legal_form_short + strata(stack_id),
+             data = nonbidder_dt, cluster = cvr, method = "efron")
+
+summary(c1)
+
+# Growth
+nonbidder_dt[, fte_growth_1y := log(fte / fte_l1y)]
+nonbidder_dt[, fte_growth_2y := log(fte_l1y / fte_l2y)]
+
+c2 <- clogit(bid ~ fte_x + fte_growth_1y + fte_growth_2y + legal_form_short + strata(stack_id),
+             data = nonbidder_dt, cluster = cvr, method = "efron")
+
+summary(c2)
+
+```
+
+# Legal forms in the data
+Each firm in Denmark registers with the business authority under a specific legal form. There are `r emp[legal_form_short != "" & !is.na(legal_form_short), uniqueN(legal_form_short)]` different firm types. Most firms are ENK (sole proprietorship), ApS (a SME) or A/S (a larger firm). In our employment data, most currently active firms are ApS while most currently active TENDER WINNERS are A/S. 
+
+```{r bidding-sum-stats, fig.align='center'}
+
+# Just use annual panel for this:
+ann_emp <- emp[!is.na(legal_form_short) & 
+                 legal_form_short != "" & 
+                 legal_form_short != "NA" & 
+                 frequency == "annual_spliced", ]
+
+# 1 What is the most common form among ALL CURRENTLY ACTIVE firms?
+now <- year(Sys.Date())
+common_forms_active_firms <- ann_emp[year == now & exists_during_period == TRUE & fte > 0, .(n = .N), by = legal_form_short][order(-n)][, `:=`(p = round(n / sum(n), 4), cp = round(cumsum(n) / sum(n), 4))][, head(.SD, 6)]
+knitr::kable(common_forms_active_firms, 
+      caption = "Top 6 Legal Forms Among ALL CURRENTLY Active Firms")
+
+# 2 What is the most common form among ALL TENDER WINNERS?
+winner_cvr_set <- cmb[entity == "winner", unique(cvr_final)]
+common_forms_winning_firms <- ann_emp[year == now & exists_during_period == TRUE & fte > 0 & cvr %chin% winner_cvr_set, .(n = .N), by = legal_form_short][order(-n)][, `:=`(p = round(n / sum(n), 4), cp = round(cumsum(n) / sum(n), 4))][, head(.SD, 6)]
+knitr::kable(common_forms_winning_firms, 
+      caption = "Top 6 Legal Forms Among ALL CURRENTLY Active WINNING Firms")
+
+# 3 How many firms overall ever change legal form?
+n_lforms <- ann_emp[, .(n_forms = uniqueN(legal_form_short),
+                        forms_used = paste(sort(unique(legal_form_short)), 
+                                           collapse = "; ")), by = cvr]
+
+# Counts of number of forms over firm's employment history
+n_forms_used <- n_lforms[, .(count = .N), by = n_forms]
+
+# Top 3 forms per number of forms used in employment history
+forms_used_dist <- n_lforms[, .(count = .N), by = .(n_forms, forms_used)][order(n_forms, -count)]
+forms_used_top3 <- forms_used_dist[, head(.SD, 5), by = n_forms]
+knitr::kable(forms_used_top3, caption = "Common forms used")
+
+# Common transitions
+setorder(ann_emp, cvr, year)
+ann_emp[, max_year := max(year), by = cvr]
+ann_emp[, firm_age_yr := year - year(registration_date)]
+ann_emp[, legal_form_short_f1 := shift(legal_form_short, n = 1, type = "lead"), by = cvr]
+ann_emp[, trans_hit := legal_form_short_f1 != legal_form_short]
+ann_emp[trans_hit %in% TRUE, 
+        form_trans := paste0(legal_form_short, "->", legal_form_short_f1)]
+ann_emp[year == max_year, form_trans := NA, by = cvr]
+ann_emp[, n_trans_per_firm := sum(trans_hit, na.rm = T), by = cvr]
+
+# Common transitions
+common_trans <- ann_emp[trans_hit == TRUE, .(n = .N), by = form_trans][order(-n)][, `:=`(p = round(n / sum(n), 4), cp = round(cumsum(n) / sum(n), 4))][, head(.SD, 6)]
+knitr::kable(common_trans, 
+             caption = "Legal Form Changes in Annual Employment Data")
+```
+
+
+## Does winning correlate with ApS->A/S transitions?
+
+```{r estudy-legal-form, fig.width = 9, fig.height = 4.5}
+# Horizon
+H <- 8
+
+# Define transitions
+setorder(firm_q, cvr, tidx)
+firm_q[, legal_form_short_f1 := shift(legal_form_short, 1, type = "lead"), by = cvr]
+firm_q[, max_tidx := max(tidx), by = cvr]
+firm_q[, trans_hit := as.integer(legal_form_short != legal_form_short_f1)]
+firm_q[, form_trans := paste0(legal_form_short, "->", legal_form_short_f1)]
+firm_q[max_tidx == tidx, form_trans := NA]
+
+# Winning periods
+events <- cmb[entity == "winner" & direct_award %in% FALSE, .(cvr_final, award_date)]
+setorder(events, cvr_final, award_date)
+events <- distinct(events, cvr_final, award_date)
+events[, award_qidx := quarter(award_date) + year(award_date) * 4]
+events <- events[, head(.SD, 1), by = .(cvr_final, award_qidx)] # keep first occurrence per (cvr, event_qidx)
+events <- events[!is.na(award_qidx), ]
+
+# Filter to only necessary obs periods
+obs_period <- seq(min(unique(events$award_qidx)) - H,
+                  max(unique(events$award_qidx)) + H)
+firm_q_obs <- firm_q[tidx %in% obs_period, ]
+
+# Create event study panel
+# one id per event -- this is your stack id
+events[, ev := .I]
+
+# expand to the full -H:H grid first
+es <- events[, .(tau = -H:H),
+             by = .(ev, cvr = cvr_final, award_qidx)]
+es[, tidx := award_qidx + tau]
+
+# then attach firm state (keeps every grid row, NA where unobserved)
+es <- firm_q_obs[es, on = .(cvr, tidx)]
+
+# Keep only ev's where every period has a legal form
+es[, all_forms_present := all(!is.na(legal_form_short)), by = .(cvr, ev)]
+es <- es[all_forms_present == TRUE, ]
+es <- es[!is.na(trans_hit), ] # Remove NA transition hits (occur at the end of the sample)
+es[, all_periods := as.logical(.N == 2 * H + 1), by = ev]
+es <- es[all_periods == TRUE, ]
+
+# Remove singletons
+es[, cvr_single := .N == 1, by = cvr]
+es[, tidx_single := .N == 1, by = tidx]
+es <- es[cvr_single == FALSE & tidx_single == FALSE, ]
+es[, all_periods := as.logical(.N == 2 * H + 1), by = ev]
+es <- es[all_periods == TRUE, ]
+
+# Run TWFE event study
+simple_lform_transition_mod <- feols(trans_hit ~ i(tau, ref = -1) | cvr + tidx, data = es, cluster = ~cvr)
+
+
+
+```
