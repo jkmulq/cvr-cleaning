@@ -14,9 +14,11 @@
 #                                the study set
 #   01_eligible_controls.rds     the screened never-winner pool
 #   <clean>/tender_data_2006_2026.*   the combined dataset, for the TED winner/non-winner lots
-# Writes:
-#   05_cobidder_roster.rds       one row per (event, firm): qscore, eligibility verdict, flags
-#   05_cobidder_panel.parquet    the regression-ready panel: one row per (event, firm, quarter)
+# Writes (h is MATCH_H, so windows never overwrite one another):
+#   05_cobidder_roster_h{h}.rds       one row per (event, firm): qscore, eligibility verdict, flags;
+#                                     plus `event_fate`, one row per event: the stage and reason it
+#                                     was dropped (or "kept"), summing to every event built
+#   05_cobidder_panel_h{h}.parquet    the regression-ready panel: one row per (event, firm, quarter)
 #
 # SECOND ENTRY POINT, DELIBERATELY. The pipeline's rule is that only stage 1 opens external inputs.
 # This breaks it to stay standalone, which is the point: the lot universe it needs is a TED-specific
@@ -48,13 +50,30 @@
 # BY CONSTRUCTION, each real loser carries the same tests separately (pool_side, buffer_ok, elig_pre,
 # elig_post) -- otherwise the comparison is a screened set against an unscreened one.
 #
+# BOTH WINDOWS BY DEFAULT, h IN THE FILENAME. With MATCH_H unset, the script builds every window in
+# MATCH_WINDOWS (default "8 4") by re-launching itself once per window as a separate Rscript process.
+# Each window is still an independent build -- a failure in one does not lose the others, and nothing
+# is shared between them. Set MATCH_H to build a single window, exactly as before:
+#
+#   MATCH_OVERWRITE=1 [MATCH_SCORE=log] Rscript code/matching/5_cobidder_stacks.R   # h = 8 and 4
+#   MATCH_OVERWRITE=1 MATCH_H=4 Rscript code/matching/5_cobidder_stacks.R          # h = 4 only
+#
+# An h=4 design must be BUILT at h=4, never trimmed from an h=8 panel -- the same point
+# 3_build_reg_data.R makes at its head. At h=4 the pre-window is [-4,-1], so the eligibility screen
+# admits firms that cannot supply eight clean quarters, the candidate pool is larger, the qscores are
+# different numbers and DIFFERENT CONTROLS WIN. Filtering an h=8 panel to k in [-4,4] keeps the h=8
+# controls and answers a different question.
+#
 #   Rscript code/matching/5_cobidder_stacks.R
 # Options (env):
-#   MATCH_H              half-window in quarters (default 8) -- match the run you compare against
+#   MATCH_H              build ONE window of this many quarters. Unset = build all of MATCH_WINDOWS
+#   MATCH_WINDOWS        windows built when MATCH_H is unset (default "8 4", what the report expects)
 #   MATCH_MIN_RUNG       eligible candidates a rung needs to fire (default 10)
 #   MATCH_WINNER_BUFFER  quarters either side in which a sometimes-winner control may not have an
 #                        award of its own (default 12)
 #   MATCH_MIN_FTE        strict lower bound on FTE in the panel (default 0)
+#   MATCH_SCORE          level (default) | log -- the qscore, as in MATCH_PROTOCOLS (0_matching_utils.R).
+#                        log writes 05_cobidder_*_h{h}_log.*, so it never overwrites the level run
 #   MATCH_IND_DIGITS     industry FE granularity (default 2 = division)
 #   MATCH_TENDER_FILE    override the combined dataset stem
 #   MATCH_TEST_N, MATCH_OVERWRITE   as elsewhere; the tag suffixes both outputs
@@ -62,9 +81,33 @@
 
 rm(list = ls())
 source(file.path(getwd(), "code", "matching", "0_matching_utils.R"))
+
+# ---- 0. driver: no MATCH_H means build every window, one child process each ----------------------------
+# A child inherits this environment (MATCH_SCORE, MATCH_OVERWRITE, ...) plus its own MATCH_H, so it
+# takes the single-window path below. Children run in order; all are attempted, then any failure stops.
+if (!nzchar(Sys.getenv("MATCH_H", ""))) {
+  # quit() below would close an interactive session, so the driver is Rscript-only.
+  if (interactive()) stop("set MATCH_H (e.g. Sys.setenv(MATCH_H = 8)) to run one window interactively",
+                          call. = FALSE)
+  wins   <- as.integer(match_env_list("MATCH_WINDOWS", "8 4"))
+  if (!length(wins) || anyNA(wins)) stop("MATCH_WINDOWS must be integers, e.g. \"8 4\"", call. = FALSE)
+  script <- file.path(getwd(), "code", "matching", "5_cobidder_stacks.R")
+  status <- vapply(wins, function(h) {
+    cat(sprintf("\n========== STAGE 5 driver: building h = %d ==========\n", h))
+    system2(file.path(R.home("bin"), "Rscript"), shQuote(script), env = sprintf("MATCH_H=%d", h))
+  }, integer(1))
+  if (any(status != 0L))
+    stop(sprintf("stage 5 failed for h = %s", paste(wins[status != 0L], collapse = ", ")), call. = FALSE)
+  cat(sprintf("\nSTAGE 5 driver complete: h = %s\n", paste(wins, collapse = ", ")))
+  quit(save = "no", status = 0L)
+}
+
 match_setup()
 
 H          <- match_env_int("MATCH_H", 8L)
+SCORE      <- match_env_chr("MATCH_SCORE", "level")
+if (!SCORE %in% c("level", "log")) stop("MATCH_SCORE must be level or log, not ", SCORE, call. = FALSE)
+PROTOCOL   <- if (SCORE == "log") "full_full_log" else "full_full"   # its MATCH_PROTOCOLS counterpart
 MIN_RUNG   <- match_env_int("MATCH_MIN_RUNG", 10L)
 WBUF       <- match_env_int("MATCH_WINNER_BUFFER", 12L)
 MIN_FTE    <- match_env_num("MATCH_MIN_FTE", 0)
@@ -76,8 +119,8 @@ RUNGS   <- MATCH_RULES[["staggered_industry_kommune"]]()
 NP      <- 2L * H + 1L               # rows a balanced firm must have
 
 if (WBUF < H) stop(sprintf("MATCH_WINNER_BUFFER=%d is narrower than h=%d", WBUF, H), call. = FALSE)
-cat(sprintf("STAGE 5 | h=%d | min_rung=%d | winner_buffer=%d | min_fte=%s | pool=union | protocol=full_full\n",
-            H, MIN_RUNG, WBUF, MIN_FTE))
+cat(sprintf("STAGE 5 | h=%d | score=%s | min_rung=%d | winner_buffer=%d | min_fte=%s | pool=union | protocol=%s\n",
+            H, SCORE, MIN_RUNG, WBUF, MIN_FTE, PROTOCOL))
 
 # ---- 1. inputs -----------------------------------------------------------------------------------------
 match_rule_banner("1. inputs")
@@ -174,8 +217,13 @@ cat(sprintf("  real losers present in the firm panel: %d of %d (%.1f%%)\n",
 
 # ---- 4. the shared score -------------------------------------------------------------------------------
 # THE ONE implementation of the qscore, used for synthetic controls AND real losers. Identical
-# arithmetic to 2_match_controls.R: squared FTE gap per scored quarter, root-mean, divided by the
-# treated firm's mean FTE over the same quarters -- scale-free, so comparable across events.
+# arithmetic to 2_match_controls.R, under either MATCH_SCORE:
+#   level  squared FTE gap per scored quarter, root-mean, divided by the treated firm's mean FTE
+#   log    squared log-FTE gap per scored quarter, root-mean
+# Both scale-free, so comparable across events. Under log, quarters where either firm has FTE <= 0
+# have no log and are dropped from scoring -- visible in n_scored, exactly as NA quarters are. That
+# can only bite for real losers: match_one_lot() discards a treated firm with a non-positive scored
+# quarter, and eligible candidates are positive on every one.
 # args:  cand = (cvr, et, fte) candidate rows over the ranked quarters, NA fte already removed
 #        tv   = (et, fte_t), exactly one row per ranked quarter of the treated firm
 # returns: one row per cvr. n_scored is how many quarters contributed: always h for an eligible
@@ -186,6 +234,17 @@ qscore_table <- function(cand, tv) {
                                      mean_fte_treated = numeric(), n_scored = integer(),
                                      qscore = numeric()))
   x <- merge(cand, tv, by = "et", allow.cartesian = TRUE)
+  if (SCORE == "log") {
+    x <- x[fte > 0 & fte_t > 0]
+    if (!nrow(x)) return(qscore_table(cand[0], tv))
+    s <- x[, .(mean_fte_diff_sq = mean((fte - fte_t)^2),
+               mean_fte_treated = mean(fte_t),
+               mean_log_diff_sq = mean((log(fte) - log(fte_t))^2),
+               n_scored         = .N), by = cvr]
+    s[, qscore := fifelse(is.finite(mean_log_diff_sq), sqrt(mean_log_diff_sq), NA_real_)]
+    s[, mean_log_diff_sq := NULL]
+    return(s[])
+  }
   s <- x[, .(mean_fte_diff_sq = mean((fte - fte_t)^2, na.rm = TRUE),
              mean_fte_treated = mean(fte_t, na.rm = TRUE),
              n_scored         = .N), by = cvr]
@@ -220,6 +279,10 @@ match_one_lot <- function(e, pre, win, keep_w) {
     industry_division = unique(tw$industry_division[!is.na(tw$industry_division)]))
   komm <- unique(tw$hq_kommune_code[!is.na(tw$hq_kommune_code)])
   tv   <- tw[et %in% T_et, .(et, fte_t = fte)]
+  # Log score only: a zero quarter has no log, so the treated firm cannot be scored on every quarter.
+  # Mirrors stage 2, where the event is unscorable under the log protocols.
+  if (SCORE == "log" && any(tv$fte_t <= 0))
+    return(list(discard = "treated has non-positive FTE in a scored quarter (log score)"))
 
   # THE UNION POOL: never-winners, plus sometimes-winners clear of the buffer. One set, one cascade,
   # one score -- so a real losing bidder can win the competition whichever half it sits in.
@@ -425,6 +488,36 @@ d[, `:=`(has_t = any(category == "treated"),
          has_c = any(category == "found_control"),
          has_n = any(category == "non_winner")), by = ev]
 d[, complete_stack := has_t & has_c & has_n]
+
+# EVENT FATE: one row per built event, saying where it left the funnel. First failure wins, so the
+# reasons are mutually exclusive and the counts sum to nrow(events). Labels are window-free on purpose,
+# so the report can line the h=8 and h=4 runs up row by row. An event absent from `d` altogether lost
+# every firm to balancing; it is charged to the winner, the first side checked.
+if (!nrow(discards)) discards <- data.table(ev = integer(), reason = character())
+bal <- unique(d[, .(ev, has_t, has_c, has_n)])
+nw_panel <- roster[category == "non_winner", .(nw_in_panel = any(in_panel)), by = ev]
+event_fate <- merge(events[, .(ev, lot_key, winner_cvr, event_qidx)], discards, by = "ev", all.x = TRUE)
+event_fate <- merge(event_fate, bal,      by = "ev", all.x = TRUE)
+event_fate <- merge(event_fate, nw_panel, by = "ev", all.x = TRUE)
+event_fate[, `:=`(has_t = fcoalesce(has_t, FALSE), has_c = fcoalesce(has_c, FALSE),
+                  has_n = fcoalesce(has_n, FALSE), nw_in_panel = fcoalesce(nw_in_panel, FALSE))]
+event_fate[, stage := fcase(!is.na(reason), "matching",
+                            !(has_t & has_c & has_n), "balancing",
+                            default = "kept")]
+event_fate[stage == "balancing", reason := fcase(
+  !has_t,        "winner not balanced on the window",
+  !has_c,        "no matched control balanced on the window",
+  !nw_in_panel,  "no real co-bidder in the firm panel",
+  default =      "no real co-bidder balanced on the window")]
+event_fate[stage == "kept", reason := "complete stack"]
+event_fate[, c("has_t", "has_c", "has_n", "nw_in_panel") := NULL]
+setorder(event_fate, ev)
+stopifnot(nrow(event_fate) == nrow(events), !anyNA(event_fate$reason),
+          event_fate[stage == "kept", .N] == d[complete_stack == TRUE, uniqueN(ev)])
+
+cat("\n  event fate (first failure wins):\n")
+print(event_fate[, .N, by = .(stage, reason)][order(factor(stage, c("matching", "balancing", "kept")), -N)])
+
 d[, treated := as.integer(category == "treated")]
 # 1 / (firms in this (event, category) cell), so each of the three sides of a stack sums to 1. The
 # property survives any two-category filter, so a lot that tied 40 controls cannot outvote a lot with
@@ -439,6 +532,16 @@ print(d[complete_stack == TRUE, .(rows = .N, firms = uniqueN(cvr), events = uniq
 cat(sprintf("\n  events: %d balanced | %d complete (all three sides) | %.1f%%\n",
             uniqueN(d$ev), d[complete_stack == TRUE, uniqueN(ev)],
             100 * d[complete_stack == TRUE, uniqueN(ev)] / max(1L, uniqueN(d$ev))))
+
+# SIZE RELATIVE TO THE WINNER -- the readout for comparing MATCH_SCORE=level against log. Per complete
+# stack, each side's weighted mean FTE over the winner's, then the median across stacks. The level
+# score's asymmetry predicts synthetic controls below 1; the log score should pull them toward it.
+sz <- d[complete_stack == TRUE & event_time %in% c(-1L, H),
+        .(fte = sum(weight * fte)), by = .(ev, category, event_time)]
+sz <- dcast(sz, ev + event_time ~ category, value.var = "fte")
+cat(sprintf("\n  size relative to the winner (median over complete stacks, score = %s):\n", SCORE))
+print(sz[, .(matched_control = round(median(found_control / treated), 3),
+             real_cobidder   = round(median(non_winner    / treated), 3)), by = event_time])
 
 # ---- 10. checks --------------------------------------------------------------------------------------------
 match_rule_banner("7. checks")
@@ -459,77 +562,19 @@ cat("  OK  weights sum to 1 per (event, category) in every period\n")
 
 # ---- 11. write ---------------------------------------------------------------------------------------------
 match_rule_banner("8. write")
-write_obj(list(roster = roster, events = events, discards = discards,
+write_obj(list(roster = roster, events = events, discards = discards, event_fate = event_fate,
                h = H, min_rung = MIN_RUNG, winner_buffer = WBUF, min_fte = MIN_FTE,
-               ind_digits = IND_DIGITS, pool = "union", protocol = "full_full",
+               ind_digits = IND_DIGITS, pool = "union", protocol = PROTOCOL, score = SCORE,
                run_at = Sys.time()),
-          P$cobid_roster)
-write_tab(d, P$cobid_panel)
-cat(sprintf("  -> %s (%d roster rows)\n", basename(P$cobid_roster), nrow(roster)))
-cat(sprintf("  -> %s (%d panel rows, %.0f MB)\n", basename(P$cobid_panel), nrow(d),
-            file.size(P$cobid_panel) / 1e6))
+          P$cobid_roster(H, SCORE))
+write_tab(d, P$cobid_panel(H, SCORE))
+cat(sprintf("  -> %s (%d roster rows)\n", basename(P$cobid_roster(H, SCORE)), nrow(roster)))
+cat(sprintf("  -> %s (%d panel rows, %.0f MB)\n", basename(P$cobid_panel(H, SCORE)), nrow(d),
+            file.size(P$cobid_panel(H, SCORE)) / 1e6))
 cat("\nSTAGE 5 complete.\n")
 
-
-## Create stacked for easier graphing
-nw_d <- d[category %in% c("treated", "non_winner"), ]
-nw_d$sample <- "non_winner_stack"
-sw_d <- d[category %in% c("treated", "found_control"), ]
-sw_d$sample <- "synthetic_stack"
-reg_data <- rbindlist(
-  list(nw_d, sw_d)
-)
-reg_data[, sample := factor(sample,
-                            levels = c("synthetic_stack", "non_winner_stack"),
-                            labels = c("Synthetic matched control", "Real losing co-bidder"))]
-
-mods <- feols(fte ~ i(event_time, treated, ref = "-1") |
-        cvr + qidx^industry_grp + treated + event_time,
-      data = reg_data[complete_stack == TRUE, ], 
-      split = ~sample,
-      cluster = ~ lot_key + cvr,
-      weights = ~weight, fixef.rm = "none")
-iplot(mods,
-      main = "Winner vs synthetic control and real co-bidder",
-      xlab = "Quarters relative to award",
-      ylab = "Effect on FTE",
-      pt.join = TRUE)
-legend("topleft", legend = levels(reg_data$sample), col = 1:2, pch = 20, lwd = 1, bty = "n")
-
-
-log_mods <- feols(log(fte) ~ i(event_time, treated, ref = "-1") |
-                cvr + qidx^industry_grp + treated + event_time,
-              data = reg_data[complete_stack == TRUE, ], 
-              split = ~sample,
-              cluster = ~ lot_key + cvr,
-              weights = ~weight, fixef.rm = "none")
-iplot(log_mods,
-      main = "Winner vs synthetic control and real co-bidder",
-      xlab = "Quarters relative to award",
-      ylab = "Effect on log(FTE)",
-      pt.join = TRUE)
-legend("topleft", legend = levels(reg_data$sample), col = 1:2, pch = 20, lwd = 1, bty = "n")
-
-
-tidy_es <- function(m, outcome) {
-  rbindlist(lapply(names(m), function(nm) {
-    ct <- as.data.table(coeftable(m[[nm]]), keep.rownames = "term")[grepl("event_time", term)]
-    ct[, event_time := as.integer(gsub(".*event_time::(-?[0-9]+).*", "\\1", term))]
-    rbind(ct[, .(event_time, est = Estimate, se = `Std. Error`)],
-          data.table(event_time = -1L, est = 0, se = 0))[
-            , `:=`(control = nm, outcome = outcome)]
-  }))
-}
-
-coefs <- rbind(tidy_es(mods, "FTE (level)"), tidy_es(log_mods, "log FTE"))
-coefs[, `:=`(lo = est - 1.96 * se, hi = est + 1.96 * se)]
-
-ggplot(coefs, aes(event_time, est, colour = control, fill = control)) +
-  geom_hline(yintercept = 0, colour = "grey50") +
-  geom_vline(xintercept = -0.5, linetype = "dashed", colour = "grey40") +
-  geom_ribbon(aes(ymin = lo, ymax = hi), alpha = 0.12, colour = NA) +
-  geom_line() + geom_point(size = 1.1) +
-  facet_wrap(~ outcome, scales = "free_y") +
-  labs(title = "Same winners, two control groups",
-       x = "Quarters relative to award", y = "Coefficient", colour = NULL, fill = NULL) +
-  theme_light(base_size = 11) + theme(legend.position = "top")
+# The exploratory event-study block that used to sit here was removed. It ran on every invocation
+# (so once per window), opened a graphics device under Rscript, and fitted
+# `cvr + qidx^industry_grp + treated + event_time` clustered on `lot_key + cvr` -- a specification
+# this design deliberately does NOT use. The estimation lives in
+# code/analysis/estudy_matched_vs_cobidder_validation.Rmd, which is the one place it is defined.

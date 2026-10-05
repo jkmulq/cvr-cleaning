@@ -13,7 +13,7 @@
 # that changes eligibility and scoring, and admits events that cannot support 8 post-quarters.
 #
 # A STACK is one (event, scoring_protocol, arm) triple: the treated firm plus the controls selected for it
-# under that protocol in that arm. Every operation below -- balancing, weighting, the both-arms-present
+# under that protocol in that arm. Every operation below -- balancing and the both-arms-present
 # test -- happens WITHIN a stack, so protocols and arms never contaminate one another and a single
 # dataset can be sliced to any (protocol, arm) at estimation time.
 #
@@ -37,9 +37,8 @@
 # defensible but has to be stated and bounded, and for FTE itself is not. MATCH_MIN_FTE=-1 disables the
 # screen (zeros retained, NAs still dropped) if the unconditioned sample is wanted.
 #
-# WEIGHTS. 1 / (# firms in the (stack, treatment) cell), so the treated side and the control side of
-# each stack each sum to 1 and a stack that happened to tie 40 controls at rank 1 does not outvote a
-# stack that matched one.
+# WEIGHTS ARE NOT BUILT HERE. Stage 4 computes them once, on the rows it estimates on, so there is a
+# single place they are defined and no stale copy to keep in sync.
 #
 # EVENT PROVENANCE passes straight through: this stage subsets rows and adds columns but never selects
 # columns, so the EVENT_META_COLS stage 2 attached are in the output unchanged, treated and control alike.
@@ -181,8 +180,6 @@ meta <- list(run_at = Sys.time(), h = h, min_fte = MIN_FTE, ind_digits = IND_DIG
               n_stk_row, uniqueN(d$stack_id)))
   if (!nrow(d)) stop("nothing survives balancing at this window", call. = FALSE)
 
-  d[, weight := 1 / uniqueN(cvr), by = .(stack_id, treated)]
-
   # per-cell viability, reported rather than silently estimated on thin data
   cells <- d[, .(stacks = uniqueN(stack_id), rows = .N,
                  treated_firms = uniqueN(cvr[treated == 1L]),
@@ -201,9 +198,6 @@ meta <- list(run_at = Sys.time(), h = h, min_fte = MIN_FTE, ind_digits = IND_DIG
             all(aud$lo == -h), all(aud$hi == h))
   cat("  OK  every retained firm is exactly balanced on -h..h\n")
 
-  wsum <- d[event_time == 0L, .(w = sum(weight)), by = .(stack_id, treated)]
-  stopifnot(all(abs(wsum$w - 1) < 1e-9))
-  cat("  OK  weights sum to 1 per (stack, treatment) in every period\n")
 
   expect <- d[, uniqueN(paste(stack_id, cvr))] * (2L * h + 1L)
   stopifnot(nrow(d) == expect)

@@ -39,10 +39,15 @@
 # Note also that the TREATED firm is not positivity-screened here (only !is.na below); stage 3 applies
 # fte > MATCH_MIN_FTE to both arms, so treated-side zeros are dropped there, not here.
 #
-# SELECTION (preserved exactly -- no logs, no k-nearest):
-#   fte_diff_sq    = (fte_control - fte_treatment)^2 per scored quarter
-#   control_qscore = sqrt(mean(fte_diff_sq)) / mean(fte_treatment)
+# SELECTION (no k-nearest). The score is a property of the protocol (MATCH_PROTOCOLS$<p>$score):
+#   level protocols (full_full, full_firsthalf) -- preserved exactly from the original:
+#     fte_diff_sq    = (fte_control - fte_treatment)^2 per scored quarter
+#     control_qscore = sqrt(mean(fte_diff_sq)) / mean(fte_treatment)
+#   log protocols (full_full_log, full_firsthalf_log):
+#     control_qscore = sqrt(mean((log fte_control - log fte_treatment)^2))
+#     symmetric in proportional size; see the MATCH_PROTOCOLS note in 0_matching_utils.R
 #   keep every control tied at min(control_qscore) -- usually one firm, sometimes several.
+#   mean_fte_diff_sq is recorded under both scores as a diagnostic.
 # find_control_firms.R:263 is the live criterion; the mean_fte_diff_sq line at :262 is commented out.
 # The two orderings agree (mean(fte_treatment) is constant within an event) but qscore is scale-free and
 # therefore comparable ACROSS events, so it is the one to keep. Note that file's header claim of matching
@@ -70,7 +75,7 @@
 # Options (env):
 #   MATCH_H              half-window in quarters (default 8)
 #   MATCH_MIN_RUNG       eligible candidates a rung needs to fire (default 10)
-#   MATCH_PROTOCOLS      default "full_full full_firsthalf"
+#   MATCH_PROTOCOLS      default "full_full full_firsthalf full_full_log full_firsthalf_log"
 #   MATCH_RULES          default "staggered_industry_kommune"
 #   MATCH_ARMS           default "never_winner winner"
 #   MATCH_WINNER_BUFFER  quarters either side of the event in which a sometimes-winner control may not
@@ -292,7 +297,20 @@ match_one_event <- function(e, pre, win, keep_winner_cvrs) {
       # "no control selected in any arm" discard.
       sc <- sc[is.finite(mean_fte_diff_sq) & is.finite(mean_fte_treated) & mean_fte_treated > 0]
       if (!nrow(sc)) next
-      sc[, control_qscore := sqrt(mean_fte_diff_sq) / mean_fte_treated]
+      if (MATCH_PROTOCOLS[[pr]]$score == "log") {
+        # Log score: RMS of the per-quarter log gap. Candidates already have fte > 0 on every T_et
+        # quarter (eligibility, above); the treated firm need not, and a zero quarter has no log, so
+        # the event is unscorable under this protocol -- the same fate as the denominator guard.
+        if (any(tv$fte_t <= 0, na.rm = TRUE)) next
+        lg <- cv[cvr %chin% sc$cvr, .(mean_log_diff_sq = mean((log(fte) - log(fte_t))^2)), by = cvr]
+        sc <- merge(sc, lg, by = "cvr")
+        sc <- sc[is.finite(mean_log_diff_sq)]
+        if (!nrow(sc)) next
+        sc[, control_qscore := sqrt(mean_log_diff_sq)]
+        sc[, mean_log_diff_sq := NULL]
+      } else {
+        sc[, control_qscore := sqrt(mean_fte_diff_sq) / mean_fte_treated]
+      }
       sel <- sc[control_qscore == min(control_qscore, na.rm = TRUE)]   # ALL ties at rank 1
       out[[paste(arm, pr)]] <- data.table(
         ev = e$ev, scoring_protocol = pr, arm = arm, cvr = sel$cvr,
@@ -390,6 +408,11 @@ if (!length(good)) stop("every group failed -- run process_group(groups[1]) with
                         call. = FALSE)
 
 match_table <- rbindlist(lapply(good, `[[`, "rows"),     use.names = TRUE, fill = TRUE)
+# A checkpoint from a run with fewer protocols would silently drop the missing ones downstream.
+missing_pr <- setdiff(PROTOS, unique(match_table$scoring_protocol))
+if (length(missing_pr))
+  stop("no matches under protocol(s): ", paste(missing_pr, collapse = ", "),
+       "\n  if the checkpoint predates them, re-run with MATCH_FORCE_REMATCH=1", call. = FALSE)
 discards    <- rbindlist(lapply(good, `[[`, "discards"), use.names = TRUE, fill = TRUE)
 # Absent from a checkpoint written before the funnel counters existed -- see the report block below.
 eligfunnel  <- rbindlist(lapply(good, `[[`, "diags"),    use.names = TRUE, fill = TRUE)

@@ -60,7 +60,11 @@ match_setup <- function(extra_libs = character()) {
 #   tag  suffix stamped on every artefact, e.g. "test200". "" = the full run. Defaults to
 #        match_tag(), which derives it from MATCH_TEST_N -- pass it explicitly to READ another
 #        run's artefacts, e.g. match_paths("test200") in an interactive session.
-# returns: named list of paths. `reg_data` is a FUNCTION of the window, so call P$reg_data(8).
+# returns: named list of paths. `reg_data`, `cobid_roster` and `cobid_panel` are FUNCTIONS of the
+#        window h, so call P$reg_data(8), P$cobid_panel(4). The cobid paths also take the stage-5
+#        score: P$cobid_panel(8, "log") -> 05_cobidder_panel_h8_log.parquet. The window is in the FILENAME because a
+#        genuine h=4 design is a separate match, not an h=8 artefact trimmed to 4 -- see the note at
+#        the top of 3_build_reg_data.R.
 match_paths <- function(tag = match_tag()) {
   d <- file.path(dirs$data, "matching")
   dir.create(d, recursive = TRUE, showWarnings = FALSE)
@@ -79,8 +83,11 @@ match_paths <- function(tag = match_tag()) {
     reg_data       = function(h) file.path(d, sprintf("03_reg_data_h%d%s.parquet", h, sfx)),
     reg_meta       = file.path(d, paste0("03_reg_meta",          sfx, ".rds")),
     reg_attrition  = file.path(d, paste0("03_fte_screen_attrition", sfx, ".parquet")),
-    cobid_roster   = file.path(d, paste0("05_cobidder_roster",   sfx, ".rds")),
-    cobid_panel    = file.path(d, paste0("05_cobidder_panel",    sfx, ".parquet")),
+    # score = "level" keeps the original filenames, so existing level artefacts stay valid
+    cobid_roster   = function(h, score = "level") file.path(d, sprintf("05_cobidder_roster_h%d%s%s.rds",
+                       h, if (score == "log") "_log" else "", sfx)),
+    cobid_panel    = function(h, score = "level") file.path(d, sprintf("05_cobidder_panel_h%d%s%s.parquet",
+                       h, if (score == "log") "_log" else "", sfx)),
     estimates      = file.path(d, paste0("04_estimates",         sfx, ".rds")),
     est_panel      = file.path(d, paste0("04_estimation_panel",  sfx, ".parquet")),
     sweep          = file.path(d, paste0("04_qscore_sweep",      sfx, ".parquet")),
@@ -413,23 +420,44 @@ firm_registry <- function(path = file.path(dirs$clean_data, "clean_cvr_name_key.
 #
 # Because eligibility demands a complete series over all of [-h,-1], every retained control has n_pre==h,
 # so "first half" is unambiguous -- no ragged-series edge case. floor(h/2) for odd h.
+#
+# SCORE is the third field: how a candidate's distance from the treated firm is measured over the
+# rank window. Both are RMS over the ranked quarters, so both are scale-free and comparable across events:
+#   level  sqrt(mean((fte_c - fte_t)^2)) / mean(fte_t)    -- the original criterion
+#   log    sqrt(mean((log fte_c - log fte_t)^2))          -- proportional gap per quarter
+# The level score penalises a too-big control more than an equally-proportional too-small one (0.8x
+# scores 0.20, 1.25x scores 0.25), which tilts selection toward smaller firms in a right-skewed pool.
+# The log score is symmetric (0.8x and 1.25x both score 0.22) and weights every quarter equally.
 MATCH_PROTOCOLS <- list(
   full_full = list(
-    label = "elig [-h,-1], rank [-h,-1]",
+    label = "elig [-h,-1], rank [-h,-1], level score",
+    score = "level",
     elig  = function(h) seq.int(-h, -1L),
     rank  = function(h) seq.int(-h, -1L)),
   full_firsthalf = list(
-    label = "elig [-h,-1], rank [-h,-(floor(h/2)+1)]",
+    label = "elig [-h,-1], rank [-h,-(floor(h/2)+1)], level score",
+    score = "level",
     elig  = function(h) seq.int(-h, -1L),
     rank  = function(h) seq.int(-h, -(floor(h / 2) + 1L))),
   full_lasthalf = list(
-    label = "elig [-h,-1], rank [-floor(h/2),-1]",
+    label = "elig [-h,-1], rank [-floor(h/2),-1], level score",
+    score = "level",
     elig  = function(h) seq.int(-h, -1L),
-    rank  = function(h) seq.int(-floor(h / 2), -1L))
+    rank  = function(h) seq.int(-floor(h / 2), -1L)),
+  full_full_log = list(
+    label = "elig [-h,-1], rank [-h,-1], log score",
+    score = "log",
+    elig  = function(h) seq.int(-h, -1L),
+    rank  = function(h) seq.int(-h, -1L)),
+  full_firsthalf_log = list(
+    label = "elig [-h,-1], rank [-h,-(floor(h/2)+1)], log score",
+    score = "log",
+    elig  = function(h) seq.int(-h, -1L),
+    rank  = function(h) seq.int(-h, -(floor(h / 2) + 1L)))
 )
-# Which protocols a run uses. Default ships the two asked for; full_lasthalf is available as a foil.
+# Which protocols a run uses. Default ships both windows under both scores; full_lasthalf is a foil.
 match_protocols <- function() {
-  nm <- match_env_list("MATCH_PROTOCOLS", "full_full full_firsthalf")
+  nm <- match_env_list("MATCH_PROTOCOLS", "full_full full_firsthalf full_full_log full_firsthalf_log")
   bad <- setdiff(nm, names(MATCH_PROTOCOLS))
   if (length(bad)) stop("unknown MATCH_PROTOCOLS: ", paste(bad, collapse = ", "),
                         "\n  available: ", paste(names(MATCH_PROTOCOLS), collapse = ", "), call. = FALSE)
@@ -681,9 +709,9 @@ read_shards <- function(shard_dir, prefix) {
 #   protocol  optional scoring_protocol filter ("full_full", "full_firsthalf"); NULL = all
 #   arm       optional arm filter ("never_winner", "winner"); NULL = all
 #   tag       artefact tag; "" = the full run, "test2000" = that dry run
-# returns: the EXACT rows stage 4 estimated on -- after the qscore cutoff and with weights rebuilt, so
+# returns: the EXACT rows stage 4 estimated on -- after the qscore cutoff and with stage 4's weights, so
 #          weighted.mean(fte, weight) reproduces the figures and feols(...) reproduces the estimates.
-#          Note this differs from 03_reg_data_h*.parquet, which is PRE-cutoff with the original weights.
+#          Note this differs from 03_reg_data_h*.parquet, which is PRE-cutoff and carries no weights.
 #
 #   d <- load_estimation_panel("full_full", "never_winner")
 #   d[, .(m = sum(weight * fte) / sum(weight)), by = .(event_time, treatment)]
