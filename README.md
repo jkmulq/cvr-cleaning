@@ -60,7 +60,11 @@ cvr-cleaning/
 │   │   ├── 8_notice_date_gaps.Rmd
 │   │   ├── 9_reconcile_processed_data.Rmd
 │   │   ├── 10_twfe_estudy_cvr_method.Rmd
-│   │   └── 11_winner_cvr_provenance_counts.Rmd
+│   │   ├── 11_winner_cvr_provenance_counts.Rmd
+│   │   ├── 12_estudy_twfe_by_source_entity_method.Rmd   # (+ .R twin)
+│   │   ├── 13_estudy_winner_vs_nonwinner_matched.Rmd
+│   │   ├── 14_estudy_matched_vs_cobidder_validation.Rmd
+│   │   └── 15_report_combined.Rmd
 │   ├── matching/                        # matched event-study pipeline (run in order, 1 -> 4)
 │   │   ├── 0_matching_utils.R
 │   │   ├── 1_build_universe.R
@@ -142,6 +146,10 @@ The [code/analysis/](code/analysis) notebooks and helpers run **manually, after 
 | [8_notice_date_gaps.Rmd](code/analysis/8_notice_date_gaps.Rmd) | Coverage and gaps in the TED notice dates. |
 | [9_reconcile_processed_data.Rmd](code/analysis/9_reconcile_processed_data.Rmd) | Reconcile the KFST vs OpenTender processed data. |
 | [10_twfe_estudy_cvr_method.Rmd](code/analysis/10_twfe_estudy_cvr_method.Rmd) | TWFE event study testing whether the CVR-resolution method (matched / extraction / old) changes the firm-employment estimates. |
+| [12_estudy_twfe_by_source_entity_method.Rmd](code/analysis/12_estudy_twfe_by_source_entity_method.Rmd) | Naive firm-FE event studies around first award, one per `data_source × entity × cvr_method` cell (no matched controls). [.R twin](code/analysis/12_estudy_twfe_by_source_entity_method.R). |
+| [13_estudy_winner_vs_nonwinner_matched.Rmd](code/analysis/13_estudy_winner_vs_nonwinner_matched.Rmd) | Winner vs real losing co-bidder (TED) event studies, plus what predicts winning and bidding. Writes `estudy_wnw_h{8,4}.rds`, read by `load_nonwinner_panel()`. |
+| [14_estudy_matched_vs_cobidder_validation.Rmd](code/analysis/14_estudy_matched_vs_cobidder_validation.Rmd) | Validates the matched controls against real losing co-bidders on the same lot (reads matching stages 4–5). |
+| [15_report_combined.Rmd](code/analysis/15_report_combined.Rmd) | The single coauthor HTML: Part I knits `14_…` unchanged; Part II is the bidding-predictors analysis inlined. |
 | [code/matching/](code/matching) | The matched event-study pipeline — see the table below. |
 
 ### code/matching/ — the matched event-study pipeline
@@ -622,7 +630,7 @@ registry membership in `flag_cvr_final_in_registry`.
 > winner-vs-non-winner sample, a naive union **double-counts** such a firm. Exclude it by **self-joining on
 > `(data_source, tender_id, lot_id, cvr_final)`** and dropping the `non-winner` row wherever that same CVR
 > also appears as a `winner` on the same lot (~148 firm-lots). See
-> [estudy_winner_vs_nonwinner_matched.Rmd](code/analysis/estudy_winner_vs_nonwinner_matched.Rmd) for a worked
+> [13_estudy_winner_vs_nonwinner_matched.Rmd](code/analysis/13_estudy_winner_vs_nonwinner_matched.Rmd) for a worked
 > exclusion.
 
 ##### Core fields and their coverage
