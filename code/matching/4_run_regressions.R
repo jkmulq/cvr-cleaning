@@ -26,7 +26,7 @@
 # surviving counterfactual is not an observation.
 #
 # SPECIFICATION (the one validated against real co-bidders in
-# code/analysis/estudy_matched_vs_cobidder_validation.Rmd, per cell):
+# code/analysis/14_estudy_matched_vs_cobidder_validation.Rmd, per cell):
 #   feols(c(fte, log(fte)) ~ i(event_time, treated, ref = -1)
 #         | treated + event_time,
 #         cluster = ~ cvr, weights = ~ weight, fixef.rm = "none")
