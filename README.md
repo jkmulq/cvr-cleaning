@@ -60,10 +60,13 @@ cvr-cleaning/
 │   │   ├── 8_notice_date_gaps.Rmd
 │   │   ├── 9_reconcile_processed_data.Rmd
 │   │   ├── 10_twfe_estudy_cvr_method.Rmd
-│   │   ├── 11_winner_cvr_provenance_counts.Rmd
-│   │   ├── build_event_study_panel.R
-│   │   ├── find_control_firms.R
-│   │   └── find_control_firms_never_winners.R
+│   │   └── 11_winner_cvr_provenance_counts.Rmd
+│   ├── matching/                        # matched event-study pipeline (run in order, 1 -> 4)
+│   │   ├── 0_matching_utils.R
+│   │   ├── 1_build_universe.R
+│   │   ├── 2_match_controls.R
+│   │   ├── 3_build_reg_data.R
+│   │   └── 4_run_regressions.R
 │   └── scraping/                        # web/API pulls + TED dataset chain (run after matching)
 │       ├── employment_1_winners.R
 │       ├── employment_2_controls.R
@@ -139,7 +142,24 @@ The [code/analysis/](code/analysis) notebooks and helpers run **manually, after 
 | [8_notice_date_gaps.Rmd](code/analysis/8_notice_date_gaps.Rmd) | Coverage and gaps in the TED notice dates. |
 | [9_reconcile_processed_data.Rmd](code/analysis/9_reconcile_processed_data.Rmd) | Reconcile the KFST vs OpenTender processed data. |
 | [10_twfe_estudy_cvr_method.Rmd](code/analysis/10_twfe_estudy_cvr_method.Rmd) | TWFE event study testing whether the CVR-resolution method (matched / extraction / old) changes the firm-employment estimates. |
-| [find_control_firms.R](code/analysis/find_control_firms.R) | Builds the matched control group (one control per winner-event) for the event study. |
+| [code/matching/](code/matching) | The matched event-study pipeline — see the table below. |
+
+### code/matching/ — the matched event-study pipeline
+
+Run in order. The chain is strictly linear: **stage *n* reads only stage *n-1*'s outputs**, so each
+stage can be rerun in isolation and a break is attributable to the stage that caused it.
+
+| script | does | writes |
+|---|---|---|
+| [0_matching_utils.R](code/matching/0_matching_utils.R) | Shared helpers: winner universe, registry, match protocols, cascade rules, the Virk pull worker. Library only — no side effects. | — |
+| [1_build_universe.R](code/matching/1_build_universe.R) | Competitive award events from the combined dataset, the registry screen for eligible controls, an incremental employment top-up, and one unified firm-quarter panel. The only stage touching external inputs or the Virk API. | `01_firm_panel.parquet`, `01_events.rds`, `01_eligible_controls.rds` |
+| [2_match_controls.R](code/matching/2_match_controls.R) | Staggered industry/kommune cascade in two arms, then selection on `control_qscore` keeping all ties at rank 1, across match protocols. | `02_matched_panel.parquet`, `02_match_table.rds` |
+| [3_build_reg_data.R](code/matching/3_build_reg_data.R) | Balances each stack on ±h, attaches arm-summing weights. The window is read from the stage-2 match, not chosen here — for a different window, rerun stage 2 with `MATCH_H=<n>`. | `03_reg_data_h{h}.parquet` |
+| [4_run_regressions.R](code/matching/4_run_regressions.R) | Restricts to good matches (`MATCH_QSCORE_BOUND`), sweeps the cutoff, runs weighted TWFE per (protocol × arm). | `04_estimates.rds`, `04_coefs.parquet`, `04_qscore_sweep.parquet`, `04_figures/` |
+
+Artefacts land in `$CVR_DATA_DIR/matching/`. No CSVs are written anywhere in this pipeline.
+Everything is parquet or rds. Set `MATCH_TEST_N=200` for an end-to-end smoke test whose outputs are
+suffixed `_test200` and can never overwrite a full run.
 
 The [code/scraping/](code/scraping) folder holds the post-matching web/API steps,
 which run **after** matching because they consume the matched datasets. The
@@ -602,7 +622,7 @@ registry membership in `flag_cvr_final_in_registry`.
 > winner-vs-non-winner sample, a naive union **double-counts** such a firm. Exclude it by **self-joining on
 > `(data_source, tender_id, lot_id, cvr_final)`** and dropping the `non-winner` row wherever that same CVR
 > also appears as a `winner` on the same lot (~148 firm-lots). See
-> [estudy_winner_vs_nonwinner_matched.R](code/analysis/estudy_winner_vs_nonwinner_matched.R) for a worked
+> [estudy_winner_vs_nonwinner_matched.Rmd](code/analysis/estudy_winner_vs_nonwinner_matched.Rmd) for a worked
 > exclusion.
 
 ##### Core fields and their coverage
