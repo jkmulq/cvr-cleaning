@@ -53,13 +53,16 @@ same t = 0, with employment for each. ONE RUN PER WINDOW, h in the filename:
                                    the stage and reason it was dropped. Read by the last section.
 
   MATCH_OVERWRITE=1 [MATCH_SCORE=log] Rscript code/matching/5_cobidder_stacks.R   # builds h = 8 and 4
-  Rscript -e 'rmarkdown::render("code/analysis/estudy_matched_vs_cobidder_validation.Rmd")'
-  VMC_SCORE=log Rscript -e 'rmarkdown::render("code/analysis/estudy_matched_vs_cobidder_validation.Rmd",
-                                              output_file = "estudy_matched_vs_cobidder_validation_log.html")'
+  Rscript -e 'rmarkdown::render("code/analysis/14_estudy_matched_vs_cobidder_validation.Rmd",
+                                output_dir = "output/docs")'
+  VMC_SCORE=log Rscript -e 'rmarkdown::render("code/analysis/14_estudy_matched_vs_cobidder_validation.Rmd",
+                                              output_dir = "output/docs",
+                                              output_file = "14_estudy_matched_vs_cobidder_validation_log.html")'
 
-The RStudio Knit button goes through the `knit:` hook above, which names the output by VMC_SCORE
-automatically (the log knit gets a `_log` suffix). A bare rmarkdown::render() does NOT use the hook,
-so pass output_file yourself as in the second line, or the log knit overwrites the level HTML.
+The RStudio Knit button goes through the `knit:` hook above, which writes to output/docs/ and names
+the output by VMC_SCORE automatically (the log knit gets a `_log` suffix). A bare rmarkdown::render()
+does NOT use the hook, so pass output_dir and output_file yourself as above: without output_dir the
+HTML lands in code/analysis/, and without output_file the log knit overwrites the level HTML.
 
 Parameters are VMC_* environment variables. This report is READ-ONLY with respect to the pipeline and
 writes nothing under match_paths() unless VMC_SAVE=1. The layout is exactly TWO window sections;

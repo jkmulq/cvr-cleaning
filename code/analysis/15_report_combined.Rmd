@@ -30,12 +30,12 @@ knit: >
 <!--
 WHAT THIS IS. One self-contained HTML for sending to coauthors.
 
-  Part I   code/analysis/estudy_matched_vs_cobidder_validation.Rmd, knitted unchanged under
+  Part I   code/analysis/14_estudy_matched_vs_cobidder_validation.Rmd, knitted unchanged under
            VMC_SCORE = "log". The source is read as text, its YAML header stripped, and the body knitted
            with knitr::knit_child() in its own environment. Edit the source and this report picks the
            change up; there is no second copy.
   Part II  "What predicts bidding?" only, written out in this file. It is the section of the same name
-           in estudy_winner_vs_nonwinner_matched.Rmd plus the data prep it needs; the event studies, the
+           in 13_estudy_winner_vs_nonwinner_matched.Rmd plus the data prep it needs; the event studies, the
            winner/non-winner balance tables, "What predicts winning?" and the legal-form sections are
            not carried over. DEPARTURES from the source:
              - only tenders where every lot names a losing bidder (a winner also listed as a bidder
@@ -55,8 +55,8 @@ WHAT THIS IS. One self-contained HTML for sending to coauthors.
 INPUTS: stage-4 and stage-5 artefacts (log score) for Part I; the combined tender data and the employment
 panels for Part II. Nothing here changes them.
 
-  Rscript -e 'rmarkdown::render("code/analysis/report_combined.Rmd", output_dir = "output/docs")'
-or the Knit button (the hook above writes to output/docs/report_combined.html).
+  Rscript -e 'rmarkdown::render("code/analysis/15_report_combined.Rmd", output_dir = "output/docs")'
+or the Knit button (the hook above writes to output/docs/15_report_combined.html).
 -->
 
 ```{r combined-setup, include=FALSE}
@@ -149,7 +149,7 @@ This note summarises two pieces of analysis.
 ```{r part-1, results = 'asis'}
 .old_score <- Sys.getenv("VMC_SCORE", NA_character_)
 Sys.setenv(VMC_SCORE = "log")
-knit_part(src("estudy_matched_vs_cobidder_validation.Rmd"), tag = "validation")
+knit_part(src("14_estudy_matched_vs_cobidder_validation.Rmd"), tag = "validation")
 if (is.na(.old_score)) Sys.unsetenv("VMC_SCORE") else Sys.setenv(VMC_SCORE = .old_score)
 ```
 
@@ -165,7 +165,7 @@ This section asks which firm characteristics predict bidding. The unit is a TED 
 
 I estimate a conditional logit concentrating out tender fixed effects.
 
-<!-- Ported from estudy_winner_vs_nonwinner_matched.Rmd: setup + `prep` (A, C), the legal-form recode
+<!-- Ported from 13_estudy_winner_vs_nonwinner_matched.Rmd: setup + `prep` (A, C), the legal-form recode
 and `wnw_simple` from `compare-wnw-data`, then `join-non-bid` and `run-models`. For what changed, see
 DEPARTURES in the header comment. -->
 

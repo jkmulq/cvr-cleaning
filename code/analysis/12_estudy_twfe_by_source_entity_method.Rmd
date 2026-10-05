@@ -5,9 +5,24 @@ output:
   html_document:
     toc: true
     toc_float: true
+    number_sections: true
     fig_width: 11
     fig_height: 10
     df_print: kable
+knit: >
+  (function(inputFile, encoding) {
+    project_dir <- normalizePath(dirname(inputFile), mustWork = TRUE)
+    while (!file.exists(file.path(project_dir, "cvr-cleaning.Rproj")) &&
+           dirname(project_dir) != project_dir) project_dir <- dirname(project_dir)
+    output_dir <- file.path(project_dir, "output", "docs")
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    rmarkdown::render(
+      inputFile,
+      encoding = encoding,
+      knit_root_dir = project_dir,
+      output_dir = output_dir
+    )
+  })
 ---
 
 ```{r setup, include=FALSE}

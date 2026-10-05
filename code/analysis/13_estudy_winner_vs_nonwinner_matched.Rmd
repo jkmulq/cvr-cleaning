@@ -5,18 +5,36 @@ output:
   html_document:
     toc: true
     toc_float: true
+    number_sections: true
     fig_width: 11
     fig_height: 5
     df_print: kable
+knit: >
+  (function(inputFile, encoding) {
+    project_dir <- normalizePath(dirname(inputFile), mustWork = TRUE)
+    while (!file.exists(file.path(project_dir, "cvr-cleaning.Rproj")) &&
+           dirname(project_dir) != project_dir) project_dir <- dirname(project_dir)
+    output_dir <- file.path(project_dir, "output", "docs")
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    rmarkdown::render(
+      inputFile,
+      encoding = encoding,
+      knit_root_dir = project_dir,
+      output_dir = output_dir
+    )
+  })
 ---
 
 <!--
 Running this file -- it is standalone; there is no companion .R script.
-  1. Knit          : the Knit button, or
-                     Rscript -e 'rmarkdown::render("code/analysis/estudy_winner_vs_nonwinner_matched.Rmd")'
+  1. Knit          : the Knit button (the hook above writes to output/docs/), or
+                     Rscript -e 'rmarkdown::render("code/analysis/13_estudy_winner_vs_nonwinner_matched.Rmd",
+                                                   output_dir = "output/docs")'
+                     A bare render() does not use the hook, so without output_dir the HTML lands in
+                     code/analysis/.
   2. Interactively : open it and run chunks. project_dir falls back to getwd() and walks up to the
                      .Rproj marker, so this works from the repo root or from code/analysis/.
-  3. As a script   : knitr::purl("code/analysis/estudy_winner_vs_nonwinner_matched.Rmd", output = "/tmp/es.R")
+  3. As a script   : knitr::purl("code/analysis/13_estudy_winner_vs_nonwinner_matched.Rmd", output = "/tmp/es.R")
                      extracts the code on demand -- generate it, do not hand-maintain a second copy.
 Parameters are ESWNW_* environment variables (see the setup chunk); ESWNW_SAVE=0 skips writing .rds.
 NOT carried over from the retired .R: the optional Virk pull. A report should not make API calls as a

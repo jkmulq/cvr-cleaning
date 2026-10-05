@@ -3,12 +3,12 @@
 # ---------------------------------------------------------------------------------------------------
 # Firm-fixed-effect event study of (log) quarterly-spliced employment around the firm's FIRST award, run
 # SEPARATELY for every (data_source, entity, cvr_method) cell. NO matched controls (naive within-sample --
-# biased under staggered timing; the rigorous design is estudy_winner_vs_nonwinner_matched.Rmd). FE = firm
+# biased under staggered timing; the rigorous design is 13_estudy_winner_vs_nonwinner_matched.Rmd). FE = firm
 # only: on a treated-only balanced panel, adding calendar-time FE makes event-time collinear (degenerate
 # SEs), so firm FE + event-time dummies is the identified spec. Balanced panel: strictly positive FTE in
 # each of the +/-8 event quarters. Estimation is ONE feols() call split by cell (fsplit) -- no loops/helpers.
 #
-#   Rscript code/analysis/estudy_twfe_by_source_entity_method.R
+#   Rscript code/analysis/12_estudy_twfe_by_source_entity_method.R
 # Options (env): ETW_WINDOW (default 8), ETW_FREQ (quarterly_spliced), ETW_MIN_FIRMS (30),
 #                ETW_MIN_FTE (0), ETW_ENTITIES (default "winner buyer").
 # ---------------------------------------------------------------------------------------------------
@@ -75,7 +75,7 @@ print(panel[, .(firms = uniqueN(cvr), obs = .N), by = cell][order(cell)])
 # FE = firm only. In a treated-only balanced event-time panel, adding calendar-time (qidx) FE makes the
 # event-time dummies collinear with the two-way FE -> degenerate standard errors; firm FE + event-time
 # dummies is the identified spec here. (Netting out calendar shocks needs control firms -- that is exactly
-# the matched-control design in estudy_winner_vs_nonwinner_matched.Rmd.)
+# the matched-control design in 13_estudy_winner_vs_nonwinner_matched.Rmd.)
 message("4. estimating event studies (one per cell) ...")
 est <- feols(c(fte, log(fte)) ~ i(event_time, ref = "-1") | cvr,
              data = panel, cluster = ~cvr, fsplit = ~cell)
