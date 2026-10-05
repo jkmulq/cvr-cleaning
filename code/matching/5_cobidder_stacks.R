@@ -138,7 +138,7 @@ cat(sprintf("  award history: %d (firm, quarter) awards | %d competitive winners
             nrow(award_idx), length(all_comp_w)))
 
 # ---- 2. the TED lot universe ---------------------------------------------------------------------------
-# Filters copied from estudy_winner_vs_nonwinner_matched.Rmd so both designs cover the SAME lots.
+# Filters copied from 13_estudy_winner_vs_nonwinner_matched.Rmd so both designs cover the SAME lots.
 # Change one and you must change the other, or the comparison stops being like-for-like.
 match_rule_banner("2. TED winner / non-winner lots")
 cmb <- as.data.table(read_clean(match_env_chr("MATCH_TENDER_FILE",
@@ -577,4 +577,4 @@ cat("\nSTAGE 5 complete.\n")
 # (so once per window), opened a graphics device under Rscript, and fitted
 # `cvr + qidx^industry_grp + treated + event_time` clustered on `lot_key + cvr` -- a specification
 # this design deliberately does NOT use. The estimation lives in
-# code/analysis/estudy_matched_vs_cobidder_validation.Rmd, which is the one place it is defined.
+# code/analysis/14_estudy_matched_vs_cobidder_validation.Rmd, which is the one place it is defined.

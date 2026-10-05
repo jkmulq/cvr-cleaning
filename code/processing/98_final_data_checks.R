@@ -479,7 +479,7 @@ fwrite(notice_id_coverage,    file.path(dirs$clean_data, "tender_data_2006_2026_
 # 9b Winner vs non-winner lots: every (tender_id, lot_id) that carries a non-winner, with its winner and
 #    non-winner rows, ordered winner-first within each lot. NOTE: this keeps dual-role firms in place -- a
 #    firm listed as both winner and non-winner on the same lot appears in both arms (excluded only at
-#    analysis time, e.g. estudy_winner_vs_nonwinner_matched.Rmd).
+#    analysis time, e.g. 13_estudy_winner_vs_nonwinner_matched.Rmd).
 final_data[, non_winner_lot := any(entity == "non-winner"), by = .(tender_id, lot_id)]
 winner_nonwinner_lots <- final_data[non_winner_lot == TRUE & entity %chin% c("non-winner", "winner"),
                                     .(tender_id, lot_id, entity, ted_notice_id, cvr_final,

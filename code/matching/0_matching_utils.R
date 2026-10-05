@@ -286,7 +286,7 @@ EVENT_META_SRC  <- c("data_source", "tender_id", "lot_id", "ted_notice_id")
 #
 # THE EVENT GRAIN IS THE QUARTER, not the calendar year. It used to be (cvr, award_year), which threw
 # away every award quarter after a firm's first in a year -- those events were not merged, they were
-# DISCARDED, and the loss is what estudy_matched_vs_cobidder_validation.Rmd's `leak` table counts.
+# DISCARDED, and the loss is what 14_estudy_matched_vs_cobidder_validation.Rmd's `leak` table counts.
 # Two consequences beyond the larger sample, both of them fixes:
 #   - the sometimes-winner buffer becomes complete. 2_match_controls.R builds award_idx from these
 #     rows, so under the year grain a firm with a Q1 and a Q3 award was INVISIBLE to the buffer in Q3
@@ -728,7 +728,7 @@ load_estimation_panel <- function(protocol = NULL, arm = NULL, tag = match_tag()
 #   harmonise  TRUE renames columns to match load_estimation_panel(), so the two control designs
 #              can be compared directly. `entity` (winner/non-winner) becomes `treatment`
 #              (treated/control), `tidx` becomes `qidx`, and `arm` is set to "non_winner_bidder".
-# returns: the estimation panel from estudy_winner_vs_nonwinner_matched.Rmd -- the design whose
+# returns: the estimation panel from 13_estudy_winner_vs_nonwinner_matched.Rmd -- the design whose
 #          controls are REAL losing bidders on the same TED lot, not synthetic matches. Carries
 #          tender_id, lot_id, lot_key and ted_notice_id alongside the opaque stack_id, so a stack can
 #          be traced to its procurement and joined to the matched design (see JOINING THE TWO below).
@@ -755,7 +755,7 @@ load_nonwinner_panel <- function(window = 8, unit = c("quarters", "months"), har
   f <- file.path(dirs$employment,
                  sprintf("estudy_wnw_%s%d.rds", if (unit == "quarters") "h" else "m", window))
   if (!file.exists(f))
-    stop("missing: ", f, "\n  Knit or run code/analysis/estudy_winner_vs_nonwinner_matched.Rmd",
+    stop("missing: ", f, "\n  Knit or run code/analysis/13_estudy_winner_vs_nonwinner_matched.Rmd",
          " (it writes this when ESWNW_SAVE=1, the default).", call. = FALSE)
   x <- readRDS(f)
   if (is.null(x$panel)) stop(basename(f), " has no $panel -- it predates the panel-saving change.",
@@ -778,7 +778,7 @@ load_nonwinner_panel <- function(window = 8, unit = c("quarters", "months"), har
 # returns: list(n, mean, sd). n counts non-missing x; mean and sd are weighted with divisor sum(w),
 #          i.e. the biased weighted variance, not the reliability-corrected form.
 # Shared so the balance statistic cannot drift between reports that both claim to compute it.
-# NOTE estudy_winner_vs_nonwinner_matched.Rmd still carries an inline copy in its `compare-wnw-tables`
+# NOTE 13_estudy_winner_vs_nonwinner_matched.Rmd still carries an inline copy in its `compare-wnw-tables`
 # chunk; point that at this one next time the file is touched.
 wstats <- function(x, w) {
   sw <- sum(w, na.rm = TRUE)
