@@ -2,7 +2,9 @@
 # =====================================================================================================
 # STAGE 2 -- find the best-matched controls for every competitive award event.
 #
-# Reads ONLY stage 1's artefacts (01_firm_panel.parquet, 01_events.rds, 01_eligible_controls.rds).
+# Reads ONLY stage 1's artefacts (01_firm_panel.parquet, 01_events.rds, 01_eligible_controls.rds), plus,
+# for the pscore protocols only, 01_buyers.rds and 1b_fit_pscore.R's 01b_pscore_model.rds (pscore) /
+# 01b_pscore_age_model.rds (pscore_age).
 #
 # CONTROL POOLS. Both run by default, each cascading independently so control_protocol can differ:
 #   never_winner  never won a COMPETITIVE award. Because stage 1's exclusion set is competitive-only,
@@ -58,6 +60,19 @@
 # eligibility window share the candidate set, so eligibility is computed ONCE and merely re-scored per
 # ranking window; adding a protocol costs one mean() over a subset of quarters, not another cascade.
 #
+# THE pscore PROTOCOL IS A DIFFERENT ALGORITHM (opt-in: add "pscore" to MATCH_PROTOCOLS). No cascade and
+# no path score: every eligible candidate in the arm -- the same eligibility, buffer and pools as above --
+# is ranked by a bidding-propensity index (1b_fit_pscore.R; definitions in 0_matching_utils.R) against
+# this winner and its tender's buyers, and the top MATCH_PS_TOPK are kept, ties at the K-th kept. The
+# event's own buyers are never candidates. Its rows carry control_pscore (the index; higher = more like a
+# bidder, comparable only within a stack), pscore_rank and n_ranked; control_qscore is NA. Because every
+# event that reaches the arm loop has the full pre-period, eligibility is the same for every event in a
+# group, so it and the candidates' characteristics are computed ONCE per group (ps_group()).
+# pscore_fte, pscore_age and pscore_nofte (opt-in) are the same algorithm on other models: FTE at t-2 and
+# growth t-6 -> t-2 (the 5 Oct terms), firm age in place of FTE, or nothing (0/1 characteristics only, ties
+# at the K-th drawn at random). Any number of pscore protocols can run together, each on its own model, and
+# the cascade is unaffected.
+#
 # EVENT PROVENANCE. Every output row -- treated and control alike -- carries the identifiers of the
 # procurement its event came from (EVENT_META_COLS, documented in 0_matching_utils.R), so a matched
 # event joins to the co-bidder design by identifier instead of by (winner cvr, event quarter).
@@ -69,7 +84,7 @@
 # PERFORMANCE. Events are processed in groups sharing an event_qidx (~100 distinct values, not 33k), so
 # the panel is sliced ~100 times instead of once per event. Only the columns matching needs are carried:
 # find_control_firms_never_winners.R:133-135 records that hauling all ~69 columns "exhausted the 24 GB
-# vector limit". Groups are checkpointed, so an interrupted run resumes.
+# vector limit". The finished match is checkpointed once, at the end (an interrupted run does NOT resume).
 #
 #   Rscript code/matching/2_match_controls.R
 # Options (env):
@@ -77,11 +92,18 @@
 #   MATCH_MIN_RUNG       eligible candidates a rung needs to fire (default 10)
 #   MATCH_PROTOCOLS      default "full_full full_firsthalf full_full_log full_firsthalf_log"
 #   MATCH_RULES          default "staggered_industry_kommune"
+#   MATCH_KOMMUNE_COL    the kommune the cascade's kommune rungs hold: kommune_code (default, the address at
+#                        each quarter's end) or hq_kommune_code (the current head office, as before 6 Oct 2026)
 #   MATCH_ARMS           default "never_winner winner"
 #   MATCH_WINNER_BUFFER  quarters either side of the event in which a sometimes-winner control may not
 #                        have an award of its own (default 12, i.e. a 3-year buffer)
 #   MATCH_MAX_TIES       >0 flags events whose tie set exceeds it (default 0 = report only)
-#   MATCH_FORCE_REMATCH  1 to ignore the checkpoint
+#   MATCH_PS_TOPK        controls kept per (event, arm) by each pscore protocol (default 5)
+#   MATCH_PS_SEED        seed for the random tie-break of models with ties = "random" (pscore_nofte); the
+#                        draw for an event uses MATCH_PS_SEED + ev (default 20261005)
+#   MATCH_FORCE_REMATCH  1 to ignore the checkpoint. A checkpoint written under different settings
+#                        (window, protocols, arms, buffer, rung floor, K, pscore model, 01_events) stops
+#                        the run instead of being reused.
 #   MATCH_CORES, MATCH_TEST_N, MATCH_OVERWRITE
 # =====================================================================================================
 
@@ -96,8 +118,21 @@ MAX_TIES <- match_env_int("MATCH_MAX_TIES", 0L)
 ARMS     <- match_env_list("MATCH_ARMS", "never_winner winner")
 PROTOS   <- match_protocols()
 RULES    <- match_rules()
+KCOL     <- match_kommune_col()   # the cascade's kommune: contemporaneous kommune_code unless set
 N_CORES  <- match_env_int("MATCH_CORES", max(1L, parallel::detectCores() - 1L))
 P        <- match_paths()
+
+# The pscore protocol runs its own selection (no cascade); every other protocol shares the cascade.
+PS_PROTOS <- PROTOS[vapply(PROTOS, function(p) MATCH_PROTOCOLS[[p]]$score == "pscore", logical(1))]
+QS_PROTOS <- setdiff(PROTOS, PS_PROTOS)
+PS_K      <- match_env_int("MATCH_PS_TOPK", 5L)
+PS_SEED   <- match_env_int("MATCH_PS_SEED", 20261005L)   # per-event seed (+ ev) where a model breaks ties at random
+if (length(PS_PROTOS) && (is.na(PS_K) || PS_K < 1L))
+  stop("MATCH_PS_TOPK must be a positive integer", call. = FALSE)
+# Each pscore protocol's model variant (PSCORE_VARIANTS), and whether any of them reads the firm's age
+PS_VAR   <- vapply(setNames(PS_PROTOS, PS_PROTOS), function(p) MATCH_PROTOCOLS[[p]]$variant, character(1))
+PS_AGE   <- any(vapply(PS_VAR, function(v) "a2" %in% ps_variant(v)$needs, logical(1)))
+PS_AVG   <- any(vapply(PS_VAR, function(v) "lbar" %in% ps_variant(v)$needs, logical(1)))   # pre-period average FTE
 
 if (WBUF < H) stop(sprintf(paste0(
   "MATCH_WINNER_BUFFER=%d is narrower than the study window h=%d. A sometimes-winner control\n",
@@ -107,7 +142,9 @@ cat(sprintf("STAGE 2 | h=%d | min_rung=%d | winner_buffer=%d | arms=%s\n",
             H, MIN_RUNG, WBUF, paste(ARMS, collapse = ",")))
 cat(sprintf("  protocols: %s\n", paste(sprintf("%s (%s)", PROTOS,
             vapply(PROTOS, function(p) MATCH_PROTOCOLS[[p]]$label, character(1))), collapse = " | ")))
-cat(sprintf("  rules    : %s\n", paste(RULES, collapse = ", ")))
+cat(sprintf("  rules    : %s | kommune rungs hold %s\n", paste(RULES, collapse = ", "), KCOL))
+for (p in PS_PROTOS) cat(sprintf("  %s : top %d by bidding propensity per (event, arm), no cascade | model %s (%s)\n",
+                                 p, PS_K, PS_VAR[[p]], paste(ps_variant(PS_VAR[[p]])$features, collapse = ", ")))
 
 # ---- inputs -------------------------------------------------------------------------------------------
 match_rule_banner("1. inputs (stage 1 artefacts only)")
@@ -139,15 +176,43 @@ all_comp_w <- unique(events$cvr)
 elig_cvrs <- eligible[has_employment == TRUE, unique(cvr)]
 cat(sprintf("  eligible never-winner pool with data: %d\n", length(elig_cvrs)))
 
+# The pscore protocol's inputs: the fitted model, and each study event's buyers with their kommune at
+# t - 2 (keyed on ev; the forked workers read these globals, as they read `pool`).
+if (length(PS_PROTOS)) {
+  PSM <- lapply(PS_VAR, function(v) read_pscore_model(P$ps_model_for(v), v))   # by protocol
+  BUY <- read_obj(P$buyers)
+  if (!all(c("event_data_source", "event_tender_id") %in% names(study)))
+    stop("01_events.rds has no event provenance -- re-run stage 1 (the pscore buyers need it)", call. = FALSE)
+  EV_BUY <- buyer_kommunes(study[, .(key = ev, data_source = event_data_source, tender_id = event_tender_id,
+                                     q = event_qidx - PSCORE_LAGS[1])], BUY)
+  setkey(EV_BUY, key)
+  for (p in PS_PROTOS)
+    cat(sprintf("  %s model: fitted %s | %d strata | %d losing bidders | concordance %.3f\n",
+                p, format(PSM[[p]]$run_at), PSM[[p]]$n_strata, PSM[[p]]$nevent, PSM[[p]]$concordance))
+  cat(sprintf("  study events with a known buyer: %d of %d (%d with a buyer kommune)\n",
+              uniqueN(EV_BUY$key), nrow(study), uniqueN(EV_BUY[!is.na(buyer_kommune), key])))
+}
+
 # ---- compact pool -------------------------------------------------------------------------------------
 # Carry ONLY what matching needs. Attributes stay row-level (not collapsed to one per firm) because the
 # original matched on the candidate's industry/kommune AS OBSERVED IN THE PRE-WINDOW, and that is what
 # slicing by window reproduces for free.
 POOL_COLS <- c("cvr", "qidx", "fte", "firm_type",
-               "industry_code6", "industry_class", "industry_group", "industry_division", "hq_kommune_code")
+               "industry_code6", "industry_class", "industry_group", "industry_division", KCOL)
+# The pscore characteristics also need the legal form and the address kommune (time-varying). Carried
+# only when pscore is requested: two character columns on every pool row are not free.
+if (length(PS_PROTOS)) {
+  if (!"legal_form_short" %in% names(panel))
+    stop("the firm panel has no legal_form_short -- re-run stage 1 (pscore needs it)", call. = FALSE)
+  POOL_COLS <- unique(c(POOL_COLS, "legal_form_short", "kommune_code"))
+}
 missing_cols <- setdiff(POOL_COLS, names(panel))
 if (length(missing_cols)) stop("panel is missing required columns: ", paste(missing_cols, collapse = ", "),
                                call. = FALSE)
+# pscore_age's firm age: the founding date is firm-level, so one row per firm rather than a pool column
+if (PS_AGE && !"registration_date" %in% names(panel))
+  stop("the firm panel has no registration_date -- re-run stage 1 (pscore_age needs it)", call. = FALSE)
+FOUNDED <- if (PS_AGE) unique(panel[!is.na(registration_date), .(cvr, registration_date)]) else NULL
 pool <- panel[, ..POOL_COLS]
 rm(panel); invisible(gc())
 pool[, arm_pool := fifelse(firm_type == "winner", "winner",
@@ -167,6 +232,58 @@ cat(sprintf("  shared eligibility window: [%d, %d]\n", min(elig_windows[[1]]), m
 RUNGS <- MATCH_RULES[[RULES[1]]]()
 if (length(RULES) > 1) cat("  note: only the first rule is applied per run; rerun with MATCH_RULES=<other>\n")
 
+# ---- the pscore protocol: once per group, then once per (event, arm) --------------------------------------
+# Everything about the pscore candidate set that does NOT depend on the event. Every event that reaches
+# the arm loop has T_et == [-h,-1] (match_one_event() discards the rest), so the eligibility tests are the
+# same for all of them -- positive FTE in every pre quarter, >= h observed post quarters -- exactly the
+# tests the cascade's last rung ("any industry") applies. That equality is checked after the match.
+# args:  Q = the group's event_qidx; pre, win = its slices; keep_w = the sometimes-winner set
+# returns: list(elig = eligible (cvr, arm_pool) firms,
+#               cand = by pscore protocol, elig + characteristics for the firms its variant can score,
+#               fv   = firm values for every pool firm at Q-2, winners included -- the winner side)
+ps_group <- function(Q, pre, win, keep_w) {
+  ok   <- pre[!is.na(fte) & fte > 0, .N, by = cvr][N == H, cvr]
+  ok   <- win[cvr %chin% ok & et >= 1L & et <= H, uniqueN(et), by = cvr][V1 >= H, cvr]
+  elig <- unique(pre[cvr %chin% ok, .(cvr, arm_pool)])
+  elig <- elig[arm_pool == "never_winner" | (arm_pool == "winner" & cvr %chin% keep_w)]
+  # Read from `pool` by key rather than from the slice: at h < 6, Q-6 is outside the +/-h window.
+  f2 <- pool[.(Q - PSCORE_LAGS[1]), .(cvr, fte2 = fte, industry_division, industry_class,
+                                      legal_form_short, kommune_code), nomatch = 0L]
+  f6 <- pool[.(Q - PSCORE_LAGS[2]), .(cvr, fte6 = fte), nomatch = 0L]
+  fr <- merge(f2, f6, by = "cvr", all.x = TRUE)
+  if (PS_AGE) pscore_add_age(fr, FOUNDED, Q - PSCORE_LAGS[1])
+  if (PS_AVG) pscore_add_avg(fr, pool, Q)                     # by key from `pool`: t-8 can be outside the slice
+  fv <- pscore_firm_vars(fr)
+  list(elig = elig, cand = lapply(PS_VAR, function(v) merge(elig, fv[ps_scorable(fv, v)], by = "cvr")), fv = fv)
+}
+
+# One event's controls in one arm under pscore protocol pr: every eligible candidate, ranked by the
+# propensity index against this winner and its tender's buyers; the top PS_K kept, ties at the K-th kept.
+# args:  e = the event row; a = the arm; psg = ps_group() for e's group; n_pre = the treated pre quarters;
+#        pr = the pscore protocol (its model is PSM[[pr]], its variant PS_VAR[[pr]])
+# returns: list(rows = the control rows) or list(skip = "<reason>")
+ps_select <- function(e, a, psg, n_pre, pr) {
+  v <- PS_VAR[[pr]]
+  W <- e$cvr
+  w <- psg$fv[cvr == W]
+  if (!ps_winner_ok(w, v)) return(list(skip = ps_variant(v)$w_skip))
+  # Before the buyer exclusion, so it equals what the cascade's last rung counts (checked below).
+  n_elig <- psg$elig[arm_pool == a & cvr != W, .N]
+  b <- EV_BUY[.(e$ev), nomatch = 0L]                         # this event's buyers and their kommuner
+  x <- psg$cand[[pr]][arm_pool == a & cvr != W & !(cvr %chin% b$buyer_cvr)]   # a subset, so a copy
+  if (!nrow(x)) return(list(skip = "no scorable eligible candidate"))
+  pscore_features(x, w, b$buyer_kommune, v)
+  x[, control_pscore := pscore_index(x, PSM[[pr]]$coef, v)]
+  sel <- x[ps_top_k(x$control_pscore, PS_K, v, PS_SEED + e$ev)]   # ties kept, or drawn at random (pscore_nofte)
+  sel[, pscore_rank := as.integer(frank(-control_pscore, ties.method = "min"))]
+  list(rows = data.table(
+    ev = e$ev, scoring_protocol = pr, arm = a, cvr = sel$cvr,
+    treatment = "control", control_protocol = MATCH_PROTOCOLS[[pr]]$label, rung_idx = NA_integer_,
+    control_qscore = NA_real_, mean_fte_diff_sq = NA_real_, n_scored = NA_integer_,
+    n_eligible = n_elig, n_pre = n_pre, n_tied = nrow(sel),
+    control_pscore = sel$control_pscore, pscore_rank = sel$pscore_rank, n_ranked = nrow(x)))
+}
+
 # ---- the per-event matcher -------------------------------------------------------------------------------
 # Returns one data.table of (ev, scoring_protocol, arm, cvr, ...) rows, or a `discard` record explaining why
 # the event produced nothing. Discards are COUNTED and reported, never silently dropped.
@@ -178,10 +295,11 @@ if (length(RULES) > 1) cat("  note: only the first rule is applied per run; reru
 #                     which `pre` cannot answer
 #   keep_winner_cvrs  competitive winners eligible for the sometimes-winner arm, i.e. all of them
 #                     MINUS any with an award inside this window. Precomputed per group.
+#   psg               ps_group() for this group (NULL unless the pscore protocol is requested)
 # returns: either list(rows = <match records>, diag = ...) or list(discard = "<reason>").
 #          Never both. `rows` carries firm IDENTITIES and match diagnostics only -- no employment
-#          series; that is joined on later.
-match_one_event <- function(e, pre, win, keep_winner_cvrs) {
+#          series; that is joined on later. `ps_skip` lists (event, arm) pairs pscore could not score.
+match_one_event <- function(e, pre, win, keep_winner_cvrs, psg = NULL) {
   W <- e$cvr
   tw <- pre[cvr == W] # Get treated firm pre-period
   if (!nrow(tw)) return(list(discard = "treated absent from the pre-window"))
@@ -211,7 +329,7 @@ match_one_event <- function(e, pre, win, keep_winner_cvrs) {
     industry_class    = unique(tw$industry_class[!is.na(tw$industry_class)]),
     industry_group    = unique(tw$industry_group[!is.na(tw$industry_group)]),
     industry_division = unique(tw$industry_division[!is.na(tw$industry_division)]))
-  komm <- unique(tw$hq_kommune_code[!is.na(tw$hq_kommune_code)])
+  komm <- unique(tw[[KCOL]][!is.na(tw[[KCOL]])])   # every kommune the treated firm had in the pre-window
 
   # How many candidates at a rung clear EVERY eligibility test EXCEPT fte > 0. Called once per
   # (event, arm) -- at the rung that fired, or at the last rung tried if none did -- never inside the
@@ -230,9 +348,19 @@ match_one_event <- function(e, pre, win, keep_winner_cvrs) {
          n_elig_nopos = as.integer(n_nopos),
          n_drop_pos = as.integer(max(0L, n_nopos - n_elig)), fired = fired, reason = reason)
 
-  out <- list(); diag <- list()
-  for (arm in ARMS) {
-    arm_cvrs <- if (arm == "never_winner") { 
+  out <- list(); diag <- list(); ps_skip <- list()
+
+  # The pscore protocols: no cascade, the propensity index ranks the whole eligible arm (ps_select()).
+  for (pr in PS_PROTOS) for (arm in ARMS) {
+    s <- ps_select(e, arm, psg, n_pre, pr)
+    if (!is.null(s$skip)) ps_skip[[paste(arm, pr)]] <- data.table(ev = e$ev, scoring_protocol = pr, arm = arm,
+                                                                  reason = s$skip)
+    else out[[paste(arm, pr)]] <- s$rows
+  }
+
+  # The cascade, for every other protocol.
+  for (arm in if (length(QS_PROTOS)) ARMS else character()) {
+    arm_cvrs <- if (arm == "never_winner") {
       pre[arm_pool == "never_winner", unique(cvr)] # Extract CVR numbers for each arm
       } else {
       intersect(pre[arm_pool == "winner", unique(cvr)], keep_winner_cvrs)
@@ -252,10 +380,10 @@ match_one_event <- function(e, pre, win, keep_winner_cvrs) {
       
       # Define candidate set as those CVR numbers in the never-winner/winner arm
       # that have the industry as in the treated firm in the industry rung
-      # and the same HQ kommune code
+      # and the same kommune (KCOL) in some pre-window quarter
       cand <- pre[cvr %chin% arm_cvrs &
                     (if (is.null(r$col)) TRUE else get(r$col) %chin% vals) &
-                    (if (r$komm) hq_kommune_code %chin% komm else TRUE), unique(cvr)]
+                    (if (r$komm) get(KCOL) %chin% komm else TRUE), unique(cvr)]
       if (!length(cand)) next
       last_cand <- cand; last_rung <- r$label
 
@@ -280,7 +408,7 @@ match_one_event <- function(e, pre, win, keep_winner_cvrs) {
                           elig_nopos(rung_hit$cand), TRUE, NA_character_)
 
     # score once per protocol over the SHARED eligible set
-    for (pr in PROTOS) {
+    for (pr in QS_PROTOS) {
       rank_off <- MATCH_PROTOCOLS[[pr]]$rank(H)
       rk <- intersect(T_et, rank_off)
       if (!length(rk)) next                                # nothing scorable under this protocol
@@ -317,23 +445,28 @@ match_one_event <- function(e, pre, win, keep_winner_cvrs) {
         treatment = "control", control_protocol = rung_hit$label, rung_idx = rung_hit$idx,
         control_qscore = sel$control_qscore, mean_fte_diff_sq = sel$mean_fte_diff_sq,
         n_scored = sel$n_scored, n_eligible = length(rung_hit$cvrs), n_pre = n_pre,
-        n_tied = nrow(sel))
+        n_tied = nrow(sel),
+        # pscore-only columns, typed NA: every protocol's rows must bind without fill
+        control_pscore = NA_real_, pscore_rank = NA_integer_, n_ranked = NA_integer_)
     }
   }
-  if (!length(out)) return(list(discard = "no control selected in any arm", diag = diag))
+  if (!length(out)) return(list(discard = "no control selected in any arm", diag = diag, ps_skip = ps_skip))
 
   ctrl <- rbindlist(out, use.names = TRUE)
   # The treated firm, once per (scoring window, pool) so every stack is self-contained.
   # It CARRIES THE STACK'S ATTRIBUTES rather than NAs. Every control in a stack sits at the same
   # minimum qscore, fired at the same industry level and shares the same counts, so these describe the
   # STACK, not the control -- and putting them on the treated row makes a stack-level filter a single
-  # predicate. `d[abs(control_qscore) <= bound]` then keeps the whole stack; with NAs here it would
-  # silently drop every treated firm and need a special case at every call site.
+  # predicate. `d[control_qscore <= bound]` then keeps the whole stack; with NAs here it would
+  # silently drop every treated firm and need a special case at every call site. (pscore stacks are
+  # never cut, so their NA control_qscore is harmless -- see 4_run_regressions.R.) A firm has no
+  # propensity against itself, so the treated row's control_pscore and pscore_rank are NA.
   trt <- unique(ctrl, by = c("ev", "scoring_protocol", "arm"))[
     , .(ev, scoring_protocol, arm, cvr = W, treatment = "treated",
         control_protocol, rung_idx, control_qscore, mean_fte_diff_sq,
-        n_scored, n_eligible, n_pre, n_tied)]
-  list(rows = rbindlist(list(trt, ctrl), use.names = TRUE), diag = diag)
+        n_scored, n_eligible, n_pre, n_tied,
+        control_pscore = NA_real_, pscore_rank = NA_integer_, n_ranked)]
+  list(rows = rbindlist(list(trt, ctrl), use.names = TRUE), diag = diag, ps_skip = ps_skip)
 }
 
 # ---- run over event_qidx groups -----------------------------------------------------------------------
@@ -357,26 +490,43 @@ process_group <- function(Q) {
   # which is deliberately wider than the study window (see CONTROL POOLS in the header).
   in_win <- award_idx[event_qidx %between% c(Q - WBUF, Q + WBUF), unique(cvr)]
   keep_w <- setdiff(all_comp_w, in_win)
+  # The pscore candidate set and its characteristics, once for every event in the group
+  psg <- if (length(PS_PROTOS)) ps_group(Q, pre, win, keep_w) else NULL
 
   evs <- study[event_qidx == Q]
   res <- vector("list", nrow(evs)); dsc <- vector("list", nrow(evs)); dgs <- vector("list", nrow(evs))
+  pss <- vector("list", nrow(evs))
   for (i in seq_len(nrow(evs))) {
-    r <- tryCatch(match_one_event(evs[i], pre, win, keep_winner_cvrs = keep_w),
+    r <- tryCatch(match_one_event(evs[i], pre, win, keep_winner_cvrs = keep_w, psg = psg),
                   error = function(err) list(discard = paste("error:", conditionMessage(err))))
     if (!is.null(r$rows)) res[[i]] <- r$rows
     if (!is.null(r$discard)) dsc[[i]] <- data.table(ev = evs$ev[i], reason = r$discard)
     # diag was computed and thrown away before; it carries the eligibility funnel, so keep it
     if (length(r$diag)) dgs[[i]] <- rbindlist(lapply(names(r$diag), function(a)
       c(list(ev = evs$ev[i], arm = a), r$diag[[a]])), use.names = TRUE, fill = TRUE)
+    if (length(r$ps_skip)) pss[[i]] <- rbindlist(r$ps_skip, use.names = TRUE)
   }
   list(rows = rbindlist(Filter(Negate(is.null), res), use.names = TRUE),
        discards = rbindlist(Filter(Negate(is.null), dsc), use.names = TRUE),
-       diags = rbindlist(Filter(Negate(is.null), dgs), use.names = TRUE, fill = TRUE))
+       diags = rbindlist(Filter(Negate(is.null), dgs), use.names = TRUE, fill = TRUE),
+       ps_skips = rbindlist(Filter(Negate(is.null), pss), use.names = TRUE))
 }
 
+# What a checkpoint was matched under. Reusing one built under other settings would silently mix runs --
+# a refitted pscore model, a different K, or `ev` renumbered by a stage-1 rerun -- so that stops instead.
+CKPT_SETTINGS <- list(h = H, protocols = PROTOS, arms = ARMS, wbuf = WBUF, min_rung = MIN_RUNG, komm_col = KCOL,
+                      ps_k     = if (length(PS_PROTOS)) PS_K else NA_integer_,
+                      ps_seed  = if (length(PS_PROTOS)) PS_SEED else NA_integer_,
+                      ps_model = if (length(PS_PROTOS)) vapply(PSM, function(m) format(m$run_at), character(1),
+                                                               USE.NAMES = FALSE) else NA_character_,
+                      events_mtime = format(file.mtime(P$events)))
 if (file.exists(P$match_ckpt) && !match_env_lgl("MATCH_FORCE_REMATCH", FALSE)) {
   cat(sprintf("  reusing checkpoint (set MATCH_FORCE_REMATCH=1 to redo): %s\n", basename(P$match_ckpt)))
   parts <- readRDS(P$match_ckpt)
+  if (!identical(attr(parts, "settings"), CKPT_SETTINGS))
+    stop("the checkpoint was matched under different settings (window, protocols, arms, buffer, rung\n",
+         "  floor, MATCH_PS_TOPK, the pscore model, or a rebuilt 01_events) -- or predates this check.\n",
+         "  Re-run with MATCH_FORCE_REMATCH=1.", call. = FALSE)
 } else {
   setDTthreads(1L)
   timed <- system.time({
@@ -386,6 +536,7 @@ if (file.exists(P$match_ckpt) && !match_env_lgl("MATCH_FORCE_REMATCH", FALSE)) {
   })
   setDTthreads(0L)
   cat(sprintf("  matched in %.1f min\n", timed[["elapsed"]] / 60))
+  attr(parts, "settings") <- CKPT_SETTINGS
   saveRDS(parts, P$match_ckpt, compress = "gzip")
 }
 
@@ -416,6 +567,7 @@ if (length(missing_pr))
 discards    <- rbindlist(lapply(good, `[[`, "discards"), use.names = TRUE, fill = TRUE)
 # Absent from a checkpoint written before the funnel counters existed -- see the report block below.
 eligfunnel  <- rbindlist(lapply(good, `[[`, "diags"),    use.names = TRUE, fill = TRUE)
+ps_skips    <- rbindlist(lapply(good, `[[`, "ps_skips"), use.names = TRUE, fill = TRUE)
 
 # ---- event provenance ---------------------------------------------------------------------------------
 # Attached here, not inside match_one_event(): it is event-level, so carrying it through the per-event
@@ -464,12 +616,14 @@ print(match_table[treatment == "control", .(median_elig = as.numeric(median(n_el
                                             min_elig = min(n_eligible), max_elig = max(n_eligible)),
                   by = .(arm, control_protocol)][order(arm, -median_elig)])
 
-cat("\n  ties at rank 1 (how many firms share the minimum qscore):\n")
-tie <- unique(match_table[treatment == "control", .(ev, scoring_protocol, arm, n_tied)])
-print(tie[, .(events = .N, mean_tied = round(mean(n_tied), 2), median_tied = as.numeric(median(n_tied)),
-              p95 = as.numeric(quantile(n_tied, .95)), max_tied = max(n_tied)),
-          by = .(scoring_protocol, arm)][order(scoring_protocol, arm)])
-if (MAX_TIES > 0L) {
+cat("\n  ties at rank 1 (how many firms share the minimum qscore; cascade protocols):\n")
+tie <- unique(match_table[treatment == "control" & scoring_protocol %chin% QS_PROTOS,
+                          .(ev, scoring_protocol, arm, n_tied)])
+if (nrow(tie))
+  print(tie[, .(events = .N, mean_tied = round(mean(n_tied), 2), median_tied = as.numeric(median(n_tied)),
+                p95 = as.numeric(quantile(n_tied, .95)), max_tied = max(n_tied)),
+            by = .(scoring_protocol, arm)][order(scoring_protocol, arm)])
+if (MAX_TIES > 0L && nrow(tie)) {
   over <- tie[n_tied > MAX_TIES]
   cat(sprintf("  events exceeding MATCH_MAX_TIES=%d: %d (flagged, NOT truncated)\n", MAX_TIES, nrow(over)))
 }
@@ -478,8 +632,8 @@ if (MAX_TIES > 0L) {
 # in the header for why it is neither. The survival-relevant number lives in stage 3, which sees the
 # post-period; this one is pre-period by construction.
 if (!nrow(eligfunnel)) {
-  cat("\n  fte > 0 eligibility cost: unavailable -- the checkpoint predates the counter.\n")
-  cat("    Re-run with MATCH_FORCE_REMATCH=1 to populate it.\n")
+  cat("\n  fte > 0 eligibility cost: unavailable -- no cascade protocol in this run, or the checkpoint\n")
+  cat("    predates the counter (then re-run with MATCH_FORCE_REMATCH=1 to populate it).\n")
 } else {
   cat("\n  fte > 0 eligibility cost (per event x arm, at the rung that fired):\n")
   ef <- eligfunnel[fired == TRUE]
@@ -509,11 +663,27 @@ if (!nrow(eligfunnel)) {
   }
 }
 
-cat("\n  qscore distribution (0 = an exactly identical pre-period series):\n")
-print(match_table[treatment == "control",
-                  .(zero = sum(control_qscore == 0), median = round(as.numeric(median(control_qscore)), 4),
-                    p90 = round(as.numeric(quantile(control_qscore, .9)), 4)),
-                  by = .(scoring_protocol, arm)][order(scoring_protocol, arm)])
+if (length(QS_PROTOS)) {
+  cat("\n  qscore distribution (0 = an exactly identical pre-period series):\n")
+  print(match_table[treatment == "control" & scoring_protocol %chin% QS_PROTOS,
+                    .(zero = sum(control_qscore == 0), median = round(as.numeric(median(control_qscore)), 4),
+                      p90 = round(as.numeric(quantile(control_qscore, .9)), 4)),
+                    by = .(scoring_protocol, arm)][order(scoring_protocol, arm)])
+}
+
+# The pscore protocols: how large the ranked pool is, and how often ties push a stack past K.
+if (length(PS_PROTOS)) {
+  cat(sprintf("\n  pscore protocols (top %d by propensity, whole arm, no cascade):\n", PS_K))
+  ps_st <- unique(match_table[treatment == "control" & scoring_protocol %chin% PS_PROTOS,
+                              .(ev, scoring_protocol, arm, n_eligible, n_ranked, n_tied)])
+  print(ps_st[, .(stacks = .N, med_eligible = as.numeric(median(n_eligible)),
+                  med_ranked = as.numeric(median(n_ranked)), stacks_over_k = sum(n_tied > PS_K),
+                  max_kept = max(n_tied)), by = .(scoring_protocol, arm)][order(scoring_protocol, arm)])
+  if (nrow(ps_skips)) {
+    cat("  (event, arm) pairs a pscore protocol could not score:\n")
+    print(ps_skips[, .N, by = .(scoring_protocol, arm, reason)][order(scoring_protocol, arm, -N)])
+  }
+}
 
 # ---- checks ------------------------------------------------------------------------------------------------
 match_rule_banner("4. checks")
@@ -527,19 +697,42 @@ stopifnot(nrow(ov[arms > 1L]) == 0L)
 cat("  OK  arms are disjoint (no firm controls in both arms for the same event)\n")
 
 stopifnot(!any(is.na(match_table[treatment == "control", control_protocol])))
-stopifnot(!any(is.na(match_table[treatment == "control", control_qscore])))
-cat("  OK  every control carries a rung and a qscore\n")
+qc <- match_table[treatment == "control" & scoring_protocol %chin% QS_PROTOS]   # the cascade protocols
+if (nrow(qc)) {
+  stopifnot(!any(is.na(qc$control_qscore)))
+  cat("  OK  every control carries a rung and a qscore (cascade protocols)\n")
 
-chk <- merge(match_table[treatment == "control", .(ev, scoring_protocol, arm, cvr, control_qscore)],
-             match_table[treatment == "control", .(mn = min(control_qscore)), by = .(ev, scoring_protocol, arm)],
-             by = c("ev", "scoring_protocol", "arm"))
-stopifnot(all(abs(chk$control_qscore - chk$mn) < 1e-12))
-cat("  OK  every kept control sits exactly at its stack's minimum qscore\n")
+  chk <- merge(qc[, .(ev, scoring_protocol, arm, cvr, control_qscore)],
+               qc[, .(mn = min(control_qscore)), by = .(ev, scoring_protocol, arm)],
+               by = c("ev", "scoring_protocol", "arm"))
+  stopifnot(all(abs(chk$control_qscore - chk$mn) < 1e-12))
+  cat("  OK  every kept control sits exactly at its stack's minimum qscore\n")
+}
+
+# The pscore protocol keeps the top K, not the minimum: every control has an index, and each stack holds
+# exactly what it says it kept -- at least K, or every ranked candidate if there were fewer.
+if (length(PS_PROTOS)) {
+  pc <- match_table[treatment == "control" & scoring_protocol %chin% PS_PROTOS]
+  stopifnot(nrow(pc) > 0L, !anyNA(pc$control_pscore))
+  pst <- pc[, .(N = .N, n_tied = n_tied[1L], n_ranked = n_ranked[1L]), by = .(ev, scoring_protocol, arm)]
+  stopifnot(pst[, all(N == n_tied & n_tied >= pmin(PS_K, n_ranked))])
+  cat(sprintf("  OK  every pscore stack holds its top %d (ties kept, or drawn at random) and every control has an index\n", PS_K))
+  # Where a cascade protocol fired at its LAST rung ("any industry"), its eligible set IS the whole arm,
+  # so it must equal each pscore protocol's. Catches ps_group() drifting from the cascade's eligibility tests.
+  if (nrow(qc)) {
+    last <- unique(qc[rung_idx == length(RUNGS), .(ev, arm, n_eligible)])
+    ex   <- merge(last, unique(pc[, .(ev, scoring_protocol, arm, n_ps = n_eligible)]), by = c("ev", "arm"))
+    stopifnot(ex[, all(n_eligible == n_ps)])
+    cat(sprintf("  OK  whole-arm eligibility reproduces the cascade's last rung (%d event x arm checked)\n",
+                nrow(ex)))
+  }
+}
 
 # Protocols sharing an eligibility window must share the ELIGIBLE set -- that shared set is the whole
-# efficiency claim. Only the SELECTED set may differ between them.
-if (length(PROTOS) > 1) {
-  el <- unique(match_table[treatment == "control", .(ev, arm, scoring_protocol, n_eligible)])
+# efficiency claim. Only the SELECTED set may differ between them. (Cascade protocols only: pscore's
+# eligible set is the whole arm, checked against the last rung above.)
+if (length(QS_PROTOS) > 1) {
+  el <- unique(qc[, .(ev, arm, scoring_protocol, n_eligible)])
   wide <- dcast(el, ev + arm ~ scoring_protocol, value.var = "n_eligible")
   cols <- setdiff(names(wide), c("ev", "arm"))
   ref  <- wide[[cols[1]]]
@@ -549,8 +742,8 @@ if (length(PROTOS) > 1) {
     bad <- bad + sum(!is.na(ref) & !is.na(other) & ref != other)
   }
   stopifnot(bad == 0L)
-  cat(sprintf("  OK  the eligible set is identical across the %d protocols (only selection differs)\n",
-              length(PROTOS)))
+  cat(sprintf("  OK  the eligible set is identical across the %d cascade protocols (only selection differs)\n",
+              length(QS_PROTOS)))
 }
 
 # ---- matched panel ---------------------------------------------------------------------------------------
@@ -561,9 +754,11 @@ panel <- read_tab(P$firm_panel)
 keep  <- unique(match_table[, .(ev, cvr)])
 evq   <- study[, .(ev, event_qidx)]
 keep  <- merge(keep, evq, by = "ev")
-mp    <- merge(panel[, .(cvr, qidx, year, quarter, fte, employees, frequency,
-                         industry_code6, industry_division, hq_kommune_code, firm_type)],
-               keep, by = "cvr", allow.cartesian = TRUE)
+MP_COLS <- c("cvr", "qidx", "year", "quarter", "fte", "employees", "frequency",
+             "industry_code6", "industry_division", "hq_kommune_code", "firm_type")
+MP_COLS <- unique(c(MP_COLS, KCOL))                                                  # the cascade's kommune
+if ("legal_form_short" %in% names(panel)) MP_COLS <- c(MP_COLS, "legal_form_short")   # for the table below
+mp    <- merge(panel[, ..MP_COLS], keep, by = "cvr", allow.cartesian = TRUE)
 mp[, event_time := qidx - event_qidx]
 mp <- mp[event_time %between% c(-H, H)]
 # This merge is also what puts the event-provenance columns on every panel row -- they ride on
@@ -573,12 +768,44 @@ setorder(mp, ev, scoring_protocol, arm, treatment, cvr, qidx)
 cat(sprintf("  matched panel: %d rows | %d events | %d firms\n", nrow(mp), uniqueN(mp$ev), uniqueN(mp$cvr)))
 print(mp[, .(rows = .N, firms = uniqueN(cvr)), by = .(scoring_protocol, arm, treatment)][order(scoring_protocol, arm, -rows)])
 
+# WHO EACH PROTOCOL PICKED -- the side-by-side comparison of the algorithms. At k = -2, how the controls
+# of each (protocol, arm) sit relative to their own winner: size gap, same 2-digit industry, same kommune
+# that quarter on the cascade's column (KCOL, what the cascade holds), the share that are A/S against the
+# winners' share, and the age gap (what pscore_age matches on; |log(1 + age)|, age to the quarter, NA
+# before stage 1 carried the date).
+pk <- mp[event_time == -2L]
+if (!"legal_form_short" %in% names(pk)) pk[, legal_form_short := NA_character_]
+pk[, is_as := recode_legal_form(legal_form_short) == "A/S"]
+pk[, age_y := NA_real_]
+if ("registration_date" %in% names(panel)) {
+  fd <- unique(panel[!is.na(registration_date), .(cvr, registration_date)])
+  pk[fd, on = "cvr", age_y := (qidx - qidx_of(year(i.registration_date), quarter(i.registration_date))) / 4]
+  pk[age_y < 0, age_y := NA_real_]
+  rm(fd)
+}
+pw <- pk[treatment == "treated", .(ev, scoring_protocol, arm, w_fte = fte, w_div = industry_division,
+                                   w_komm = get(KCOL), w_as = is_as, w_age = age_y)]
+pk <- merge(pk[treatment == "control"], pw, by = c("ev", "scoring_protocol", "arm"))
+picked <- pk[, .(controls      = .N,
+                 firms         = uniqueN(cvr),
+                 med_log_gap   = round(median(abs(pos_log(fte) - pos_log(w_fte)), na.rm = TRUE), 3),
+                 med_age_gap   = round(median(abs(log1p(age_y) - log1p(w_age)), na.rm = TRUE), 3),
+                 same_div      = round(mean(industry_division == w_div, na.rm = TRUE), 3),
+                 same_komm     = round(mean(get(KCOL) == w_komm, na.rm = TRUE), 3),
+                 as_controls   = round(mean(is_as), 3),
+                 as_winners    = round(mean(w_as), 3)), by = .(scoring_protocol, arm)][order(arm, scoring_protocol)]
+cat("\n  who each protocol picked (controls at k = -2, against their own winner):\n")
+print(picked)
+
 # ---- write ------------------------------------------------------------------------------------------------
 match_rule_banner("6. write")
 report <- list(run_at = Sys.time(), h = H, min_rung = MIN_RUNG, arms = ARMS, protocols = PROTOS,
-               rule = RULES[1], n_study_events = nrow(study), n_matched_events = matched_ev,
+               rule = RULES[1], komm_col = KCOL, n_study_events = nrow(study), n_matched_events = matched_ev,
                discards = discards, ties = tie, groups_failed = n_err + n_null,
-               elig_funnel = eligfunnel)
+               elig_funnel = eligfunnel,
+               ps_topk = if (length(PS_PROTOS)) PS_K else NA_integer_, ps_seed = PS_SEED,
+               ps_model_run_at = if (length(PS_PROTOS)) lapply(PSM, `[[`, "run_at") else NULL,   # by protocol
+               ps_skips = ps_skips, picked = picked)
 write_obj(match_table, P$match_table)
 write_obj(report,      P$match_report)
 write_tab(mp,          P$matched_panel)

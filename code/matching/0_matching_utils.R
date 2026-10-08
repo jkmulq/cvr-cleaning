@@ -3,7 +3,8 @@
 # effects beyond defining functions/constants and creating the output directory.
 #
 #   0_matching_utils.R   <- you are here
-#   1_build_universe.R   -> 01_firm_panel.parquet, 01_events.rds, 01_eligible_controls.rds
+#   1_build_universe.R   -> 01_firm_panel.parquet, 01_events.rds, 01_eligible_controls.rds, 01_buyers.rds
+#   1b_fit_pscore.R      -> 01b_<variant>_model.rds  (only needed for the pscore* protocols)
 #   2_match_controls.R   -> 02_matched_panel.parquet, 02_match_table.rds, 02_match_report.rds
 #   3_build_reg_data.R   -> 03_reg_data_h{h}.parquet, 03_reg_meta.rds   (h comes from the match)
 #   4_run_regressions.R  -> 04_estimates.rds, 04_coefs.parquet, 04_figures/
@@ -62,13 +63,15 @@ match_setup <- function(extra_libs = character()) {
 #        run's artefacts, e.g. match_paths("test200") in an interactive session.
 # returns: named list of paths. `reg_data`, `cobid_roster` and `cobid_panel` are FUNCTIONS of the
 #        window h, so call P$reg_data(8), P$cobid_panel(4). The cobid paths also take the stage-5
-#        score: P$cobid_panel(8, "log") -> 05_cobidder_panel_h8_log.parquet. The window is in the FILENAME because a
+#        score: P$cobid_panel(8, "log") -> 05_cobidder_panel_h8_log.parquet, and "pscore" -> ..._pscore.
+#        The window is in the FILENAME because a
 #        genuine h=4 design is a separate match, not an h=8 artefact trimmed to 4 -- see the note at
 #        the top of 3_build_reg_data.R.
-match_paths <- function(tag = match_tag()) {
+match_paths <- function(tag = match_tag(), s4 = match_s4_tag()) {
   d <- file.path(dirs$data, "matching")
   dir.create(d, recursive = TRUE, showWarnings = FALSE)
   sfx <- if (nzchar(tag)) paste0("_", tag) else ""
+  sfx4 <- paste0(sfx, s4)            # stage 4's artefacts also carry the trim suffix (match_s4_tag())
   list(
     dir            = d,
     shards         = file.path(d, paste0("_shards", sfx)),
@@ -76,6 +79,12 @@ match_paths <- function(tag = match_tag()) {
     events         = file.path(d, paste0("01_events",            sfx, ".rds")),
     eligible       = file.path(d, paste0("01_eligible_controls", sfx, ".rds")),
     pull_report    = file.path(d, paste0("01_pull_report",       sfx, ".rds")),
+    buyers         = file.path(d, paste0("01_buyers",            sfx, ".rds")),
+    ps_model       = file.path(d, paste0("01b_pscore_model",     sfx, ".rds")),
+    ps_train       = file.path(d, paste0("01b_pscore_train",     sfx, ".parquet")),
+    # Any propensity variant's model and training rows (PSCORE_VARIANTS); "pscore" gives the two above.
+    ps_model_for   = function(variant) file.path(d, paste0("01b_", variant, "_model", sfx, ".rds")),
+    ps_train_for   = function(variant) file.path(d, paste0("01b_", variant, "_train", sfx, ".parquet")),
     matched_panel  = file.path(d, paste0("02_matched_panel",     sfx, ".parquet")),
     match_table    = file.path(d, paste0("02_match_table",       sfx, ".rds")),
     match_report   = file.path(d, paste0("02_match_report",      sfx, ".rds")),
@@ -83,16 +92,17 @@ match_paths <- function(tag = match_tag()) {
     reg_data       = function(h) file.path(d, sprintf("03_reg_data_h%d%s.parquet", h, sfx)),
     reg_meta       = file.path(d, paste0("03_reg_meta",          sfx, ".rds")),
     reg_attrition  = file.path(d, paste0("03_fte_screen_attrition", sfx, ".parquet")),
-    # score = "level" keeps the original filenames, so existing level artefacts stay valid
+    # score = "level" keeps the original filenames, so existing level artefacts stay valid; every other
+    # score gets its own suffix (_log, _pscore), so no score's run can overwrite another's
     cobid_roster   = function(h, score = "level") file.path(d, sprintf("05_cobidder_roster_h%d%s%s.rds",
-                       h, if (score == "log") "_log" else "", sfx)),
+                       h, if (score == "level") "" else paste0("_", score), sfx)),
     cobid_panel    = function(h, score = "level") file.path(d, sprintf("05_cobidder_panel_h%d%s%s.parquet",
-                       h, if (score == "log") "_log" else "", sfx)),
-    estimates      = file.path(d, paste0("04_estimates",         sfx, ".rds")),
-    est_panel      = file.path(d, paste0("04_estimation_panel",  sfx, ".parquet")),
-    sweep          = file.path(d, paste0("04_qscore_sweep",      sfx, ".parquet")),
-    coefs          = file.path(d, paste0("04_coefs",             sfx, ".parquet")),
-    figures        = file.path(d, paste0("04_figures",           sfx))
+                       h, if (score == "level") "" else paste0("_", score), sfx)),
+    estimates      = file.path(d, paste0("04_estimates",         sfx4, ".rds")),
+    est_panel      = file.path(d, paste0("04_estimation_panel",  sfx4, ".parquet")),
+    sweep          = file.path(d, paste0("04_qscore_sweep",      sfx4, ".parquet")),
+    coefs          = file.path(d, paste0("04_coefs",             sfx4, ".parquet")),
+    figures        = file.path(d, paste0("04_figures",           sfx4))
   )
 }
 
@@ -109,6 +119,17 @@ match_test_n <- function() {
 }
 
 # MATCH_TEST_N>0 marks every artefact `testN`, so dry runs are quarantined from full-run outputs.
+# Stage 4's pscore trim: drop the bottom share of each cell's control firm-stacks by index. 0.25 is the
+# user's standing choice (7 Oct 2026), so it is the default and gets no suffix.
+PS_TRIM_DEFAULT <- 0.25
+# Stage 4's own artefact suffix: "" at the default trim (MATCH_PS_TRIM unset or 0.25), else "_trim<pct>"
+# (e.g. "_trim50"), so a run at another trim never overwrites the default one. Every reader of the 04_*
+# artefacts (stage 4, 4b, report 14) goes through match_paths(), so the same MATCH_PS_TRIM picks the set.
+match_s4_tag <- function() {
+  x <- suppressWarnings(as.numeric(Sys.getenv("MATCH_PS_TRIM", "")))
+  if (length(x) != 1L || !is.finite(x) || abs(x - PS_TRIM_DEFAULT) < 1e-9) "" else sprintf("_trim%d", round(100 * x))
+}
+
 match_tag <- function() {
   n <- match_test_n()
   if (n <= 0L) "" else paste0("test", n)
@@ -317,11 +338,19 @@ EVENT_META_SRC  <- c("data_source", "tender_id", "lot_id", "ted_notice_id")
 #             and a deterministic `ev` id (ordered by cvr, event_qidx)
 #   $winners  the EXCLUSION set: competitive winners only. A firm whose wins were all DIRECT
 #             awards is absent here, so it stays available as a never-winner control.
+#   $buyers   every tender's buyer CVRs, (data_source, tender_id, buyer_cvr), for the pscore
+#             protocol's same-kommune-as-buyer characteristic. Buyers are recorded per notice in all
+#             three sources (copied onto every lot), so the grain is the tender, not the lot.
 winner_universe <- function(tender_stem = match_env_chr("MATCH_TENDER_FILE",
                                                         file.path(dirs$clean_data, "tender_data_2006_2026")),
                             da_rule = match_env_chr("MATCH_DIRECT_AWARD_RULE", "strict"),
                             verbose = TRUE) {
   d <- as.data.table(read_clean(tender_stem))
+  # Buyers, taken here because this is the one place the combined table is open. tender_id as character,
+  # the type event_tender_id has after the blank-to-NA loop below.
+  buyers <- unique(d[entity == "buyer", .(data_source, tender_id = as.character(tender_id),
+                                          buyer_cvr = as_cvr8(cvr_final))])
+  buyers <- buyers[!is.na(buyer_cvr) & !is.na(tender_id) & nzchar(trimws(tender_id))]
   w <- d[entity == "winner" & flag_awarded %in% TRUE & build_prod %in% TRUE]
   w[, cvr := as_cvr8(cvr_final)]
   w <- w[!is.na(cvr)]
@@ -380,8 +409,11 @@ winner_universe <- function(tender_stem = match_env_chr("MATCH_TENDER_FILE",
                 nrow(events), min(events$award_year), max(events$award_year)))
     cat(sprintf("  events 2019+                            : %d (%.1f%%)\n",
                 events[award_year >= 2019, .N], 100 * events[award_year >= 2019, .N] / nrow(events)))
+    cat(sprintf("  tender buyers                           : %d rows | %d tenders | %d buyer cvrs\n",
+                nrow(buyers), uniqueN(buyers[, .(data_source, tender_id)]), uniqueN(buyers$buyer_cvr)))
   }
-  list(events = events[], winners = winners, n_winner_rows = nrow(w), direct_award_counts = da)
+  list(events = events[], winners = winners, buyers = buyers[], n_winner_rows = nrow(w),
+       direct_award_counts = da)
 }
 
 # ---- the firm registry ---------------------------------------------------------------------------------
@@ -428,6 +460,17 @@ firm_registry <- function(path = file.path(dirs$clean_data, "clean_cvr_name_key.
 # The level score penalises a too-big control more than an equally-proportional too-small one (0.8x
 # scores 0.20, 1.25x scores 0.25), which tilts selection toward smaller firms in a right-skewed pool.
 # The log score is symmetric (0.8x and 1.25x both score 0.22) and weights every quarter equally.
+#
+# pscore is a DIFFERENT ALGORITHM, not a third distance. There is no cascade: a bidding-propensity model
+# (fitted by 1b_fit_pscore.R; see "propensity score" below) ranks every eligible candidate in the arm
+# and the top MATCH_PS_TOPK are kept. `elig` is the same as everywhere else, so the controls are just as
+# balanced on the window. `rank` is NOT a scoring window here: it lists the pre-period quarters whose FTE
+# the propensity characteristics READ, so stage 4's pre-trend placebo can test the others.
+# `variant` names the model (PSCORE_VARIANTS). pscore's size term is the pre-period average, which pins no
+# quarter, so its `rank` is empty. pscore_fte (opt-in) uses the 5 Oct model's FTE terms (t-2 level, t-6 ->
+# t-2 growth), so its `rank` is t-2 and t-6. pscore_age and pscore_nofte (opt-in) have no FTE in them -- the
+# firm's age in place of the size gap, or nothing -- so their `rank` is empty. Any of them can run
+# together in one stage-2 call.
 MATCH_PROTOCOLS <- list(
   full_full = list(
     label = "elig [-h,-1], rank [-h,-1], level score",
@@ -453,9 +496,35 @@ MATCH_PROTOCOLS <- list(
     label = "elig [-h,-1], rank [-h,-(floor(h/2)+1)], log score",
     score = "log",
     elig  = function(h) seq.int(-h, -1L),
-    rank  = function(h) seq.int(-h, -(floor(h / 2) + 1L)))
+    rank  = function(h) seq.int(-h, -(floor(h / 2) + 1L))),
+  pscore = list(
+    label   = "elig [-h,-1], no cascade, top-K by bidding propensity",
+    score   = "pscore",
+    variant = "pscore",
+    elig    = function(h) seq.int(-h, -1L),
+    rank    = function(h) sort(intersect(-PSCORE_VARIANTS$pscore$lags, seq.int(-h, -1L)))),
+  pscore_age = list(
+    label   = "elig [-h,-1], no cascade, top-K by bidding propensity (no FTE: firm age)",
+    score   = "pscore",
+    variant = "pscore_age",
+    elig    = function(h) seq.int(-h, -1L),
+    rank    = function(h) sort(intersect(-PSCORE_VARIANTS$pscore_age$lags, seq.int(-h, -1L)))),
+  pscore_fte = list(
+    label   = "elig [-h,-1], no cascade, top-K by bidding propensity (FTE at t-2 and growth t-6 -> t-2)",
+    score   = "pscore",
+    variant = "pscore_fte",
+    elig    = function(h) seq.int(-h, -1L),
+    rank    = function(h) sort(intersect(-PSCORE_VARIANTS$pscore_fte$lags, seq.int(-h, -1L)))),
+  pscore_nofte = list(
+    label   = "elig [-h,-1], no cascade, top-K by bidding propensity (no FTE, no age; ties at random)",
+    score   = "pscore",
+    variant = "pscore_nofte",
+    elig    = function(h) seq.int(-h, -1L),
+    rank    = function(h) sort(intersect(-PSCORE_VARIANTS$pscore_nofte$lags, seq.int(-h, -1L))))
 )
 # Which protocols a run uses. Default ships both windows under both scores; full_lasthalf is a foil.
+# pscore, pscore_fte, pscore_age and pscore_nofte are opt-in: add them to MATCH_PROTOCOLS (each needs its 01b_<variant>_model.rds
+# from 1b_fit_pscore.R).
 match_protocols <- function() {
   nm <- match_env_list("MATCH_PROTOCOLS", "full_full full_firsthalf full_full_log full_firsthalf_log")
   bad <- setdiff(nm, names(MATCH_PROTOCOLS))
@@ -463,6 +532,9 @@ match_protocols <- function() {
                         "\n  available: ", paste(names(MATCH_PROTOCOLS), collapse = ", "), call. = FALSE)
   nm
 }
+# The protocols that run the propensity algorithm (score "pscore"), whichever model they use.
+pscore_protocols <- function()
+  names(MATCH_PROTOCOLS)[vapply(MATCH_PROTOCOLS, function(p) p$score == "pscore", logical(1))]
 
 # ---- cascade rules --------------------------------------------------------------------------------------
 # The rungs, fine -> coarse. Each is (industry column, hold kommune?, label). A rung fires only if it
@@ -484,6 +556,254 @@ match_rules <- function() {
   if (length(bad)) stop("unknown MATCH_RULES: ", paste(bad, collapse = ", "),
                         "\n  available: ", paste(names(MATCH_RULES), collapse = ", "), call. = FALSE)
   nm
+}
+# The kommune the cascade's "kommune" rungs hold fixed (stages 2 and 5), MATCH_KOMMUNE_COL:
+#   kommune_code     (default) the CONTEMPORANEOUS address -- the kommune at each quarter's end, so a firm
+#                    that moved matches on where it was during the pre-window. Like industry, it is read
+#                    over the treated firm's pre-window: a firm that moved holds every kommune it had,
+#                    and a candidate qualifies with a pre-window quarter in any of them.
+#   hq_kommune_code  the CURRENT head office, constant per firm -- what the cascade used up to 6 Oct 2026;
+#                    set it to reproduce those runs.
+match_kommune_col <- function() {
+  k <- match_env_chr("MATCH_KOMMUNE_COL", "kommune_code")
+  if (!k %in% c("kommune_code", "hq_kommune_code"))
+    stop("MATCH_KOMMUNE_COL must be kommune_code or hq_kommune_code, not ", k, call. = FALSE)
+  k
+}
+
+# ---- propensity score (the pscore protocols) ------------------------------------------------------------
+# ONE definition of the bidding-propensity characteristics, used by the model fit (1b_fit_pscore.R) and by
+# both matchers (2_match_controls.R, 5_cobidder_stacks.R), so training and matching cannot drift apart.
+# Each is measured at t - 2, t = the winner's award quarter, and compares a firm with ONE winner:
+#   gap_lbar            |average log FTE over t-8 .. t-1 - the winner's| (the full pre-period, PSCORE_AVG_LAGS;
+#                       0.69 = twice or half the winner's average size). A LEVEL, not a growth rate or a
+#                       path, so it does not match the pre-trend away: the placebo tests every pre quarter.
+#   gap_l               |log FTE - winner's log FTE|              (0.69 = twice or half the winner's size)
+#   gap_g               |log FTE growth t-6 -> t-2 - winner's|
+#   gap_age             |log(1 + age) - winner's|, age in years at the end of t-2 from the registration
+#                       date (0.69 = e.g. 1 year against 3, or 9 against 19)
+#   same_div            same 2-digit industry (DB07 division) as the winner
+#   same_class          same 4-digit industry (DB07 class) as the winner
+#   lf_as, lf_enk, lf_other   legal form; ApS is the reference, anything else (NA included) is Other
+#   same_kommune_buyer  the firm's address kommune that quarter (time-varying kommune_code) is the
+#                       kommune of one of the tender's buyers
+#   same_kommune_winner the same address kommune as the winner's that quarter
+# A VARIANT is one model: the characteristics it uses, and its spec. Each pscore protocol names its
+# variant; 1b fits one variant per run (MATCH_PS_VARIANT) into 01b_<variant>_model.rds.
+#   pscore      the 0/1 characteristics (industry, legal form, same kommune as a buyer and as the winner) +
+#               the gap in average log FTE over the pre-period (spec v3, 6 Oct 2026). Replaces the 5 Oct
+#               model's t-2 level and t-6 -> t-2 growth gaps (gap_l, gap_g), which matched on growth.
+#   pscore_fte  opt-in, the 5 Oct 2026 model (log FTE at t-2, growth t-6 -> t-2) + same_kommune_winner, for
+#               comparison: it matches on growth, so its placebo leaves out t-2 and t-6 (lags)
+#   pscore_age  opt-in, no FTE at all: the age gap in place of the two FTE gaps. Tried on 6 Oct 2026 and
+#               set aside -- its controls were ~1/3 of the winner's size, with strong pre-trends.
+#   pscore_nofte  opt-in, neither FTE nor age: the 0/1 characteristics only. Only a few dozen distinct
+#               scores, so thousands of firms tie at the K-th: they are broken at random (ties = "random").
+# needs    the firm values a variant needs beyond industry and kommune (which every variant needs); the
+#          winner must have them too
+# lags     the quarters before the award whose FTE the characteristics read; stage 4's placebo tests the
+#          others. Only pscore_fte has any (t-2, t-6): pscore's average pins no quarter (and no slope), and
+#          pscore_age and pscore_nofte read no FTE at all. (Eligibility still asks for positive FTE in every
+#          pre quarter, as for every protocol -- that is a screen, not a characteristic.)
+# ties     "keep" = every firm tied at the K-th score is kept (top_k_ties()); "random" = exactly K, ties at
+#          the K-th drawn at random with a seed per event (top_k_random(); MATCH_PS_SEED in stages 2 and 5)
+# baseline what index 0 holds at the winner's value, after "outside the buyers' kommuner,", for captions
+# Bump a variant's spec whenever its definition changes: 1b saves it with the model, and the matchers
+# refuse a model fitted under a different spec.
+PSCORE_VARIANTS <- list(
+  pscore       = list(features = c("gap_lbar", "same_div", "same_class", "lf_as", "lf_enk", "lf_other",
+                                   "same_kommune_buyer", "same_kommune_winner"),
+                      spec = "v3", needs = "lbar", lags = integer(0), ties = "keep",
+                      w_skip = "winner lacks positive FTE in every quarter t-8 .. t-1",
+                      baseline = "outside the winner's kommune, with the winner's average size"),
+  pscore_fte   = list(features = c("gap_l", "gap_g", "same_div", "same_class", "lf_as", "lf_enk", "lf_other",
+                                   "same_kommune_buyer", "same_kommune_winner"),
+                      spec = "v2", needs = c("l2", "g"), lags = c(2L, 6L), ties = "keep",
+                      w_skip = "winner has no positive FTE at t-2 and t-6",
+                      baseline = "outside the winner's kommune, with the winner's size and growth"),
+  pscore_age   = list(features = c("gap_age", "same_div", "same_class", "lf_as", "lf_enk", "lf_other",
+                                   "same_kommune_buyer", "same_kommune_winner"),
+                      spec = "age-v2", needs = "a2", lags = integer(0), ties = "keep",
+                      w_skip = "winner has no registration date on or before t-2",
+                      baseline = "outside the winner's kommune, with the winner's age"),
+  pscore_nofte = list(features = c("same_div", "same_class", "lf_as", "lf_enk", "lf_other",
+                                   "same_kommune_buyer", "same_kommune_winner"),
+                      spec = "bin-v1", needs = character(0), lags = integer(0), ties = "random",
+                      w_skip = "winner not in the panel at t-2",
+                      baseline = "and outside the winner's kommune"))
+PSCORE_LAGS <- c(2L, 6L)          # quarters before the award the characteristics are read at
+PSCORE_AVG_LAGS <- 1:8            # gap_lbar's window: t-8 .. t-1, the full pre-period at the default h = 8
+
+# A variant's definition, or a stop naming the ones that exist.
+ps_variant <- function(v) {
+  if (length(v) != 1L || !v %in% names(PSCORE_VARIANTS))
+    stop("unknown pscore variant: ", paste(v, collapse = " "), " (available: ",
+         paste(names(PSCORE_VARIANTS), collapse = ", "), ")", call. = FALSE)
+  PSCORE_VARIANTS[[v]]
+}
+
+# log(x) where x > 0, NA otherwise: FTE of 0 or missing has no log.
+pos_log <- function(x) suppressWarnings(fifelse(!is.na(x) & x > 0, log(x), NA_real_))
+
+# Kommune codes arrive as text or as numbers ("0101" vs "101"): strip leading zeros, blank -> NA.
+komm_norm <- function(x) {
+  x <- sub("^0+", "", trimws(as.character(x)))
+  x[!is.na(x) & x == ""] <- NA_character_
+  x
+}
+
+# Legal form as in 16_bidding_predictors_augmented.Rmd: A/S, APS, ENK kept, everything else "Other".
+recode_legal_form <- function(x) fifelse(as.character(x) %in% c("A/S", "APS", "ENK"), as.character(x), "Other")
+
+# Firm age for pscore_age: years from the registration date to the END of quarter q (a qidx), joined from
+# a firm-level table. NA when the date is unknown or falls after that quarter's end -- a firm employing
+# before it was registered is a data error, not a firm of age 0.
+# args:  f = data.table with cvr. MODIFIED BY REFERENCE (adds age2).
+#        founded = firm-level (cvr, registration_date), one row per firm (stage 1 makes the date firm-level)
+#        q = the quarter the age is read at, e.g. Q - PSCORE_LAGS[1]
+pscore_add_age <- function(f, founded, q) {
+  q_end <- as.IDate(sprintf("%d-%02d-01", q %/% 4L, 3L * (q %% 4L) + 1L)) - 1L   # the day before the next quarter
+  f[, age2 := NA_real_]
+  f[founded, on = "cvr", age2 := as.numeric(q_end - as.IDate(i.registration_date)) / 365.25]
+  f[age2 < 0, age2 := NA_real_]
+  f[]
+}
+
+# Average log FTE over t-8 .. t-1 (PSCORE_AVG_LAGS before the award quarter q), joined onto f as lbar. NA
+# unless the firm has positive FTE in every one of those quarters -- stage 2's eligibility already asks
+# that of every candidate at h = 8; at h = 4 it reaches back past the window, as t-6 used to.
+# args:  f = data.table with cvr. MODIFIED BY REFERENCE (adds lbar).
+#        pool = a (cvr, qidx, fte) table keyed on qidx, one row per firm-quarter; q = the award quarter
+pscore_add_avg <- function(f, pool, q) {
+  fa <- pool[.(q - PSCORE_AVG_LAGS), .(cvr, lf = pos_log(fte)), nomatch = 0L][, .(lbar = mean(lf), n = .N), by = cvr]
+  fa <- fa[n == length(PSCORE_AVG_LAGS)]          # every quarter present; mean() is NA if one has no positive FTE
+  f[, lbar := NA_real_]
+  f[fa, on = "cvr", lbar := i.lbar]
+  f[]
+}
+
+# Firm-level values the characteristics are built from. One row per firm.
+# args:  f = data.table with cvr, fte2, fte6 (FTE at t-2 and t-6), and at t-2 industry_division,
+#            industry_class, legal_form_short, kommune_code; optionally age2 (pscore_add_age()) and lbar
+#            (pscore_add_avg()). MODIFIED BY REFERENCE.
+# returns: f plus l2 (log FTE at t-2), g (log growth t-6 -> t-2), a2 (log(1 + age) at t-2, NA without
+#          age2), lbar (NA unless pscore_add_avg() ran), div2, cls2, komm, the three legal-form dummies,
+#          and ps_ok_base = industry and kommune known, which every variant needs. ps_scorable() adds
+#          what one variant needs on top: a firm it returns FALSE for is never scored under that variant,
+#          in training or in matching.
+pscore_firm_vars <- function(f) {
+  if (!"age2" %in% names(f)) f[, age2 := NA_real_]
+  if (!"lbar" %in% names(f)) f[, lbar := NA_real_]
+  f[, `:=`(l2   = pos_log(fte2),
+           g    = pos_log(fte2) - pos_log(fte6),
+           a2   = log1p(age2),
+           div2 = as.character(industry_division),
+           cls2 = as.character(industry_class),
+           lf   = recode_legal_form(legal_form_short),
+           komm = komm_norm(kommune_code))]
+  f[, `:=`(lf_as    = as.integer(lf == "A/S"),
+           lf_enk   = as.integer(lf == "ENK"),
+           lf_other = as.integer(lf == "Other"))]
+  f[, ps_ok_base := !is.na(div2) & !is.na(cls2) & !is.na(komm)]
+  f[]
+}
+
+# TRUE for the pscore_firm_vars() rows that variant v can score: ps_ok_base and the variant's own needs.
+ps_scorable <- function(f, v) {
+  ok <- f$ps_ok_base
+  for (n in ps_variant(v)$needs) ok <- ok & !is.na(f[[n]])
+  ok
+}
+
+# TRUE if w is one winner row with the values variant v compares candidates to. Its industry, its own
+# kommune and its buyers' kommune may be unknown: that only zeroes a characteristic for the whole event.
+ps_winner_ok <- function(w, v) nrow(w) == 1L && !anyNA(unlist(w[, ps_variant(v)$needs, with = FALSE]))
+
+# The characteristics of firms x against ONE winner w, given the buyers' kommuner bk, for variant v.
+# args:  x  = pscore_firm_vars() rows that ps_scorable(x, v) passes. MODIFIED BY REFERENCE.
+#        w  = the winner's pscore_firm_vars() row (one row)
+#        bk = character vector of the buyers' kommune codes that quarter (may be empty)
+#        v  = the variant; only its characteristics are computed
+# An industry the winner does not have is 0 for every firm, and so is the kommune when no buyer's
+# kommune (or the winner's own) is known: constant within the event, so it changes neither the clogit
+# likelihood nor the ranking. Stops if the winner lacks the variant's values -- callers skip such events first.
+pscore_features <- function(x, w, bk, v = "pscore") {
+  stopifnot(ps_winner_ok(w, v))
+  bk <- unique(as.character(bk[!is.na(bk)]))
+  fs <- ps_variant(v)$features
+  if ("gap_l"   %in% fs) x[, gap_l   := abs(l2 - w$l2)]
+  if ("gap_g"   %in% fs) x[, gap_g   := abs(g - w$g)]
+  if ("gap_age" %in% fs) x[, gap_age := abs(a2 - w$a2)]
+  if ("gap_lbar" %in% fs) x[, gap_lbar := abs(lbar - w$lbar)]
+  if ("same_kommune_winner" %in% fs)
+    x[, same_kommune_winner := if (is.na(w$komm)) 0L else as.integer(komm == w$komm)]
+  x[, `:=`(same_div           = if (is.na(w$div2)) 0L else as.integer(div2 == w$div2),
+           same_class         = if (is.na(w$cls2)) 0L else as.integer(cls2 == w$cls2),
+           same_kommune_buyer = as.integer(komm %chin% bk))]
+  x[]
+}
+
+# The propensity index x'b: higher = more like a firm that bid against this winner. clogit's linear
+# predictor up to a constant, so it ranks firms WITHIN an event and means nothing across events. A plain
+# weighted sum, so no model matrix, and it stops if the coefficients are not exactly variant v's features.
+pscore_index <- function(x, coef, v = "pscore") {
+  stopifnot(identical(names(coef), ps_variant(v)$features))
+  lp <- 0
+  for (f in names(coef)) lp <- lp + coef[[f]] * x[[f]]
+  lp
+}
+
+# TRUE for the k highest scores, ties at the k-th value kept (so k or more come back). Partial sort: O(n).
+# args:  s = numeric scores, higher is better, no NA; k = how many to keep
+top_k_ties <- function(s, k) {
+  k <- min(as.integer(k), length(s))
+  if (k < 1L) return(logical(length(s)))
+  kth <- -sort.int(-s, partial = k)[k]
+  s >= kth
+}
+
+# TRUE for exactly k of the highest scores: the highest first, and ties at the k-th drawn at random (runif).
+# Set the seed before calling -- the matchers set it per event (MATCH_PS_SEED + ev), so a rerun draws the
+# same firms whichever worker runs the event. For variants with ties = "random" (pscore_nofte).
+top_k_random <- function(s, k) {
+  k <- min(as.integer(k), length(s))
+  keep <- logical(length(s))
+  if (k < 1L) return(keep)
+  keep[order(-s, runif(length(s)))[seq_len(k)]] <- TRUE
+  keep
+}
+
+# Keep the top k under variant v's tie rule; the seed matters only for ties = "random".
+ps_top_k <- function(s, k, v, seed) {
+  if (ps_variant(v)$ties == "random") { set.seed(seed); top_k_random(s, k) } else top_k_ties(s, k)
+}
+
+# The saved propensity model, checked against this code. Stops unless it was fitted under the variant's
+# current features and spec with finite coefficients.
+read_pscore_model <- function(path, variant = "pscore") {
+  v <- ps_variant(variant)
+  m <- read_obj(path)
+  if (!identical(m$features, v$features) || !identical(names(m$coef), v$features) ||
+      !identical(m$spec, v$spec) || !all(is.finite(m$coef)))
+    stop("the propensity model does not match this code (", variant, ": features or spec) or has a ",
+         "non-finite coefficient:\n  ", path, "\n  Re-run code/matching/1b_fit_pscore.R",
+         if (variant != "pscore") paste0(" with MATCH_PS_VARIANT=", variant), ".", call. = FALSE)
+  m
+}
+
+# Each event's buyers and their kommune in quarter q: the buyer's own address in the firm panel that
+# quarter if it is there, otherwise the register's current HQ (public buyers rarely move). Same rule as
+# buyer_kommune_at() in 16_bidding_predictors_augmented.Rmd.
+# args:  keys = data.table(key, data_source, tender_id, q), one row per event (key = any event id)
+#        B    = read_obj(P$buyers), written by stage 1: tender_buyers, panel_kommune, register_kommune
+# returns: unique (key, buyer_cvr, buyer_kommune); buyer_kommune is NA when neither source has it, and an
+#          event whose tender has no buyer on record has no rows.
+buyer_kommunes <- function(keys, B) {
+  kb <- merge(keys, B$tender_buyers, by = c("data_source", "tender_id"), allow.cartesian = TRUE)
+  kb[, `:=`(komm_panel = NA_character_, komm_reg = NA_character_)]
+  kb[B$panel_kommune,    on = .(buyer_cvr, q = qidx), komm_panel := i.kommune]
+  kb[B$register_kommune, on = "buyer_cvr",            komm_reg   := i.kommune]
+  unique(kb[, .(key, buyer_cvr, buyer_kommune = fcoalesce(komm_panel, komm_reg))])
 }
 
 # ---- Virk pull worker ------------------------------------------------------------------------------------

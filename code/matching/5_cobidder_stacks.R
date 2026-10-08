@@ -73,8 +73,27 @@
 #                        award of its own (default 12)
 #   MATCH_MIN_FTE        strict lower bound on FTE in the panel (default 0)
 #   MATCH_SCORE          level (default) | log -- the qscore, as in MATCH_PROTOCOLS (0_matching_utils.R).
-#                        log writes 05_cobidder_*_h{h}_log.*, so it never overwrites the level run
+#                        log writes 05_cobidder_*_h{h}_log.*, so it never overwrites the level run.
+#                        | pscore -- the propensity algorithm instead of the cascade: every eligible
+#                        candidate in the union pool ranked by the bidding-propensity index against the
+#                        lot's winner and buyers, the top MATCH_PS_TOPK kept (ties kept). The lot's own
+#                        losers may be picked (in_both_roles says so); its buyers may not. Real losers get
+#                        the same index and pscore_rank = where they would have ranked among the
+#                        candidates. Needs 01b_pscore_model.rds (1b_fit_pscore.R) and 01_buyers.rds.
+#                        Writes 05_cobidder_*_h{h}_pscore.*
+#                        | pscore_fte -- the same on the opt-in model with FTE at t-2 and growth t-6 -> t-2.
+#                        Needs 01b_pscore_fte_model.rds. Writes 05_cobidder_*_h{h}_pscore_fte.*
+#                        | pscore_age -- the same on the opt-in no-FTE model (firm age). Needs
+#                        01b_pscore_age_model.rds (MATCH_PS_VARIANT=pscore_age in 1b). Writes
+#                        05_cobidder_*_h{h}_pscore_age.*
+#                        | pscore_nofte -- the same on the opt-in model with neither FTE nor age (0/1
+#                        characteristics only; ties at the K-th drawn at random, MATCH_PS_SEED + ev). Needs
+#                        01b_pscore_nofte_model.rds. Writes 05_cobidder_*_h{h}_pscore_nofte.*
+#   MATCH_PS_TOPK        controls kept per lot under MATCH_SCORE=pscore* (default 5)
+#   MATCH_PS_SEED        seed for the random tie-break of pscore_nofte (default 20261005; use stage 2's)
 #   MATCH_IND_DIGITS     industry FE granularity (default 2 = division)
+#   MATCH_KOMMUNE_COL    the cascade's kommune: kommune_code (default, contemporaneous) or hq_kommune_code
+#                        (current head office, as before 6 Oct 2026). Use the same value as stage 2.
 #   MATCH_TENDER_FILE    override the combined dataset stem
 #   MATCH_TEST_N, MATCH_OVERWRITE   as elsewhere; the tag suffixes both outputs
 # =====================================================================================================
@@ -106,12 +125,21 @@ match_setup()
 
 H          <- match_env_int("MATCH_H", 8L)
 SCORE      <- match_env_chr("MATCH_SCORE", "level")
-if (!SCORE %in% c("level", "log")) stop("MATCH_SCORE must be level or log, not ", SCORE, call. = FALSE)
-PROTOCOL   <- if (SCORE == "log") "full_full_log" else "full_full"   # its MATCH_PROTOCOLS counterpart
+if (!SCORE %in% c("level", "log", pscore_protocols()))
+  stop("MATCH_SCORE must be level, log, ", paste(pscore_protocols(), collapse = " or "), ", not ", SCORE, call. = FALSE)
+PROTOCOL   <- switch(SCORE, level = "full_full", log = "full_full_log", SCORE)   # MATCH_PROTOCOLS name
+IS_PS      <- MATCH_PROTOCOLS[[PROTOCOL]]$score == "pscore"     # the propensity algorithm, on either model
+PS_V       <- if (IS_PS) MATCH_PROTOCOLS[[PROTOCOL]]$variant else NA_character_   # its model (PSCORE_VARIANTS)
+PS_AGE     <- IS_PS && "a2" %in% ps_variant(PS_V)$needs
+PS_AVG     <- IS_PS && "lbar" %in% ps_variant(PS_V)$needs     # pre-period average FTE (pscore)
+PS_K       <- match_env_int("MATCH_PS_TOPK", 5L)
+PS_SEED    <- match_env_int("MATCH_PS_SEED", 20261005L)   # per-event seed (+ ev) where a model breaks ties at random
+if (IS_PS && (is.na(PS_K) || PS_K < 1L)) stop("MATCH_PS_TOPK must be a positive integer", call. = FALSE)
 MIN_RUNG   <- match_env_int("MATCH_MIN_RUNG", 10L)
 WBUF       <- match_env_int("MATCH_WINNER_BUFFER", 12L)
 MIN_FTE    <- match_env_num("MATCH_MIN_FTE", 0)
 IND_DIGITS <- match_env_int("MATCH_IND_DIGITS", 2L)
+KCOL       <- match_kommune_col()   # the cascade's kommune, as in stage 2 (contemporaneous unless set)
 P          <- match_paths()
 
 OFFSETS <- seq.int(-H, -1L)          # full_full: the eligibility and ranking windows are the same
@@ -119,8 +147,9 @@ RUNGS   <- MATCH_RULES[["staggered_industry_kommune"]]()
 NP      <- 2L * H + 1L               # rows a balanced firm must have
 
 if (WBUF < H) stop(sprintf("MATCH_WINNER_BUFFER=%d is narrower than h=%d", WBUF, H), call. = FALSE)
-cat(sprintf("STAGE 5 | h=%d | score=%s | min_rung=%d | winner_buffer=%d | min_fte=%s | pool=union | protocol=%s\n",
-            H, SCORE, MIN_RUNG, WBUF, MIN_FTE, PROTOCOL))
+cat(sprintf("STAGE 5 | h=%d | score=%s | min_rung=%d | winner_buffer=%d | min_fte=%s | pool=union | kommune=%s | protocol=%s%s\n",
+            H, SCORE, MIN_RUNG, WBUF, MIN_FTE, KCOL, PROTOCOL,
+            if (IS_PS) sprintf(" | top %d, no cascade", PS_K) else ""))
 
 # ---- 1. inputs -----------------------------------------------------------------------------------------
 match_rule_banner("1. inputs")
@@ -128,6 +157,16 @@ panel    <- read_tab(P$firm_panel)
 hist_ev  <- as.data.table(read_obj(P$events))
 eligible <- as.data.table(read_obj(P$eligible))
 cat(sprintf("  firm panel: %d rows | %d firms\n", nrow(panel), uniqueN(panel$cvr)))
+if (IS_PS) {
+  for (cc in c("legal_form_short", "kommune_code", if (PS_AGE) "registration_date"))
+    if (!cc %in% names(panel)) stop("the firm panel has no ", cc, " -- re-run stage 1", call. = FALSE)
+  PSM <- read_pscore_model(P$ps_model_for(PS_V), PS_V)
+  BUY <- read_obj(P$buyers)
+  cat(sprintf("  %s model: fitted %s | %d strata | concordance %.3f\n",
+              PS_V, format(PSM$run_at), PSM$n_strata, PSM$concordance))
+}
+# pscore_age's firm age: firm-level founding dates, for the candidates and the real losers alike
+FOUNDED <- if (PS_AGE) unique(panel[!is.na(registration_date), .(cvr, registration_date)]) else NULL
 
 # Every competitive award quarter of every competitive winner. From the FULL history, not this
 # script's lot universe: a firm that won a KFST lot in the same quarter must still be barred, even
@@ -179,6 +218,14 @@ setkey(losers, lot_key)
 
 cat(sprintf("  lots with both sides: %d | events (lot x winner): %d | real losing bids: %d\n",
             uniqueN(wn$lot_key), nrow(events), nrow(losers)))
+# pscore: each event's buyers and their kommune at t - 2 (keyed on ev). Buyers are tender-level.
+if (IS_PS) {
+  EV_BUY <- buyer_kommunes(events[, .(key = ev, data_source = "TED", tender_id = as.character(tender_id),
+                                      q = event_qidx - PSCORE_LAGS[1])], BUY)
+  setkey(EV_BUY, key)
+  cat(sprintf("  events with a known buyer: %d of %d (%d with a buyer kommune)\n",
+              uniqueN(EV_BUY$key), nrow(events), uniqueN(EV_BUY[!is.na(buyer_kommune), key])))
+}
 cat(sprintf("  distinct winners %d | distinct losers %d | award quarters %d\n",
             uniqueN(events$winner_cvr), uniqueN(losers$cvr), uniqueN(events$event_qidx)))
 
@@ -189,8 +236,8 @@ cat(sprintf("  distinct winners %d | distinct losers %d | award quarters %d\n",
 match_rule_banner("3. candidate pool")
 elig_cvrs <- eligible[has_employment == TRUE, unique(cvr)]
 POOL_COLS <- c("cvr", "qidx", "fte", "firm_type",
-               "industry_code6", "industry_class", "industry_group", "industry_division",
-               "hq_kommune_code")
+               "industry_code6", "industry_class", "industry_group", "industry_division", KCOL)
+if (IS_PS) POOL_COLS <- unique(c(POOL_COLS, "legal_form_short", "kommune_code"))   # the characteristics
 missing_cols <- setdiff(POOL_COLS, names(panel))
 if (length(missing_cols)) stop("panel is missing: ", paste(missing_cols, collapse = ", "), call. = FALSE)
 
@@ -208,7 +255,9 @@ firm_side <- unique(pool[, .(cvr, pool_side)])   # firm-level lookup, so the eve
 # screen, or with no employment anywhere, is still a real bidder we want a score and a verdict for.
 # Firms absent from the panel entirely cannot be scored -- they stay in the roster with
 # in_panel = FALSE rather than vanishing, so the loss is counted instead of silent.
-loser_panel <- panel[cvr %chin% unique(losers$cvr), .(cvr, qidx, fte)]
+LP_COLS <- c("cvr", "qidx", "fte",
+             if (IS_PS) c("industry_division", "industry_class", "legal_form_short", "kommune_code"))
+loser_panel <- panel[cvr %chin% unique(losers$cvr), ..LP_COLS]
 setkey(loser_panel, qidx)
 in_panel_cvrs <- unique(loser_panel$cvr)
 cat(sprintf("  real losers present in the firm panel: %d of %d (%.1f%%)\n",
@@ -255,11 +304,64 @@ qscore_table <- function(cand, tv) {
   s[]
 }
 
+# ---- 5a. the pscore algorithm (MATCH_SCORE=pscore) -------------------------------------------------------
+# A copy of stage 2's ps_group()/ps_select() with the union pool, kept duplicated like the rest of the
+# matcher -- diff them against 2_match_controls.R before trusting a surprising result.
+# The event-independent part, once per quarter group: the union pool's eligible firms (positive FTE in
+# every pre quarter, >= h post quarters; sometimes-winners clear of the buffer) and every pool firm's
+# characteristics at Q-2, read from `pool` by key because Q-6 is outside the slice when h < 6.
+ps_group5 <- function(Q, pre, win, keep_w) {
+  ok   <- pre[!is.na(fte) & fte > 0, .N, by = cvr][N == H, cvr]
+  ok   <- win[cvr %chin% ok & et >= 1L & et <= H, uniqueN(et), by = cvr][V1 >= H, cvr]
+  elig <- unique(pre[cvr %chin% ok, .(cvr, pool_side)])
+  elig <- elig[pool_side == "never_winner" | (pool_side == "winner" & cvr %chin% keep_w)]
+  f2 <- pool[.(Q - PSCORE_LAGS[1]), .(cvr, fte2 = fte, industry_division, industry_class,
+                                      legal_form_short, kommune_code), nomatch = 0L]
+  f6 <- pool[.(Q - PSCORE_LAGS[2]), .(cvr, fte6 = fte), nomatch = 0L]
+  fr <- merge(f2, f6, by = "cvr", all.x = TRUE)
+  if (PS_AGE) pscore_add_age(fr, FOUNDED, Q - PSCORE_LAGS[1])
+  if (PS_AVG) pscore_add_avg(fr, pool, Q)
+  fv <- pscore_firm_vars(fr)
+  list(elig = elig, cand = merge(elig, fv[ps_scorable(fv, PS_V)], by = "cvr"), fv = fv)
+}
+# One lot's pscore controls: every eligible candidate except the winner and the tender's buyers -- the
+# lot's own losers INCLUDED -- ranked by the index; the top PS_K kept, ties at the K-th kept.
+# returns: list(rows = treated + controls, scores = every ranked candidate's index, sorted -- for ranking
+#          the real losers) or list(discard = "<reason>")
+ps_select_lot <- function(e, psg, n_pre) {
+  W <- e$winner_cvr
+  w <- psg$fv[cvr == W]
+  if (!ps_winner_ok(w, PS_V))
+    return(list(discard = sprintf("treated: %s (%s)", ps_variant(PS_V)$w_skip, PROTOCOL)))
+  n_elig <- psg$elig[cvr != W, .N]
+  b <- EV_BUY[.(e$ev), nomatch = 0L]
+  x <- psg$cand[cvr != W & !(cvr %chin% b$buyer_cvr)]
+  if (!nrow(x)) return(list(discard = sprintf("no scorable eligible candidate (%s)", PROTOCOL)))
+  pscore_features(x, w, b$buyer_kommune, PS_V)
+  x[, pscore := pscore_index(x, PSM$coef, PS_V)]
+  sel <- x[ps_top_k(x$pscore, PS_K, PS_V, PS_SEED + e$ev)]   # ties kept, or drawn at random (pscore_nofte)
+  sel[, pscore_rank := as.integer(frank(-pscore, ties.method = "min"))]
+  lab <- MATCH_PROTOCOLS[[PROTOCOL]]$label
+  ctrl <- data.table(ev = e$ev, category = "found_control", cvr = sel$cvr,
+                     qscore = NA_real_, mean_fte_diff_sq = NA_real_, n_scored = NA_integer_,
+                     control_protocol = lab, rung_idx = NA_integer_, n_eligible = n_elig,
+                     n_tied = nrow(sel), stack_qscore = NA_real_,
+                     pscore = sel$pscore, pscore_rank = sel$pscore_rank, n_ranked = nrow(x))
+  # As in stage 2, the treated row carries the stack's attributes; it has no index against itself.
+  trt <- data.table(ev = e$ev, category = "treated", cvr = W,
+                    qscore = NA_real_, mean_fte_diff_sq = NA_real_, n_scored = NA_integer_,
+                    control_protocol = lab, rung_idx = NA_integer_, n_eligible = n_elig,
+                    n_tied = nrow(sel), stack_qscore = NA_real_,
+                    pscore = NA_real_, pscore_rank = NA_integer_, n_ranked = nrow(x))
+  list(rows = rbindlist(list(trt, ctrl), use.names = TRUE), scores = sort(x$pscore))
+}
+
 # ---- 5. the matcher (match_one_event(), full_full, one union pool) --------------------------------------
 # args:  e = one row of `events`; pre = [-h,-1] rows for every pooled firm in this quarter group;
-#        win = the full [-h,h] rows; keep_w = sometimes-winners with no award inside the buffer.
+#        win = the full [-h,h] rows; keep_w = sometimes-winners with no award inside the buffer;
+#        psg = ps_group5() for this group (MATCH_SCORE=pscore only).
 # returns: list(rows = treated + selected controls) or list(discard = "<reason>").
-match_one_lot <- function(e, pre, win, keep_w) {
+match_one_lot <- function(e, pre, win, keep_w, psg = NULL) {
   W  <- e$winner_cvr
   tw <- pre[cvr == W]
   if (!nrow(tw))            return(list(discard = "treated absent from the pre-window"))
@@ -271,13 +373,15 @@ match_one_lot <- function(e, pre, win, keep_w) {
   n_pre <- length(T_et)
   if (n_pre == 0L) return(list(discard = "treated has no valid pre-period FTE"))
   if (n_pre < H)   return(list(discard = "treated has an incomplete pre-period"))
+  # The propensity algorithm replaces everything below (cascade + path score).
+  if (IS_PS) return(ps_select_lot(e, psg, n_pre))
 
   ind_vals <- list(
     industry_code6    = unique(tw$industry_code6[!is.na(tw$industry_code6)]),
     industry_class    = unique(tw$industry_class[!is.na(tw$industry_class)]),
     industry_group    = unique(tw$industry_group[!is.na(tw$industry_group)]),
     industry_division = unique(tw$industry_division[!is.na(tw$industry_division)]))
-  komm <- unique(tw$hq_kommune_code[!is.na(tw$hq_kommune_code)])
+  komm <- unique(tw[[KCOL]][!is.na(tw[[KCOL]])])   # every kommune the treated firm had in the pre-window
   tv   <- tw[et %in% T_et, .(et, fte_t = fte)]
   # Log score only: a zero quarter has no log, so the treated firm cannot be scored on every quarter.
   # Mirrors stage 2, where the event is unscorable under the log protocols.
@@ -301,7 +405,7 @@ match_one_lot <- function(e, pre, win, keep_w) {
 
     cand <- pre[cvr %chin% cand_all &
                   (if (is.null(r$col)) TRUE else get(r$col) %chin% vals) &
-                  (if (r$komm) hq_kommune_code %chin% komm else TRUE), unique(cvr)]
+                  (if (r$komm) get(KCOL) %chin% komm else TRUE), unique(cvr)]
     if (!length(cand)) next
 
     ok <- pre[cvr %chin% cand & et %in% T_et & !is.na(fte) & fte > 0, .N, by = cvr][N == n_pre, unique(cvr)]
@@ -345,7 +449,10 @@ match_one_lot <- function(e, pre, win, keep_w) {
 #   elig_post  observed in >= h post-event quarters
 # The cascade rung is NOT tested, so `eligible` is a CEILING on being pickable: a firm can clear every
 # test here and still never be offered, because the rung that fired was finer than its industry.
-score_losers <- function(e, pre, lp_pre, lp_win, keep_w, lot_losers) {
+# Under MATCH_SCORE=pscore there is no rung: a loser gets the candidates' index (pscore) and pscore_rank,
+# where it would have ranked among them (1 = above every candidate), and `eligible` also requires that
+# it could be scored. psg, lfv (the losers' values at Q-2) and scores come from the group loop.
+score_losers <- function(e, pre, lp_pre, lp_win, keep_w, lot_losers, psg = NULL, lfv = NULL, scores = NULL) {
   if (!length(lot_losers)) return(NULL)
   tw   <- pre[cvr == e$winner_cvr]
   T_et <- tw[!is.na(fte), unique(et)]
@@ -353,7 +460,10 @@ score_losers <- function(e, pre, lp_pre, lp_win, keep_w, lot_losers) {
   tv    <- tw[et %in% T_et, .(et, fte_t = fte)]
   n_pre <- length(T_et)
 
-  s <- qscore_table(lp_pre[cvr %chin% lot_losers & et %in% T_et & !is.na(fte), .(cvr, et, fte)], tv)
+  # Under pscore the path qscore is left NA (an empty input): it would be a level score in a run that
+  # never used one, and qscore_table() falls through to level for any SCORE other than log.
+  s <- qscore_table(if (IS_PS) lp_pre[0L, .(cvr, et, fte)] else
+                      lp_pre[cvr %chin% lot_losers & et %in% T_et & !is.na(fte), .(cvr, et, fte)], tv)
   d <- merge(data.table(cvr = lot_losers), s,         by = "cvr", all.x = TRUE)
   d <- merge(d,                            firm_side, by = "cvr", all.x = TRUE)
   d[is.na(pool_side), pool_side := "none"]
@@ -370,6 +480,19 @@ score_losers <- function(e, pre, lp_pre, lp_win, keep_w, lot_losers) {
            elig_pre  = cvr %chin% pre_ok,
            elig_post = cvr %chin% post_ok)]
   d[, eligible := elig_pre & elig_post & pool_side != "none" & buffer_ok]
+
+  if (IS_PS) {
+    d[, `:=`(pscore = NA_real_, pscore_rank = NA_integer_)]
+    w  <- psg$fv[cvr == e$winner_cvr]          # scorable: match_one_lot() succeeded for this event
+    lx <- lfv[cvr %chin% lot_losers & ps_scorable(lfv, PS_V)]
+    if (nrow(lx) && nrow(w) == 1L) {
+      pscore_features(lx, w, EV_BUY[.(e$ev), nomatch = 0L]$buyer_kommune, PS_V)
+      lx[, pscore := pscore_index(lx, PSM$coef, PS_V)]
+      lx[, pscore_rank := as.integer(1L + length(scores) - findInterval(pscore, scores))]
+      d[lx, on = "cvr", `:=`(pscore = i.pscore, pscore_rank = i.pscore_rank)]
+    }
+    d[, eligible := eligible & !is.na(pscore)]
+  }
   d[]
 }
 
@@ -396,14 +519,26 @@ for (gi in seq_along(groups)) {
   in_win <- award_idx[event_qidx %between% c(Q - WBUF, Q + WBUF), unique(cvr)]
   keep_w <- setdiff(all_comp_w, in_win)
 
+  # pscore: the candidate set and characteristics once per group, and the real losers' values at Q-2
+  psg <- if (IS_PS) ps_group5(Q, pre, win, keep_w) else NULL
+  lfv <- NULL
+  if (IS_PS) {
+    lfv <- merge(loser_panel[.(Q - PSCORE_LAGS[1]), .(cvr, fte2 = fte, industry_division, industry_class,
+                                                      legal_form_short, kommune_code), nomatch = 0L],
+                 loser_panel[.(Q - PSCORE_LAGS[2]), .(cvr, fte6 = fte), nomatch = 0L], by = "cvr", all.x = TRUE)
+    if (PS_AGE) pscore_add_age(lfv, FOUNDED, Q - PSCORE_LAGS[1])
+    if (PS_AVG) pscore_add_avg(lfv, loser_panel, Q)
+    pscore_firm_vars(lfv)
+  }
+
   evs <- events[event_qidx == Q]
   rr  <- vector("list", nrow(evs)); dd <- vector("list", nrow(evs))
   for (i in seq_len(nrow(evs))) {
     e <- evs[i]
-    m <- match_one_lot(e, pre, win, keep_w)
+    m <- match_one_lot(e, pre, win, keep_w, psg)
     if (!is.null(m$discard)) { dd[[i]] <- data.table(ev = e$ev, reason = m$discard); next }
     lot_losers <- losers[.(e$lot_key), unique(cvr), nomatch = 0L]
-    nw <- score_losers(e, pre, lp_pre, lp_win, keep_w, lot_losers)
+    nw <- score_losers(e, pre, lp_pre, lp_win, keep_w, lot_losers, psg, lfv, m$scores)
     rr[[i]] <- rbindlist(list(m$rows, nw), use.names = TRUE, fill = TRUE)
   }
   res[[gi]] <- rbindlist(Filter(Negate(is.null), rr), use.names = TRUE, fill = TRUE)
@@ -423,6 +558,11 @@ roster <- merge(roster, events[, .(ev, lot_key, tender_id, lot_id, ted_notice_id
 if ("pool_side" %in% names(roster)) roster[, pool_side := NULL]
 roster <- merge(roster, firm_side, by = "cvr", all.x = TRUE)
 roster[is.na(pool_side), pool_side := "none"]
+# The pscore columns on every roster, typed NA when this run did not score them, so the panel merge
+# below has a single column list whatever MATCH_SCORE was.
+if (!"pscore"      %in% names(roster)) roster[, pscore      := NA_real_]
+if (!"pscore_rank" %in% names(roster)) roster[, pscore_rank := NA_integer_]
+if (!"n_ranked"    %in% names(roster)) roster[, n_ranked    := NA_integer_]
 
 # THE RESULT THIS SCRIPT EXISTS TO SURFACE: a real co-bidder sits in the candidate pool like any other
 # firm, so the matcher can select it as its own lot's synthetic control. Flagged on both of its rows.
@@ -450,9 +590,16 @@ cat("\n  real losers -- where the screen bites:\n")
 print(roster[category == "non_winner",
              .(losers = .N, in_panel = sum(in_panel), in_a_pool = sum(pool_side != "none"),
                buffer_ok = sum(buffer_ok), pre_ok = sum(elig_pre), post_ok = sum(elig_post),
-               eligible = sum(eligible), scored = sum(!is.na(qscore)))])
+               eligible = sum(eligible),
+               scored = sum(!is.na(if (IS_PS) pscore else qscore)))])
 cat(sprintf("\n  firms holding BOTH roles on the same lot: %d (%d roster rows)\n",
             roster[in_both_roles == TRUE, uniqueN(cvr)], roster[in_both_roles == TRUE, .N]))
+if (IS_PS) {
+  cat(sprintf("\n  where the eligible real losers would have ranked among the candidates (the top %d are picked):\n", PS_K))
+  print(roster[category == "non_winner" & eligible == TRUE,
+               .(losers = .N, median_rank = as.numeric(median(pscore_rank)),
+                 ranked_in_top_k = sum(pscore_rank <= PS_K), picked = sum(in_both_roles))])
+}
 
 # ---- 9. the regression-ready panel ---------------------------------------------------------------------
 # Same construction as 3_build_reg_data.R, with three categories instead of two arms.
@@ -461,7 +608,8 @@ pan <- panel[, .(cvr, qidx, year, quarter, fte, employees, industry_code6)]
 rm(panel); invisible(gc())
 
 d <- merge(roster[, .(ev, lot_key, tender_id, lot_id, ted_notice_id, winner_cvr, event_qidx,
-                      category, cvr, pool_side, qscore, stack_qscore, eligible, in_both_roles)],
+                      category, cvr, pool_side, qscore, stack_qscore, pscore, pscore_rank,
+                      eligible, in_both_roles)],
            pan, by = "cvr", allow.cartesian = TRUE)
 d[, event_time   := qidx - event_qidx]
 d[, industry_grp := substr(industry_code6, 1L, IND_DIGITS)]
@@ -547,10 +695,19 @@ print(sz[, .(matched_control = round(median(found_control / treated), 3),
 match_rule_banner("7. checks")
 stopifnot(roster[category == "treated", .N, by = ev][, all(N == 1L)])
 cat("  OK  exactly one treated row per event\n")
-stopifnot(roster[category == "found_control", all(!is.na(qscore))])
-stopifnot(roster[category == "found_control", .(u = uniqueN(stack_qscore)), by = ev][, all(u == 1L)])
-cat("  OK  every control carries a qscore and sits at its stack's minimum\n")
-stopifnot(nrow(roster[category == "non_winner" & eligible == TRUE & is.na(qscore)]) == 0L)
+if (IS_PS) {
+  stopifnot(roster[category == "found_control", all(!is.na(pscore))])
+  pst <- roster[category == "found_control", .(N = .N, n_tied = n_tied[1L], n_ranked = n_ranked[1L]), by = ev]
+  stopifnot(pst[, all(N == n_tied & n_tied >= pmin(PS_K, n_ranked))])
+  cat(sprintf("  OK  every control carries an index; each stack holds its top %d (ties %s)\n", PS_K,
+              if (ps_variant(PS_V)$ties == "random") "drawn at random" else "kept"))
+  stopifnot(nrow(roster[category == "non_winner" & eligible == TRUE & is.na(pscore)]) == 0L)
+} else {
+  stopifnot(roster[category == "found_control", all(!is.na(qscore))])
+  stopifnot(roster[category == "found_control", .(u = uniqueN(stack_qscore)), by = ev][, all(u == 1L)])
+  cat("  OK  every control carries a qscore and sits at its stack's minimum\n")
+  stopifnot(nrow(roster[category == "non_winner" & eligible == TRUE & is.na(qscore)]) == 0L)
+}
 cat("  OK  every eligible real loser is scored\n")
 aud <- d[, .(n = .N, u = uniqueN(event_time), lo = min(event_time), hi = max(event_time)),
          by = .(ev, category, cvr)]
@@ -564,7 +721,9 @@ cat("  OK  weights sum to 1 per (event, category) in every period\n")
 match_rule_banner("8. write")
 write_obj(list(roster = roster, events = events, discards = discards, event_fate = event_fate,
                h = H, min_rung = MIN_RUNG, winner_buffer = WBUF, min_fte = MIN_FTE,
-               ind_digits = IND_DIGITS, pool = "union", protocol = PROTOCOL, score = SCORE,
+               ind_digits = IND_DIGITS, pool = "union", protocol = PROTOCOL, score = SCORE, komm_col = KCOL,
+               ps_topk = if (IS_PS) PS_K else NA_integer_,
+               ps_model_run_at = if (IS_PS) PSM$run_at else NULL,
                run_at = Sys.time()),
           P$cobid_roster(H, SCORE))
 write_tab(d, P$cobid_panel(H, SCORE))

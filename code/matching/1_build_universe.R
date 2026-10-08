@@ -13,9 +13,12 @@
 #   the Virk API                                           only for the incremental top-up
 #
 # Outputs (the ONLY inputs stage 2 may open):
-#   01_firm_panel.parquet        one row per (firm, quarter) at MATCH_FREQ, winners + controls
-#   01_events.rds                one row per (winning cvr, award QUARTER) competitive event
+#   01_firm_panel.parquet        one row per (firm, quarter) at MATCH_FREQ, winners + controls; carries the
+#                                firm-level registration_date (pscore_age's firm age)
+#   01_events.rds               one row per (winning cvr, award QUARTER) competitive event
 #   01_eligible_controls.rds     the screened never-winner pool, with sector/kommune
+#   01_buyers.rds                every tender's buyer CVRs + their kommune (panel by quarter, register
+#                                fallback) -- read only by the pscore protocol (1b, stage 2, stage 5)
 #   01_pull_report.rds           what was screened, what was pulled, what is still missing
 #
 # WHY THE PULL IS CHEAP: the Sep-16 control_full run already used this exact division-and-kommune screen
@@ -152,8 +155,13 @@ if (DO_PULL && n_need > 0L) {
 # Only MATCH_FREQ is kept, and only the columns the pipeline actually uses -- the full 67-column,
 # 65.8M-row control_full is far too wide to carry forward.
 match_rule_banner("4. assemble the firm panel")
+# kommune_code (the address at the period's end; hq_kommune_code is the CURRENT head office) is the
+# cascade's kommune by default (MATCH_KOMMUNE_COL) and the pscore protocols' location. legal_form_short (the
+# form at the period's end, like industry_code) is read only by the pscore protocols, and
+# registration_date (the founding date, made firm-level below) only by pscore_age, for the firm's age.
 WANT <- c("cvr", "frequency", "year", "quarter", "month", "fte", "employees",
-          "industry_code", "kommune_code", "hq_kommune_code", "employment_source")
+          "industry_code", "kommune_code", "hq_kommune_code", "legal_form_short", "registration_date",
+          "employment_source")
 
 # Defensive column selection: take what exists, report what does not, so a schema drift upstream
 # surfaces as a message rather than a cryptic failure.
@@ -201,6 +209,14 @@ if (nrow(sh)) {
 
 if (!length(panel_parts)) stop("no employment source available -- cannot build the panel", call. = FALSE)
 
+# registration_date can arrive as text in one source and as a date in another, and rbindlist will not
+# bind the two classes: make it a date in every part first (blank or malformed -> NA).
+panel_parts <- lapply(panel_parts, function(p) {
+  if ("registration_date" %in% names(p))
+    p[, registration_date := as.IDate(substr(as.character(registration_date), 1L, 10L), format = "%Y-%m-%d")]
+  p
+})
+
 panel <- rbindlist(panel_parts, use.names = TRUE, fill = TRUE)
 panel[, cvr := as_cvr8(cvr)]
 panel <- panel[!is.na(cvr)]
@@ -214,6 +230,24 @@ panel[, qidx := qidx_of(year, quarter)]
 panel[, firm_type := fifelse(cvr %chin% winners, "winner", "control")]
 if (!"hq_kommune_code" %in% names(panel)) panel[, hq_kommune_code := NA_character_]
 panel[, hq_kommune_code := as.character(hq_kommune_code)]
+# Text in every source, but a column that is all blank in one source can arrive as logical or integer.
+for (cc in c("kommune_code", "legal_form_short")) {
+  if (!cc %in% names(panel)) panel[, (cc) := NA_character_]
+  set(panel, j = cc, value = as.character(panel[[cc]]))
+}
+# The cascade compares kommune_code between firms from different sources (text "0101" in one, a number
+# read as "101" in another), so one format for every row: no leading zeros, blank -> NA.
+panel[, kommune_code := komm_norm(kommune_code)]
+# The founding date is a firm attribute, but a source can leave it blank on some rows: one date per firm,
+# the newest source's (src is ordered newest first), on every one of its rows.
+if (!"registration_date" %in% names(panel)) panel[, registration_date := as.IDate(NA)]
+founded <- panel[!is.na(registration_date), .(cvr, src, registration_date)][
+  order(src), .(registration_date = registration_date[1L], n_dates = uniqueN(registration_date)), by = cvr]
+cat(sprintf("  registration date: %d of %d firms | %d with more than one date across rows (newest source kept)\n",
+            nrow(founded), uniqueN(panel$cvr), founded[n_dates > 1L, .N]))
+panel[, registration_date := as.IDate(NA)]
+panel[founded, on = "cvr", registration_date := i.registration_date]
+rm(founded)
 if ("industry_code" %in% names(panel)) add_industry_hierarchy(panel, "industry_code") else {
   panel[, `:=`(industry_code6 = NA_character_, industry_class = NA_character_,
                industry_group = NA_character_, industry_division = NA_character_)]
@@ -273,6 +307,23 @@ cat(sprintf("  eligible pool with positive employment on disk: %d of %d (%.1f%%)
             eligible_out[has_employment == TRUE, .N], nrow(eligible_out),
             100 * eligible_out[has_employment == TRUE, .N] / nrow(eligible_out)))
 
+# Buyers, for the pscore protocol's same-kommune-as-buyer characteristic (read through buyer_kommunes()).
+# A buyer's address quarter by quarter comes from the panel where the buyer is in it (KFST/OpenTender
+# buyers are in the winner-side pull); the register's current HQ is the fallback for everyone else.
+buy <- wu$buyers
+buyers_out <- list(
+  tender_buyers    = buy,
+  panel_kommune    = panel[cvr %chin% buy$buyer_cvr,
+                           .(buyer_cvr = cvr, qidx, kommune = komm_norm(kommune_code))][!is.na(kommune)],
+  register_kommune = reg[cvr %chin% buy$buyer_cvr,
+                         .(buyer_cvr = cvr, kommune = komm_norm(kommune))][!is.na(kommune)])
+cat(sprintf("  buyers: %d tender-buyer rows | %d buyer cvrs | %d with panel addresses | %d with a register kommune\n",
+            nrow(buy), uniqueN(buy$buyer_cvr), uniqueN(buyers_out$panel_kommune$buyer_cvr),
+            uniqueN(buyers_out$register_kommune$buyer_cvr)))
+cat(sprintf("  panel rows with a legal form: %.1f%% | with an address kommune: %.1f%%\n",
+            100 * panel[, mean(!is.na(legal_form_short) & nzchar(legal_form_short))],
+            100 * panel[, mean(!is.na(kommune_code) & nzchar(kommune_code))]))
+
 report <- list(
   run_at            = Sys.time(),
   freq              = FREQ,
@@ -293,12 +344,16 @@ report <- list(
   panel_rows        = nrow(panel),
   panel_firms       = uniqueN(panel$cvr),
   firms_by_year     = by_year,
+  n_buyer_rows      = nrow(buy),
+  n_buyer_cvrs      = uniqueN(buy$buyer_cvr),
   test_n            = if (TEST) TEST_N else NA_integer_)
 
 write_tab(panel,        P$firm_panel)
 write_obj(events,       P$events)
 write_obj(eligible_out, P$eligible)
+write_obj(buyers_out,   P$buyers)
 write_obj(report,       P$pull_report)
 cat(sprintf("  -> %s (%.0f MB)\n", basename(P$firm_panel), file.size(P$firm_panel) / 1e6))
-cat(sprintf("  -> %s | %s | %s\n", basename(P$events), basename(P$eligible), basename(P$pull_report)))
+cat(sprintf("  -> %s | %s | %s | %s\n", basename(P$events), basename(P$eligible), basename(P$buyers),
+            basename(P$pull_report)))
 cat("\nSTAGE 1 complete.\n")

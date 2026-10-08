@@ -73,8 +73,10 @@ mp[, industry_grp := substr(industry_code6, 1L, IND_DIGITS)]
 mp[, stack_id := .GRP, by = .(ev, scoring_protocol, arm)]
 mp[, treated  := as.integer(treatment == "treated")]
 
+# ps_topk: the pscore protocol's K, carried for stage 4's captions (NA if the match had no pscore,
+# NULL from a match report that predates it).
 meta <- list(run_at = Sys.time(), h = h, min_fte = MIN_FTE, ind_digits = IND_DIGITS,
-             min_stacks = MIN_STACKS)
+             min_stacks = MIN_STACKS, ps_topk = rep2$ps_topk)
 
 {
   match_rule_banner(sprintf("2. build the +/-%d panel", h))
@@ -85,6 +87,9 @@ meta <- list(run_at = Sys.time(), h = h, min_fte = MIN_FTE, ind_digits = IND_DIG
   # employment panel are indistinguishable in the retention count.
   base <- mp[event_time %between% c(-h, h) &
                !is.na(industry_grp) & industry_grp != ""]
+  # mp is not read again. Free it now: with several pscore protocols the panel is 30M+ rows, and holding
+  # mp, base and the screened copy at once exhausted R's 24 GB limit on 7 Oct 2026.
+  rm(mp); invisible(gc())
 
   # One row per (stack, firm), carrying both verdicts: balanced on row presence alone (bal_row) and
   # balanced once FTE > MIN_FTE is also demanded (bal_fte). drop_fte is exactly the set the screen costs
@@ -161,7 +166,8 @@ meta <- list(run_at = Sys.time(), h = h, min_fte = MIN_FTE, ind_digits = IND_DIG
   # The diagnostic that decides whether this is a population screen or a survival screen: among firms
   # that ARE balanced on row presence, what share fail the FTE test at each event time? Flat = population.
   # Rising in event time = the screen is deleting post-treatment outcomes.
-  etp <- base[fs[bal_row == TRUE, .(stack_id, cvr)], on = .(stack_id, cvr), nomatch = NULL][
+  etp <- base[, .(stack_id, cvr, event_time, treated, fte)][     # only the columns it needs: a narrow copy
+    fs[bal_row == TRUE, .(stack_id, cvr)], on = .(stack_id, cvr), nomatch = NULL][
     , .(firms = .N, fail = sum(is.na(fte) | fte <= MIN_FTE)), by = .(event_time, treated)]
   etp[, share := fail / firms]
   etw <- dcast(etp, event_time ~ treated, value.var = "share")
@@ -170,9 +176,12 @@ meta <- list(run_at = Sys.time(), h = h, min_fte = MIN_FTE, ind_digits = IND_DIG
   print(etw[order(event_time)])
 
   # ---- apply the screen ------------------------------------------------------------------------------
-  d <- base[!is.na(fte) & fte > MIN_FTE][
-    fs[bal_fte == TRUE, .(stack_id, cvr)], on = .(stack_id, cvr), nomatch = NULL]
-  d <- d[stack_id %in% st[usable_fte == TRUE, stack_id]]
+  # bal_fte means every one of the firm's 2h+1 rows passes the FTE test, so joining the balanced firms of
+  # the usable stacks onto `base` IS the screen -- the same rows the old filter-then-join-then-subset
+  # gave, without two full intermediate copies of the panel. base is not read again.
+  keep <- fs[bal_fte == TRUE & stack_id %in% st[usable_fte == TRUE, stack_id], .(stack_id, cvr)]
+  d    <- base[keep, on = .(stack_id, cvr), nomatch = NULL]
+  rm(base, keep); invisible(gc())
   # The join above returns rows in the key order of `fs`, not the panel order stage 2 wrote. Restoring
   # stage 2's sort keeps this artefact byte-comparable with one built by the pre-instrumentation code.
   setorder(d, ev, scoring_protocol, arm, treatment, cvr, qidx)
